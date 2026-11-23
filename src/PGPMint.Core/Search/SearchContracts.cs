@@ -12,7 +12,7 @@ public sealed record GpuDeviceInfo(
     string DriverVersion,
     bool IsDiscrete,
     string BackendName = "DirectCompute",
-    string KernelVersion = "d3d11-sha1-four-v1");
+    string KernelVersion = Gpu.DirectComputeShaderSource.KernelVersion);
 
 public sealed record CalibrationRecord(
     string DeviceKey,
@@ -35,13 +35,33 @@ public sealed record MatchedKeyRecord(
     string PublicKeyHex,
     string ProtectedPrivateSeedBase64);
 
+public enum SearchResultMode
+{
+    EnumerateAll,
+    FindOne
+}
+
 public readonly record struct SearchBatchResult(
     IReadOnlyList<uint>[] Hits,
     long UniqueCandidatesCompleted,
     long? HashEvaluations)
 {
+    public bool HashRangeFullyProcessed { get; init; } = true;
+    public bool ResultsComplete { get; init; } = true;
+    public bool WasCancelled { get; init; }
     public long? RescanEvaluations => HashEvaluations - UniqueCandidatesCompleted;
     public long ReturnedHits => Hits.Sum(lane => (long)lane.Count);
+
+    internal static IReadOnlyList<uint>[] EmptyHits(int laneCount) =>
+        Enumerable.Repeat<IReadOnlyList<uint>>(Array.Empty<uint>(), laneCount).ToArray();
+
+    internal static SearchBatchResult CancelledBeforeDispatch(int laneCount) =>
+        new(EmptyHits(laneCount), 0, 0)
+        {
+            HashRangeFullyProcessed = false,
+            ResultsComplete = false,
+            WasCancelled = true
+        };
 }
 
 public readonly record struct SearchWorkMetrics(
@@ -74,9 +94,23 @@ public interface IGpuSearchDevice : IDisposable
         uint startTimestamp,
         uint timestampCount,
         KeyIdPattern pattern,
-        int capacity = 1024) =>
-        new(ScanGroup(publicKeys, startTimestamp, timestampCount, pattern, capacity),
+        int capacity = 1024,
+        SearchResultMode resultMode = SearchResultMode.EnumerateAll,
+        CancellationToken cancellationToken = default)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return SearchBatchResult.CancelledBeforeDispatch(KeysPerBatch);
+        }
+
+        if (resultMode != SearchResultMode.EnumerateAll)
+        {
+            throw new NotSupportedException("The GPU backend does not support bounded search.");
+        }
+
+        return new SearchBatchResult(ScanGroup(publicKeys, startTimestamp, timestampCount, pattern, capacity),
             (long)timestampCount * KeysPerBatch, HashEvaluations: null);
+    }
 }
 
 public interface IGpuBackend

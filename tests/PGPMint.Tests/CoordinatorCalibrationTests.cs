@@ -79,7 +79,7 @@ public partial class CoordinatorCalibrationTests
     }
 
     [Fact]
-    public async Task AutoPauseOnHitSavesExactlyOneMatchEvenWhenBatchReturnsManyHits()
+    public async Task AutoPauseOnHitSavesExactlyOneMatchWhenBothDevicesCanHit()
     {
         string tempDir = Path.Combine(Path.GetTempPath(), "pm-onehit-" + Guid.NewGuid().ToString("N")[..8]);
         try
@@ -146,7 +146,7 @@ public partial class CoordinatorCalibrationTests
             MethodInfo? submit = typeof(MultiGpuCoordinator).GetMethod("HandleVerifiedHits", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.NotNull(submit);
 
-            object[] candidate = [gpu, new[] { key }, hits, pattern, false];
+            object[] candidate = [gpu, new[] { key }, hits, pattern, false, CancellationToken.None];
             submit.Invoke(coordinator, candidate);
             submit.Invoke(coordinator, candidate);
             coordinator.NotifyVaultCountChanged(vault.LoadMatches().Count);

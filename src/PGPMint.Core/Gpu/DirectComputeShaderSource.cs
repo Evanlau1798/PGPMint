@@ -5,7 +5,7 @@ namespace PGPMint.Core.Gpu;
 
 public static class DirectComputeShaderSource
 {
-    public const string KernelVersion = "d3d11-sha1-four-v1";
+    public const string KernelVersion = "d3d11-sha1-four-v2";
     public const int ThreadGroupSize = 128;
 
     private static readonly string[] PhaseMixExpressions =
@@ -42,7 +42,11 @@ public static class DirectComputeShaderSource
         sb.AppendLine("        if ((high & maskHigh) == targetHigh) { \\");
         sb.AppendLine("            uint slot = (lane) * (capacity + 1u); \\");
         sb.AppendLine("            uint idx; \\");
-        sb.AppendLine("            InterlockedAdd(matches[slot], 1u, idx); \\");
+        sb.AppendLine("            if (resultMode != 0u) { \\");
+        sb.AppendLine("                InterlockedCompareExchange(matches[slot], 0u, 1u, idx); \\");
+        sb.AppendLine("            } else { \\");
+        sb.AppendLine("                InterlockedAdd(matches[slot], 1u, idx); \\");
+        sb.AppendLine("            } \\");
         sb.AppendLine("            if (idx < capacity) { \\");
         sb.AppendLine("                matches[slot + 1u + idx] = timestamp; \\");
         sb.AppendLine("            } \\");
@@ -60,6 +64,7 @@ public static class DirectComputeShaderSource
         sb.AppendLine("    uint targetHigh;");
         sb.AppendLine("    uint capacity;");
         sb.AppendLine("    uint totalThreads;");
+        sb.AppendLine("    uint resultMode;");
         sb.AppendLine("    uint4 blocks[77];");
         sb.AppendLine("};");
         sb.AppendLine();

@@ -13,7 +13,8 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
 {
     public const int FourKeyCount = 4;
     private const uint MaxDispatchGroups = 65535u;
-    private const int ConstantBufferBytes = 32 + (Sha1ScheduleHelper.ScheduleRounds * 16); // 1264 bytes
+    private const int SearchParametersUints = 12;
+    private const int ConstantBufferBytes = (SearchParametersUints + Sha1ScheduleHelper.ScheduleRounds * 4) * sizeof(uint);
 
     private static readonly object ShaderCompileLock = new();
     private static byte[]? _cachedShaderBytecode;
@@ -104,7 +105,9 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
         uint startTimestamp,
         uint timestampCount,
         KeyIdPattern pattern,
-        int capacity = 1024)
+        int capacity = 1024,
+        SearchResultMode resultMode = SearchResultMode.EnumerateAll,
+        CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(publicKeys);
@@ -130,20 +133,30 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
             throw new ArgumentOutOfRangeException(nameof(capacity), "Capacity must be positive.");
         }
 
-        UpdateKeySchedulesIfNeeded(publicKeys);
-        EnsureResultsBuffers(capacity);
+        int resultCapacity = resultMode switch
+        {
+            SearchResultMode.FindOne => 1,
+            SearchResultMode.EnumerateAll => capacity,
+            _ => throw new ArgumentOutOfRangeException(nameof(resultMode))
+        };
 
-        long evaluations = 0;
-        var hits = ScanGroupCore(startTimestamp, timestampCount, pattern, capacity, ref evaluations);
-        return new SearchBatchResult(hits, (long)timestampCount * FourKeyCount, evaluations);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return SearchBatchResult.CancelledBeforeDispatch(FourKeyCount);
+        }
+
+        UpdateKeySchedulesIfNeeded(publicKeys);
+        EnsureResultsBuffers(resultCapacity);
+        return GpuSearchBatch.Run(FourKeyCount, startTimestamp, timestampCount, resultCapacity, resultMode, cancellationToken,
+            (first, count) => Dispatch(first, count, pattern, resultCapacity, resultMode));
     }
 
-    private IReadOnlyList<uint>[] ScanGroupCore(
+    private uint[] Dispatch(
         uint startTimestamp,
         uint timestampCount,
         KeyIdPattern pattern,
         int capacity,
-        ref long evaluations)
+        SearchResultMode resultMode)
     {
         int strideUints = capacity + 1;
         int totalUints = FourKeyCount * strideUints;
@@ -169,6 +182,7 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
         _constantStaging[5] = pattern.TargetHigh;
         _constantStaging[6] = (uint)capacity;
         _constantStaging[7] = totalThreads;
+        _constantStaging[8] = (uint)resultMode;
 
         UploadConstantBuffer();
 
@@ -193,79 +207,8 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
             _context.Unmap(_resultsStaging!, 0);
         }
 
-        evaluations += (long)timestampCount * FourKeyCount;
-        uint maxCount = 0;
-        for (int lane = 0; lane < FourKeyCount; lane++)
-        {
-            uint laneCount = readback[lane * strideUints];
-            if (laneCount > maxCount)
-            {
-                maxCount = laneCount;
-            }
-        }
-
-        _counterMayBeDirty = maxCount > 0;
-        if (maxCount == 0)
-        {
-            return new IReadOnlyList<uint>[]
-            {
-                Array.Empty<uint>(), Array.Empty<uint>(), Array.Empty<uint>(), Array.Empty<uint>()
-            };
-        }
-
-        if (maxCount <= (uint)capacity)
-        {
-            var hits = new IReadOnlyList<uint>[FourKeyCount];
-            for (int lane = 0; lane < FourKeyCount; lane++)
-            {
-                int baseIdx = lane * strideUints;
-                int laneCount = (int)readback[baseIdx];
-                if (laneCount == 0)
-                {
-                    hits[lane] = Array.Empty<uint>();
-                }
-                else
-                {
-                    uint[] laneHits = new uint[laneCount];
-                    Array.Copy(readback, baseIdx + 1, laneHits, 0, laneCount);
-                    hits[lane] = laneHits;
-                }
-            }
-
-            return hits;
-        }
-
-        // Output buffer overflowed on at least one lane: split recursively in half (cannot split count==1)
-        if (timestampCount == 1)
-        {
-            throw new InvalidOperationException("Hit buffer overflow on single timestamp.");
-        }
-
-        uint half = timestampCount / 2;
-        IReadOnlyList<uint>[] left = ScanGroupCore(startTimestamp, half, pattern, capacity, ref evaluations);
-        IReadOnlyList<uint>[] right = ScanGroupCore(startTimestamp + half, timestampCount - half, pattern, capacity, ref evaluations);
-
-        var merged = new IReadOnlyList<uint>[FourKeyCount];
-        for (int lane = 0; lane < FourKeyCount; lane++)
-        {
-            if (left[lane].Count == 0)
-            {
-                merged[lane] = right[lane];
-            }
-            else if (right[lane].Count == 0)
-            {
-                merged[lane] = left[lane];
-            }
-            else
-            {
-                var combined = new List<uint>(left[lane].Count + right[lane].Count);
-                combined.AddRange(left[lane]);
-                combined.AddRange(right[lane]);
-                merged[lane] = combined;
-            }
-        }
-
-        return merged;
+        _counterMayBeDirty = GpuSearchBatch.HasHits(readback, strideUints, FourKeyCount);
+        return readback;
     }
 
     private void UpdateKeySchedulesIfNeeded(IReadOnlyList<byte[]> publicKeys)
@@ -300,7 +243,7 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
             for (int t = 0; t < Sha1ScheduleHelper.ScheduleRounds; t++)
             {
                 // Header is 8 uints (32 bytes); blocks[t] is uint4 at offset 8 + t*4
-                _constantStaging[8 + (t * 4) + lane] = schedule[t];
+                _constantStaging[SearchParametersUints + (t * 4) + lane] = schedule[t];
             }
 
             _cachedKeys[lane] = (byte[])key.Clone();

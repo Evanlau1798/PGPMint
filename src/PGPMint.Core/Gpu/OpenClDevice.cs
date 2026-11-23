@@ -124,7 +124,9 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
         uint startTimestamp,
         uint timestampCount,
         KeyIdPattern pattern,
-        int capacity = 1024)
+        int capacity = 1024,
+        SearchResultMode resultMode = SearchResultMode.EnumerateAll,
+        CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(publicKeys);
@@ -150,20 +152,30 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
             throw new ArgumentOutOfRangeException(nameof(capacity), "Capacity must be positive.");
         }
 
-        UploadKeySchedulesIfNeeded(publicKeys);
-        EnsureResultsBuffer(capacity);
+        int resultCapacity = resultMode switch
+        {
+            SearchResultMode.FindOne => 1,
+            SearchResultMode.EnumerateAll => capacity,
+            _ => throw new ArgumentOutOfRangeException(nameof(resultMode))
+        };
 
-        long evaluations = 0;
-        var hits = ScanGroupCore(startTimestamp, timestampCount, pattern, capacity, ref evaluations);
-        return new SearchBatchResult(hits, (long)timestampCount * FourKeyCount, evaluations);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return SearchBatchResult.CancelledBeforeDispatch(FourKeyCount);
+        }
+
+        UploadKeySchedulesIfNeeded(publicKeys);
+        EnsureResultsBuffer(resultCapacity);
+        return GpuSearchBatch.Run(FourKeyCount, startTimestamp, timestampCount, resultCapacity, resultMode, cancellationToken,
+            (first, count) => Dispatch(first, count, pattern, resultCapacity, resultMode));
     }
 
-    private IReadOnlyList<uint>[] ScanGroupCore(
+    private uint[] Dispatch(
         uint startTimestamp,
         uint timestampCount,
         KeyIdPattern pattern,
         int capacity,
-        ref long evaluations)
+        SearchResultMode resultMode)
     {
         int strideUints = capacity + 1;
         int totalUints = FourKeyCount * strideUints;
@@ -197,6 +209,7 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
         ulong maskArg = pattern.Mask;
         ulong targetArg = pattern.Target;
         uint capArg = (uint)capacity;
+        uint modeArg = (uint)resultMode;
 
         CheckCl(OpenClNative.clSetKernelArg(_kernel, 0, (nuint)sizeof(nint), &blockArg), "clSetKernelArg(0)");
         CheckCl(OpenClNative.clSetKernelArg(_kernel, 1, (nuint)sizeof(nint), &resultsArg), "clSetKernelArg(1)");
@@ -205,6 +218,7 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
         CheckCl(OpenClNative.clSetKernelArg(_kernel, 4, sizeof(ulong), &maskArg), "clSetKernelArg(4)");
         CheckCl(OpenClNative.clSetKernelArg(_kernel, 5, sizeof(ulong), &targetArg), "clSetKernelArg(5)");
         CheckCl(OpenClNative.clSetKernelArg(_kernel, 6, sizeof(uint), &capArg), "clSetKernelArg(6)");
+        CheckCl(OpenClNative.clSetKernelArg(_kernel, 7, sizeof(uint), &modeArg), "clSetKernelArg(7)");
 
         ulong groups = Math.Max(1UL, ((ulong)timestampCount + _candidatesPerGroup - 1UL) / _candidatesPerGroup);
         nuint globalSize = (nuint)(groups * _groupSize);
@@ -218,70 +232,8 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
             CheckCl(OpenClNative.clEnqueueReadBuffer(_queue, _resultsBuffer, 1, 0, totalBytes, hostPtr, 0, null, null), "clEnqueueReadBuffer");
         }
 
-        evaluations += (long)timestampCount * FourKeyCount;
-        uint maxCount = 0;
-        for (int lane = 0; lane < FourKeyCount; lane++)
-        {
-            uint laneCount = readback[lane * strideUints];
-            if (laneCount > maxCount)
-            {
-                maxCount = laneCount;
-            }
-        }
-
-        _counterMayBeDirty = maxCount > 0;
-        if (maxCount == 0)
-        {
-            return new IReadOnlyList<uint>[]
-            {
-                Array.Empty<uint>(), Array.Empty<uint>(), Array.Empty<uint>(), Array.Empty<uint>()
-            };
-        }
-
-        if (maxCount <= (uint)capacity)
-        {
-            var hits = new IReadOnlyList<uint>[FourKeyCount];
-            for (int lane = 0; lane < FourKeyCount; lane++)
-            {
-                int baseIdx = lane * strideUints;
-                int laneCount = (int)readback[baseIdx];
-                if (laneCount == 0)
-                {
-                    hits[lane] = Array.Empty<uint>();
-                }
-                else
-                {
-                    uint[] laneHits = new uint[laneCount];
-                    Array.Copy(readback, baseIdx + 1, laneHits, 0, laneCount);
-                    hits[lane] = laneHits;
-                }
-            }
-            return hits;
-        }
-
-        if (timestampCount == 1)
-        {
-            throw new InvalidOperationException("Hit buffer overflow on single timestamp.");
-        }
-
-        uint half = timestampCount / 2;
-        IReadOnlyList<uint>[] left = ScanGroupCore(startTimestamp, half, pattern, capacity, ref evaluations);
-        IReadOnlyList<uint>[] right = ScanGroupCore(startTimestamp + half, timestampCount - half, pattern, capacity, ref evaluations);
-
-        var merged = new IReadOnlyList<uint>[FourKeyCount];
-        for (int lane = 0; lane < FourKeyCount; lane++)
-        {
-            if (left[lane].Count == 0) merged[lane] = right[lane];
-            else if (right[lane].Count == 0) merged[lane] = left[lane];
-            else
-            {
-                var combined = new List<uint>(left[lane].Count + right[lane].Count);
-                combined.AddRange(left[lane]);
-                combined.AddRange(right[lane]);
-                merged[lane] = combined;
-            }
-        }
-        return merged;
+        _counterMayBeDirty = GpuSearchBatch.HasHits(readback, strideUints, FourKeyCount);
+        return readback;
     }
 
     private void UploadKeySchedulesIfNeeded(IReadOnlyList<byte[]> publicKeys)

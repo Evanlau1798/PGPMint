@@ -6,6 +6,8 @@ namespace PGPMint.Core.Search;
 
 public sealed partial class MultiGpuCoordinator
 {
+    private const long SmallBatchCandidateLimit = 1L << 18;
+
     private CalibrationRecord? RunZeroWasteCalibrationOnOpenDevice(
         IGpuSearchDevice device,
         KeyIdPattern pattern,
@@ -24,14 +26,12 @@ public sealed partial class MultiGpuCoordinator
             if (!ct.IsCancellationRequested && !IsCurrentlyPaused())
             {
                 uint warmupStamps = RateControl.ComputeBatchTimestamps(
-                    device.MaxCandidatesPerBatch,
+                    Math.Min(device.MaxCandidatesPerBatch, SmallBatchCandidateLimit),
                     device.KeysPerBatch,
                     new RateDirective(RateMode.FullSpeed, RateControl.FullSpeedSentinel),
                     end - cursor);
 
-                SearchBatchResult warmup = device.ScanBatch(pubKeys, cursor, warmupStamps, pattern);
-                RecordBatch(warmup);
-                HandleVerifiedHits(device.Info, keys, warmup.Hits, pattern, allowAutoPause: true);
+                ScanSearchBatch(device, keys, pubKeys, cursor, warmupStamps, pattern, ct);
                 cursor += warmupStamps;
             }
 
@@ -58,14 +58,12 @@ public sealed partial class MultiGpuCoordinator
                 }
 
                 uint stamps = RateControl.ComputeBatchTimestamps(
-                    device.MaxCandidatesPerBatch,
+                    SearchBatchLimit(device, pattern),
                     device.KeysPerBatch,
                     new RateDirective(RateMode.FullSpeed, RateControl.FullSpeedSentinel),
                     end - cursor);
 
-                SearchBatchResult batch = device.ScanBatch(pubKeys, cursor, stamps, pattern);
-                long batchCandidates = RecordBatch(batch);
-                HandleVerifiedHits(device.Info, keys, batch.Hits, pattern, allowAutoPause: true);
+                long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, ct);
 
                 cursor += stamps;
                 windowChecked += batchCandidates;
@@ -131,6 +129,7 @@ public sealed partial class MultiGpuCoordinator
         var fullSpeedSamples = new List<double>();
         long dynamicMedianStart = Stopwatch.GetTimestamp();
         int minMedianSamples = Math.Max(1, _options.MinDynamicMedianSamples);
+        bool firstBatch = true;
 
         try
         {
@@ -214,18 +213,18 @@ public sealed partial class MultiGpuCoordinator
                     end = CurrentTimestampUpperBound();
                 }
 
+                long batchLimit = firstBatch ? Math.Min(device.MaxCandidatesPerBatch, SmallBatchCandidateLimit)
+                    : SearchBatchLimit(device, pattern);
                 uint stamps = RateControl.ComputeBatchTimestamps(
-                    device.MaxCandidatesPerBatch,
+                    batchLimit,
                     device.KeysPerBatch,
                     directive,
                     end - cursor);
 
-                SearchBatchResult batch = device.ScanBatch(pubKeys, cursor, stamps, pattern);
-                long batchCandidates = RecordBatch(batch);
+                long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, ct);
+                firstBatch = false;
                 sampleChecked += batchCandidates;
                 cursor += stamps;
-
-                HandleVerifiedHits(device.Info, keys, batch.Hits, pattern, allowAutoPause: true);
 
                 if (directive.Mode == RateMode.Capped)
                 {
@@ -278,10 +277,9 @@ public sealed partial class MultiGpuCoordinator
         Ed25519KeyPair[] keys,
         IReadOnlyList<uint>[] laneHits,
         KeyIdPattern pattern,
-        bool allowAutoPause)
+        bool allowAutoPause,
+        CancellationToken cancellationToken)
     {
-        bool shouldAutoPause = allowAutoPause && _autoPauseOnHit;
-
         for (int lane = 0; lane < keys.Length; lane++)
         {
             IReadOnlyList<uint> timestamps = laneHits[lane];
@@ -290,7 +288,7 @@ public sealed partial class MultiGpuCoordinator
                 continue;
             }
 
-            foreach (uint ts in timestamps.OrderBy(t => t))
+            foreach (uint ts in timestamps)
             {
                 string fullFingerprint = OpenPgpV4Packet.ComputeFingerprint(keys[lane].PublicKey, ts);
                 ulong keyIdValue = OpenPgpV4Packet.ComputeKeyIdUInt64(keys[lane].PublicKey, ts);
@@ -305,43 +303,48 @@ public sealed partial class MultiGpuCoordinator
                     _sessionWork = _sessionWork with { VerifiedHits = _sessionWork.VerifiedHits + 1 };
                 }
 
-                if (shouldAutoPause)
+                MatchedKeyRecord record;
+                bool shouldAutoPause;
+                lock (_submissionGate)
                 {
-                    if (Interlocked.Exchange(ref _autoPauseTriggered, 1) != 0)
+                    if (_submissionFailed || Volatile.Read(ref _autoPauseTriggered) != 0 || cancellationToken.IsCancellationRequested)
                     {
-                        // Another worker already recorded the hit and triggered auto-stop.
                         return;
                     }
 
-                    // Signal all other GPU workers to stop dispatching immediately before disk I/O.
-                    Interlocked.Increment(ref _rateEpoch);
+                    int storedCount;
+                    bool wasAdded;
                     try
                     {
-                        _activeOpCts?.Cancel();
+                        record = _vaultStore.SaveMatch(keys[lane].PrivateSeed, keys[lane].PublicKey, ts, fullFingerprint,
+                            pattern.CanonicalMask, deviceInfo.Name, out storedCount, out wasAdded);
                     }
                     catch
                     {
-                        // Ignore if CTS is already cancelling/disposed
+                        _submissionFailed = true;
+                        throw;
+                    }
+
+                    Interlocked.Exchange(ref _totalMatchesCount, storedCount);
+                    if (wasAdded)
+                    {
+                        lock (_lifecycleLock)
+                        {
+                            _sessionWork = _sessionWork with { SavedKeys = _sessionWork.SavedKeys + 1 };
+                        }
+                    }
+
+                    shouldAutoPause = allowAutoPause && _autoPauseOnHit;
+                    if (shouldAutoPause)
+                    {
+                        Interlocked.Exchange(ref _autoPauseTriggered, 1);
+                        Interlocked.Increment(ref _rateEpoch);
                     }
                 }
 
-                MatchedKeyRecord record = _vaultStore.SaveMatch(
-                    keys[lane].PrivateSeed,
-                    keys[lane].PublicKey,
-                    ts,
-                    fullFingerprint,
-                    pattern.CanonicalMask,
-                    deviceInfo.Name,
-                    out int storedCount,
-                    out bool wasAdded);
-
-                Interlocked.Exchange(ref _totalMatchesCount, storedCount);
-                if (wasAdded)
+                if (shouldAutoPause)
                 {
-                    lock (_lifecycleLock)
-                    {
-                        _sessionWork = _sessionWork with { SavedKeys = _sessionWork.SavedKeys + 1 };
-                    }
+                    _activeOpCts?.Cancel();
                 }
 
                 MatchFound?.Invoke(this, record);
@@ -355,8 +358,21 @@ public sealed partial class MultiGpuCoordinator
     private bool IsCurrentlyPaused() =>
         _pausedExplicitly || _pausedByZeroSlider || Volatile.Read(ref _autoPauseTriggered) != 0;
 
-    private long RecordBatch(SearchBatchResult batch)
+    private static long SearchBatchLimit(IGpuSearchDevice device, KeyIdPattern pattern) =>
+        pattern.FixedHexLength <= 4 ? Math.Min(device.MaxCandidatesPerBatch, SmallBatchCandidateLimit)
+            : device.MaxCandidatesPerBatch;
+
+    private long ScanSearchBatch(
+        IGpuSearchDevice device,
+        Ed25519KeyPair[] keys,
+        IReadOnlyList<byte[]> publicKeys,
+        uint start,
+        uint count,
+        KeyIdPattern pattern,
+        CancellationToken cancellationToken)
     {
+        SearchBatchResult batch = device.ScanBatch(publicKeys, start, count, pattern,
+            resultMode: SearchResultMode.FindOne, cancellationToken: cancellationToken);
         long returnedHits = batch.ReturnedHits;
         lock (_lifecycleLock)
         {
@@ -368,6 +384,29 @@ public sealed partial class MultiGpuCoordinator
                 ReturnedHits = _sessionWork.ReturnedHits + returnedHits
             };
         }
+
+        if (batch.WasCancelled)
+        {
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                throw new InvalidOperationException($"Unexpected batch cancellation on '{device.Info.Name}'.");
+            }
+
+            return batch.UniqueCandidatesCompleted;
+        }
+
+        if (!batch.ResultsComplete || !batch.HashRangeFullyProcessed ||
+            returnedHits > 1 || batch.Hits.Length != keys.Length ||
+            batch.Hits.Any(lane => lane.Count > 0 && (lane[0] < start || (ulong)lane[0] >= (ulong)start + count)))
+        {
+            throw new InvalidOperationException($"Incomplete or invalid GPU search result on '{device.Info.Name}'.");
+        }
+
+        if (!cancellationToken.IsCancellationRequested)
+        {
+            HandleVerifiedHits(device.Info, keys, batch.Hits, pattern, allowAutoPause: true, cancellationToken);
+        }
+
         return batch.UniqueCandidatesCompleted;
     }
 

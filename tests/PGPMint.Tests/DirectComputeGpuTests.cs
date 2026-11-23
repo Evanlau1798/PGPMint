@@ -2,6 +2,7 @@ using System.Diagnostics;
 using PGPMint.Core.Crypto;
 using PGPMint.Core.Gpu;
 using PGPMint.Core.Search;
+using PGPMint.Core.Storage;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -109,6 +110,114 @@ public class DirectComputeGpuTests
                     }
                     Assert.Equal(expected, batch.Hits[lane].Order());
                 }
+            }
+        }
+    }
+
+    [Fact]
+    public void FindOneReturnsOneValidHitWithoutOverflowRescans()
+    {
+        var backends = new IGpuBackend[] { new HybridGpuBackend(), new DirectComputeBackend() };
+        byte[][] keys = Enumerable.Range(0, 4).Select(lane =>
+        {
+            byte[] key = Convert.FromHexString(Rfc8032PublicHex);
+            key[^1] = (byte)lane;
+            return key;
+        }).ToArray();
+
+        foreach (IGpuBackend backend in backends)
+        {
+            using IGpuSearchDevice device = backend.CreateDevice(backend.EnumerateHardwareGpus()[0]);
+            _output.WriteLine($"GPU: {device.Info.Name}, backend={device.Info.BackendName}, kernel={device.KernelVersion}");
+            const uint start = uint.MaxValue - 1030;
+            const uint count = 1031;
+            var dense = KeyIdPattern.Parse("0");
+            SearchBatchResult hit = device.ScanBatch(keys, start, count, dense, capacity: 3,
+                resultMode: SearchResultMode.FindOne);
+
+            Assert.Equal(1L, hit.ReturnedHits);
+            Assert.Equal(4_124L, hit.UniqueCandidatesCompleted);
+            Assert.Equal(4_124L, hit.HashEvaluations);
+            Assert.True(hit.HashRangeFullyProcessed);
+            Assert.True(hit.ResultsComplete);
+            Assert.False(hit.WasCancelled);
+            int lane = Enumerable.Range(0, keys.Length).Single(i => hit.Hits[i].Count == 1);
+            uint timestamp = Assert.Single(hit.Hits[lane]);
+            Assert.InRange(timestamp, start, uint.MaxValue);
+            Assert.EndsWith("0", OpenPgpFingerprintOracle.Compute(keys[lane], timestamp));
+
+            SearchBatchResult none = device.ScanBatch(keys, start, count, KeyIdPattern.Parse("0000000000000000"),
+                resultMode: SearchResultMode.FindOne);
+            Assert.Equal(0L, none.ReturnedHits);
+            Assert.Equal(4_124L, none.HashEvaluations);
+            Assert.True(none.ResultsComplete);
+
+            SearchBatchResult boundary = device.ScanBatch(keys, start, count, KeyIdPattern.Parse("5A89F6783F33E405"),
+                resultMode: SearchResultMode.FindOne);
+            Assert.Equal(1L, boundary.ReturnedHits);
+            Assert.Equal(uint.MaxValue, Assert.Single(boundary.Hits[3]));
+        }
+    }
+
+    [Fact]
+    public void CancelledScanReturnsBeforeAnyDispatch()
+    {
+        var backend = new HybridGpuBackend();
+        using IGpuSearchDevice device = backend.CreateDevice(backend.EnumerateHardwareGpus()[0]);
+        byte[][] keys = Enumerable.Range(0, 4).Select(_ => Convert.FromHexString(Rfc8032PublicHex)).ToArray();
+        SearchBatchResult batch = device.ScanBatch(keys, 1, 128, KeyIdPattern.Parse("0"),
+            cancellationToken: new CancellationToken(canceled: true));
+
+        Assert.Equal(0L, batch.UniqueCandidatesCompleted);
+        Assert.Equal(0L, batch.HashEvaluations);
+        Assert.Equal(0L, batch.ReturnedHits);
+        Assert.False(batch.HashRangeFullyProcessed);
+        Assert.False(batch.ResultsComplete);
+        Assert.True(batch.WasCancelled);
+    }
+
+    [Theory]
+    [InlineData("0", false)]
+    [InlineData("0000000000000000", false)]
+    [InlineData("0", true)]
+    [InlineData("0000000000000000", true)]
+    public async Task CoordinatorStopsHardwareSearchAtBatchBoundary(string suffix, bool forceDirectCompute)
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "pm-gpu-stop-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            IGpuBackend backend = forceDirectCompute ? new DirectComputeBackend() : new HybridGpuBackend();
+            using var coordinator = new MultiGpuCoordinator(backend, new AppStateStore(directory),
+                new DpapiVaultStore(directory), new CoordinatorOptions { TelemetryInterval = TimeSpan.FromMilliseconds(20) });
+            coordinator.Initialize();
+            coordinator.SetAutoPauseOnHit(false);
+            var firstProgress = new TaskCompletionSource<CoordinatorTelemetry>(TaskCreationOptions.RunContinuationsAsynchronously);
+            coordinator.TelemetryUpdated += (_, telemetry) =>
+            {
+                if (telemetry.SessionWork.UniqueCandidatesCompleted != 0)
+                {
+                    firstProgress.TrySetResult(telemetry);
+                }
+            };
+
+            await coordinator.StartSearchAsync(KeyIdPattern.Parse(suffix));
+            CoordinatorTelemetry beforeStop = await firstProgress.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            long stopStarted = Stopwatch.GetTimestamp();
+            await coordinator.StopAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            TimeSpan elapsed = Stopwatch.GetElapsedTime(stopStarted);
+
+            CoordinatorTelemetry final = coordinator.LatestTelemetry;
+            Assert.Equal(CoordinatorState.Idle, final.State);
+            Assert.True(final.SessionWork.UniqueCandidatesCompleted >= beforeStop.SessionWork.UniqueCandidatesCompleted);
+            Assert.Equal(0L, final.SessionWork.RescanEvaluations);
+            GpuDeviceInfo device = coordinator.GetEnabledDevices()[0];
+            _output.WriteLine($"GPU: {device.Name}, backend={device.BackendName}, kernel={device.KernelVersion}, suffix={suffix.Length} hex, StopAsync to cleanup={elapsed.TotalMilliseconds:F2} ms");
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
             }
         }
     }

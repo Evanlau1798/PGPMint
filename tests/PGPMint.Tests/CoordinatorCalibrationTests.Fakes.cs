@@ -82,18 +82,39 @@ public partial class CoordinatorCalibrationTests
             uint startTimestamp,
             uint timestampCount,
             KeyIdPattern pattern,
-            int capacity = 1024)
+            int capacity = 1024) =>
+            ScanBatch(publicKeys, startTimestamp, timestampCount, pattern, capacity).Hits;
+
+        public SearchBatchResult ScanBatch(
+            IReadOnlyList<byte[]> publicKeys,
+            uint startTimestamp,
+            uint timestampCount,
+            KeyIdPattern pattern,
+            int capacity = 1024,
+            SearchResultMode resultMode = SearchResultMode.EnumerateAll,
+            CancellationToken cancellationToken = default)
         {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return new SearchBatchResult([[], [], [], []], 0, 0)
+                {
+                    HashRangeFullyProcessed = false,
+                    ResultsComplete = false,
+                    WasCancelled = true
+                };
+            }
+
             if (_batchDelayMs > 0)
             {
                 Thread.Sleep(_batchDelayMs);
             }
 
             var results = new IReadOnlyList<uint>[4];
+            Array.Fill<IReadOnlyList<uint>>(results, Array.Empty<uint>());
+            var batch = new SearchBatchResult(results, (long)timestampCount * KeysPerBatch, HashEvaluations: null);
             if (pattern.FixedHexLength >= 10)
             {
-                for (int i = 0; i < 4; i++) results[i] = Array.Empty<uint>();
-                return results;
+                return batch;
             }
 
             uint scanLimit = Math.Min(timestampCount, 64u);
@@ -106,11 +127,16 @@ public partial class CoordinatorCalibrationTests
                     if (pattern.Matches(OpenPgpV4Packet.ComputeKeyIdUInt64(publicKeys[lane], ts)))
                     {
                         hits.Add(ts);
+                        if (resultMode == SearchResultMode.FindOne)
+                        {
+                            results[lane] = hits;
+                            return batch;
+                        }
                     }
                 }
                 results[lane] = hits;
             }
-            return results;
+            return batch;
         }
 
         public void Dispose() { }

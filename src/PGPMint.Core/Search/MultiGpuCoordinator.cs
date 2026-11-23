@@ -61,6 +61,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
     private readonly CoordinatorOptions _options;
 
     private readonly object _lifecycleLock = new();
+    private readonly object _submissionGate = new();
     private readonly Dictionary<string, bool> _enabledDevices = new(StringComparer.Ordinal);
     private readonly Dictionary<string, CalibrationRecord> _calibrations = new(StringComparer.Ordinal);
     private readonly Dictionary<string, WorkerRuntimeState> _workerStates = new(StringComparer.Ordinal);
@@ -74,6 +75,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
     private volatile bool _pausedExplicitly;
     private volatile bool _pausedByZeroSlider;
     private int _autoPauseTriggered;
+    private bool _submissionFailed;
     private int _rateEpoch;
 
     private ulong _persistedTotalChecked;
@@ -403,6 +405,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
             SyncPatternProgressScope(pattern);
 
             _errorMessage = null;
+            _submissionFailed = false;
             Interlocked.Exchange(ref _sessionChecked, 0);
             _sessionWork = new SearchWorkMetrics(0, 0, 0, 0, 0);
             Interlocked.Exchange(ref _autoPauseTriggered, 0);
