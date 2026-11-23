@@ -44,6 +44,7 @@ public class DirectComputeGpuTests
         {
             GpuDeviceInfo gpuInfo = backend.EnumerateHardwareGpus()[0];
             using IGpuSearchDevice device = backend.CreateDevice(gpuInfo);
+            _output.WriteLine($"GPU: {device.Info.Name}, backend={device.Info.BackendName}, driver={device.Info.DriverVersion}, kernel={device.KernelVersion}");
 
             // 1. RFC 8032 13-char suffix hit
             byte[][] rfcKeys = Enumerable.Range(0, 4).Select(i =>
@@ -53,7 +54,7 @@ public class DirectComputeGpuTests
                 return copy;
             }).ToArray();
 
-            string expectedKeyId = OpenPgpV4Packet.ComputeKeyId(rfcKeys[2], Rfc8032Timestamp);
+            string expectedKeyId = OpenPgpFingerprintOracle.Compute(rfcKeys[2], Rfc8032Timestamp)[^16..];
             var suffixPattern = KeyIdPattern.Parse(expectedKeyId[^13..]);
             var suffixHits = device.ScanGroup(rfcKeys, Rfc8032Timestamp - 500, 1024, suffixPattern);
             Assert.Contains(Rfc8032Timestamp, suffixHits[2]);
@@ -66,32 +67,45 @@ public class DirectComputeGpuTests
                 return copy;
             }).ToArray();
 
-            uint start = uint.MaxValue - 1030;
-            uint count = 1031;
-
-            var overflowPattern = KeyIdPattern.Parse("0");
-            var gpuHits = device.ScanGroup(boundaryKeys, start, count, overflowPattern, capacity: 3);
-
-            for (int lane = 0; lane < 4; lane++)
+            const uint start = uint.MaxValue - 1030;
+            const uint count = 1031;
+            const int capacity = 3;
+            const string boundaryKeyId = "5A89F6783F33E405";
+            const string zeroHitSuffix = "0000000000000000";
+            Assert.Equal(boundaryKeyId, OpenPgpFingerprintOracle.Compute(boundaryKeys[3], uint.MaxValue)[^16..]);
+            int[] denseCounts = [71, 66, 71, 53];
+            string[] suffixes = ["0", boundaryKeyId[^4..], boundaryKeyId[^8..], boundaryKeyId[^9..],
+                boundaryKeyId[^12..], boundaryKeyId, zeroHitSuffix];
+            foreach (string suffix in suffixes)
             {
-                var expected = new List<uint>();
-                for (uint offset = 0; offset < count; offset++)
+                var gpuHits = device.ScanGroup(boundaryKeys, start, count, KeyIdPattern.Parse(suffix), capacity);
+                for (int lane = 0; lane < boundaryKeys.Length; lane++)
                 {
-                    uint ts = start + offset;
-                    if (overflowPattern.Matches(OpenPgpV4Packet.ComputeKeyIdUInt64(boundaryKeys[lane], ts)))
+                    var expected = new List<uint>();
+                    for (uint offset = 0; offset < count; offset++)
                     {
-                        expected.Add(ts);
+                        uint timestamp = start + offset;
+                        if (OpenPgpFingerprintOracle.Compute(boundaryKeys[lane], timestamp).EndsWith(suffix, StringComparison.Ordinal))
+                        {
+                            expected.Add(timestamp);
+                        }
                     }
+
+                    if (suffix.Length == 1)
+                    {
+                        Assert.Equal(denseCounts[lane], expected.Count);
+                    }
+                    else if (lane == 3 && suffix != zeroHitSuffix)
+                    {
+                        Assert.Equal(new[] { uint.MaxValue }, expected);
+                    }
+                    else
+                    {
+                        Assert.Empty(expected);
+                    }
+                    Assert.Equal(expected, gpuHits[lane].Order());
                 }
-
-                Assert.True(expected.Count > 3);
-                Assert.Equal(expected, gpuHits[lane].OrderBy(x => x).ToList());
             }
-
-            string boundaryKeyId = OpenPgpV4Packet.ComputeKeyId(boundaryKeys[3], uint.MaxValue);
-            var boundaryPattern = KeyIdPattern.Parse(boundaryKeyId[^13..]);
-            var boundaryHits = device.ScanGroup(boundaryKeys, start, count, boundaryPattern, capacity: 3);
-            Assert.Equal(new[] { uint.MaxValue }, boundaryHits[3].ToArray());
         }
     }
 

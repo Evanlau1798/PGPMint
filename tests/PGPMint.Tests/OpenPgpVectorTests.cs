@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using PGPMint.Core.Crypto;
 using Xunit;
 
@@ -49,9 +50,24 @@ public class OpenPgpVectorTests
         uint[] fixedSchedule = Sha1ScheduleHelper.ComputeFixedSchedule(publicKey);
 
         ulong computedKeyId = Sha1ScheduleHelper.ComputeKeyIdFromFixedSchedule(fixedSchedule, timestamp);
-        string expectedKeyId = OpenPgpV4Packet.ComputeKeyId(publicKey, timestamp);
+        string expectedKeyId = OpenPgpFingerprintOracle.Compute(publicKey, timestamp)[^16..];
 
         Assert.Equal(expectedKeyId, computedKeyId.ToString("X16"));
+    }
+
+    [Fact]
+    public void OpenPgpV4PacketMatchesRfc9580AppendixA1()
+    {
+        byte[] publicKey = Convert.FromHexString("3F098994BDD916ED4053197934E4A87C80733A1280D62F8010992E43EE3B2406");
+        const uint timestamp = 0x53F35F0B;
+        const string fingerprint = "C959BDBAFA32A2F89A153B678CFDE12197965A9A";
+        byte[] hashInput = OpenPgpV4Packet.BuildPublicKeyHashInput(publicKey, timestamp);
+
+        Assert.Equal(54, hashInput.Length);
+        Assert.Equal(fingerprint, Convert.ToHexString(SHA1.HashData(hashInput)));
+        Assert.Equal(fingerprint, OpenPgpV4Packet.ComputeFingerprint(publicKey, timestamp));
+        Assert.Equal(fingerprint, OpenPgpFingerprintOracle.Compute(publicKey, timestamp));
+        Assert.Equal(fingerprint[^16..], OpenPgpV4Packet.ComputeKeyId(publicKey, timestamp));
     }
 
     [Fact]
