@@ -25,10 +25,9 @@ public sealed partial class MainWindow : Window
     private const uint WmSetIcon = 0x0080;
     private const int SwRestore = 9;
     private const int LogicalDefaultWidth = 460;
-    private const int LogicalBaseDashboardHeight = 442;
-    private const int LogicalSetupHeight = 500;
+    private const int LogicalBaseDashboardHeight = 428;
     private const int LogicalMinWidth = 380;
-    private const int LogicalMinHeight = 420;
+    private const int LogicalMinHeight = 410;
     private const int MaxAutoStretchMatches = 5;
 
     private readonly TrayIconService _trayIcon;
@@ -38,10 +37,12 @@ public sealed partial class MainWindow : Window
     private readonly WindowMinSizeHelper _minSizeHelper;
     private bool _allowClose;
     private bool _isDialogOpen;
+    private bool _isStartingSetup;
     private bool _syncingLangCombo;
     private bool _coercingSlider;
     private bool? _lastSizedSetupMode;
     private int _lastSizedVisibleMatchRows = -1;
+    private double _lastSetupDesiredClientHeight;
 
     public MainViewModel ViewModel { get; }
 
@@ -104,19 +105,6 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) => _minSizeHelper.Dispose();
     }
 
-    private double GetDpiScale()
-    {
-        try
-        {
-            uint dpi = GetDpiForWindow(_hwnd);
-            return dpi >= 96 ? dpi / 96.0 : 1.0;
-        }
-        catch
-        {
-            return 1.0;
-        }
-    }
-
     public void HideToTray()
     {
         AppWindow.Hide();
@@ -159,7 +147,8 @@ public sealed partial class MainWindow : Window
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(MainViewModel.State)
+        if (e.PropertyName is nameof(MainViewModel.IsInitialized)
+            or nameof(MainViewModel.State)
             or nameof(MainViewModel.ShowSetupWizard)
             or nameof(MainViewModel.HasDraftError)
             or nameof(MainViewModel.HasError)
@@ -194,10 +183,55 @@ public sealed partial class MainWindow : Window
         SyncSetupLanguageCombo();
 
         ErrorBanner.Visibility = ViewModel.HasError ? Visibility.Visible : Visibility.Collapsed;
-        NoMatchesEmptyText.Visibility = ViewModel.HasMatches ? Visibility.Collapsed : Visibility.Visible;
+        NoMatchesEmptyPanel.Visibility = ViewModel.HasMatches ? Visibility.Collapsed : Visibility.Visible;
         MatchesContentGrid.Visibility = ViewModel.HasMatches ? Visibility.Visible : Visibility.Collapsed;
 
         AdjustWindowHeightForMatchesAndMode();
+    }
+
+    private void OnSetupContentSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (!ViewModel.IsInitialized || !ViewModel.ShowSetupWizard || e.NewSize.Height <= 0)
+        {
+            return;
+        }
+
+        ResizeSetupWindowToContent(e.NewSize.Height);
+    }
+
+    private void OnErrorBannerSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (ViewModel.IsInitialized && ViewModel.ShowSetupWizard && SetupContentPanel.ActualHeight > 0)
+        {
+            ResizeSetupWindowToContent(SetupContentPanel.ActualHeight);
+        }
+    }
+
+    private void ResizeSetupWindowToContent(double setupContentHeight)
+    {
+        double errorExtra = ErrorBanner.Visibility == Visibility.Visible && ErrorBanner.ActualHeight > 0
+            ? ErrorBanner.ActualHeight + 12.0
+            : 0.0;
+
+        // Title bar (38) + Main Viewport top padding (6) + Setup card height + bottom padding (16)
+        // keeps left, right, and bottom outer margins equal (16 DIP) matching the card's internal padding.
+        double desiredClientHeight = 38.0 + 6.0 + 16.0 + errorExtra + setupContentHeight;
+        if (_lastSizedSetupMode == true && Math.Abs(desiredClientHeight - _lastSetupDesiredClientHeight) <= 1.0)
+        {
+            return;
+        }
+
+        bool initialCenter = _lastSizedSetupMode is null;
+        _lastSizedSetupMode = true;
+        _lastSizedVisibleMatchRows = 0;
+        _lastSetupDesiredClientHeight = desiredClientHeight;
+
+        WindowMinSizeHelper.ResizeClientHeightClampedToWorkArea(
+            AppWindow,
+            _hwnd,
+            desiredClientHeight,
+            LogicalMinHeight,
+            centerOnMonitor: initialCenter);
     }
 
     private void AdjustWindowHeightForMatchesAndMode()
@@ -208,31 +242,28 @@ public sealed partial class MainWindow : Window
         }
 
         bool isSetup = ViewModel.ShowSetupWizard;
-        int visibleRows = isSetup ? 0 : Math.Clamp(ViewModel.MatchesCount, 0, MaxAutoStretchMatches);
+        if (isSetup)
+        {
+            if (SetupContentPanel.ActualHeight > 0)
+            {
+                ResizeSetupWindowToContent(SetupContentPanel.ActualHeight);
+            }
+            return;
+        }
 
-        if (_lastSizedSetupMode == isSetup && _lastSizedVisibleMatchRows == visibleRows)
+        int visibleRows = Math.Clamp(ViewModel.MatchesCount, 0, MaxAutoStretchMatches);
+        if (_lastSizedSetupMode == false && _lastSizedVisibleMatchRows == visibleRows)
         {
             return;
         }
 
         bool initialCenter = _lastSizedSetupMode is null;
-        _lastSizedSetupMode = isSetup;
+        _lastSizedSetupMode = false;
         _lastSizedVisibleMatchRows = visibleRows;
 
-        int targetLogicalHeight;
-        if (isSetup)
-        {
-            targetLogicalHeight = LogicalSetupHeight;
-        }
-        else if (visibleRows == 0)
-        {
-            targetLogicalHeight = LogicalBaseDashboardHeight;
-        }
-        else
-        {
-            // Expand dynamically for 1..5 matched keys; cap at 5 items so 6+ items scroll inside MatchesCard
-            targetLogicalHeight = LogicalBaseDashboardHeight + 22 + (visibleRows * 38);
-        }
+        int targetLogicalHeight = visibleRows == 0
+            ? LogicalBaseDashboardHeight
+            : LogicalBaseDashboardHeight + 24 + (visibleRows * 38);
 
         WindowMinSizeHelper.ResizeHeightClampedToWorkArea(
             AppWindow,
@@ -327,10 +358,27 @@ public sealed partial class MainWindow : Window
         _openSettingsCallback();
     }
 
-    private void OnSetupFinishClick(object sender, RoutedEventArgs e)
+    private async void OnSetupFinishClick(object sender, RoutedEventArgs e)
     {
-        ViewModel.CompleteSetup();
-        UpdateVisualStates();
+        if (_isStartingSetup)
+        {
+            return;
+        }
+
+        _isStartingSetup = true;
+        try
+        {
+            await ViewModel.CompleteSetupAndStartAsync();
+            UpdateVisualStates();
+        }
+        catch (Exception ex)
+        {
+            ViewModel.ReportError(ex.Message);
+        }
+        finally
+        {
+            _isStartingSetup = false;
+        }
     }
 
     private void OnRateSliderValueChanged(object sender, RangeBaseValueChangedEventArgs e)
@@ -650,7 +698,4 @@ public sealed partial class MainWindow : Window
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    private static extern uint GetDpiForWindow(IntPtr hwnd);
 }

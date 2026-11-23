@@ -96,36 +96,24 @@ public sealed partial class SettingsWindow : Window
             return;
         }
 
-        // Expand vertically to fit all settings content without scrolling, clamped to monitor work area.
-        int desiredLogicalHeight = (int)Math.Ceiling(e.NewSize.Height) + 38 + 16;
-        if (_centeredOnce && desiredLogicalHeight == _lastDesiredLogicalHeight)
+        // SettingsContentPanel has VerticalAlignment="Top", so e.NewSize.Height is the true natural
+        // content height (independent of viewport size), preventing resize feedback loops.
+        int desiredClientLogicalHeight = (int)Math.Ceiling(e.NewSize.Height) + 38;
+        if (_centeredOnce && Math.Abs(desiredClientLogicalHeight - _lastDesiredLogicalHeight) <= 1)
         {
             return;
         }
 
         bool centerNow = !_centeredOnce;
         _centeredOnce = true;
-        _lastDesiredLogicalHeight = desiredLogicalHeight;
+        _lastDesiredLogicalHeight = desiredClientLogicalHeight;
 
-        WindowMinSizeHelper.ResizeHeightClampedToWorkArea(
+        WindowMinSizeHelper.ResizeClientHeightClampedToWorkArea(
             AppWindow,
             _hwnd,
-            desiredLogicalHeight,
+            desiredClientLogicalHeight,
             LogicalMinHeight,
             centerOnMonitor: centerNow);
-    }
-
-    private double GetDpiScale()
-    {
-        try
-        {
-            uint dpi = GetDpiForWindow(_hwnd);
-            return dpi >= 96 ? dpi / 96.0 : 1.0;
-        }
-        catch
-        {
-            return 1.0;
-        }
     }
 
     private void OnRootLayoutSizeChanged(object sender, SizeChangedEventArgs e)
@@ -297,7 +285,4 @@ public sealed partial class SettingsWindow : Window
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    private static extern uint GetDpiForWindow(IntPtr hwnd);
 }

@@ -28,6 +28,26 @@ public sealed record KeyIdPattern(
 
     public bool Matches(ulong keyId) => (keyId & Mask) == Target;
 
+    public bool MatchesKeyIdHex(string? keyIdHex)
+    {
+        if (string.IsNullOrWhiteSpace(keyIdHex))
+        {
+            return false;
+        }
+
+        ReadOnlySpan<char> trimmed = keyIdHex.AsSpan().Trim();
+        if (trimmed.Length != KeyIdHexLength)
+        {
+            return false;
+        }
+
+        return ulong.TryParse(
+            trimmed,
+            System.Globalization.NumberStyles.HexNumber,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out ulong keyIdValue) && Matches(keyIdValue);
+    }
+
     public double ComputeCumulativeProbability(ulong checkedCandidates)
     {
         if (checkedCandidates == 0)

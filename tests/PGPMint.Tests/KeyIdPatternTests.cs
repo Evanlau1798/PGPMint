@@ -101,4 +101,24 @@ public class KeyIdPatternTests
         string single8 = FormattingHelpers.FormatSingleHashProbabilityDetail(8);
         Assert.Equal("1 / 16\u2078 (\u2248 2.33 \u00D7 10\u207B\u00B9\u2070)", single8);
     }
+
+    [Fact]
+    public void MatchesKeyIdHexValidatesActiveSuffixAgainstStoredKeyIds()
+    {
+        KeyIdPattern target = KeyIdPattern.Parse("7767 6767 6767");
+
+        Assert.True(target.MatchesKeyIdHex("8578776767676767"));
+        Assert.True(target.MatchesKeyIdHex("8578776767676767 "));
+        Assert.True(target.MatchesKeyIdHex("abcd776767676767"));
+        Assert.False(target.MatchesKeyIdHex("8578776767676768"));
+        Assert.False(target.MatchesKeyIdHex("776767676767")); // not 16-hex Key ID
+        Assert.False(target.MatchesKeyIdHex("ZZZZ776767676767"));
+        Assert.False(target.MatchesKeyIdHex(null));
+        Assert.False(target.MatchesKeyIdHex(""));
+
+        KeyIdPattern full16LeadingZero = KeyIdPattern.Parse("0000 1234 5678 9ABC");
+        Assert.True(full16LeadingZero.MatchesKeyIdHex("0000123456789ABC"));
+        Assert.True(full16LeadingZero.MatchesKeyIdHex("0000123456789abc"));
+        Assert.False(full16LeadingZero.MatchesKeyIdHex("1000123456789ABC"));
+    }
 }

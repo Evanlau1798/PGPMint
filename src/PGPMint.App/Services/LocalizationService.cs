@@ -55,7 +55,32 @@ public sealed class LocalizationService : ObservableObject
     public LocalizationService(string? externalStringsDirectory = null)
     {
         LoadEmbeddedBundles();
-        LoadExternalBundles(externalStringsDirectory ?? Path.Combine(AppContext.BaseDirectory, "Strings"));
+
+        if (!string.IsNullOrWhiteSpace(externalStringsDirectory))
+        {
+            LoadExternalBundles(externalStringsDirectory);
+        }
+        else
+        {
+            string baseStringsDir = Path.Combine(AppContext.BaseDirectory, "Strings");
+            LoadExternalBundles(baseStringsDir);
+
+            // In single-file self-extracting builds, AppContext.BaseDirectory points to the extraction cache.
+            // Also probe next to the actual executable so users can drop custom Strings/*.json side-by-side.
+            string? exeDir = Path.GetDirectoryName(Environment.ProcessPath);
+            if (!string.IsNullOrWhiteSpace(exeDir))
+            {
+                string exeStringsDir = Path.Combine(exeDir, "Strings");
+                if (!string.Equals(
+                    Path.GetFullPath(exeStringsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    Path.GetFullPath(baseStringsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    LoadExternalBundles(exeStringsDir);
+                }
+            }
+        }
+
         ApplySetting(AutoLanguageCode);
     }
 
@@ -296,6 +321,7 @@ public sealed class LocalizationService : ObservableObject
 
     public string TraySpeedupGenericHint => Get("TraySpeedupGenericHint");
     public string ProbabilityPrefix => Get("ProbabilityPrefix");
+    public string Found => Get("Found");
     public string NoResults => Get("NoResults");
     public string SuffixRuleHint => Get("SuffixRuleHint");
     public string TargetPlaceholder => Get("TargetPlaceholder");

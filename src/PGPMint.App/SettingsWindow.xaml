@@ -16,6 +16,7 @@
 
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel x:Name="SettingsContentPanel"
+                        VerticalAlignment="Top"
                         Padding="16,6,16,16"
                         Spacing="12"
                         SizeChanged="OnSettingsContentSizeChanged">
@@ -127,11 +128,13 @@
                                    FontSize="13"
                                    FontWeight="SemiBold" />
 
-                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.Gpus}">
-                            <ItemsRepeater.Layout>
-                                <StackLayout Spacing="6" />
-                            </ItemsRepeater.Layout>
-                            <ItemsRepeater.ItemTemplate>
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.Gpus}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Spacing="6" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:GpuItemViewModel">
                                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8" MinHeight="28">
                                         <CheckBox Grid.Column="0"
@@ -158,8 +161,8 @@
                                         </Border>
                                     </Grid>
                                 </DataTemplate>
-                            </ItemsRepeater.ItemTemplate>
-                        </ItemsRepeater>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                     </StackPanel>
                 </Border>
 

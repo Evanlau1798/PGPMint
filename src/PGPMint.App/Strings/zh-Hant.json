@@ -53,6 +53,7 @@
     "SettingStartWithWindows": "開機自動啟動",
     "TrayMiniHud": "浮動微窗",
     "ProbabilityPrefix": "機率",
+    "Found": "已發現",
     "SingleHashProbabilityFormat": "單次命中機率：{0}",
     "TraySpeedupMeasuredFormat": "關閉此視窗至系統匣可再加速 ~{0}% 速度",
     "TraySpeedupGenericHint": "關閉此視窗至系統匣可釋放介面顯卡資源以提升速度",

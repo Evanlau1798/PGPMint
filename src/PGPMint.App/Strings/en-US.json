@@ -53,6 +53,7 @@
     "SettingStartWithWindows": "Launch at startup",
     "TrayMiniHud": "Floating HUD",
     "ProbabilityPrefix": "Prob",
+    "Found": "Found",
     "SingleHashProbabilityFormat": "Single-hash hit probability: {0}",
     "TraySpeedupMeasuredFormat": "Close window to tray for ~{0}% faster speed",
     "TraySpeedupGenericHint": "Close window to tray to free UI GPU resources for higher speed",

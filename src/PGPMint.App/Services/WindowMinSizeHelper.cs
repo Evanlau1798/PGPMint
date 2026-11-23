@@ -106,6 +106,21 @@ public sealed class WindowMinSizeHelper : IDisposable
         }
     }
 
+    public static void ResizeClientHeightClampedToWorkArea(
+        AppWindow appWindow,
+        IntPtr hwnd,
+        double targetClientLogicalHeight,
+        int minLogicalHeight,
+        bool centerOnMonitor = false)
+    {
+        double scale = GetDpiScale(hwnd);
+        int frameExtraPx = appWindow.ClientSize.Height > 0
+            ? Math.Max(0, appWindow.Size.Height - appWindow.ClientSize.Height)
+            : (int)Math.Round(8.0 * scale);
+        int targetOuterLogicalHeight = (int)Math.Ceiling(targetClientLogicalHeight + (frameExtraPx / scale));
+        ResizeHeightClampedToWorkArea(appWindow, hwnd, targetOuterLogicalHeight, minLogicalHeight, centerOnMonitor);
+    }
+
     public static void ResizeHeightClampedToWorkArea(
         AppWindow appWindow,
         IntPtr hwnd,

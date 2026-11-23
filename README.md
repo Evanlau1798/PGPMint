@@ -48,12 +48,11 @@ Most existing OpenPGP vanity key generators are command-line utilities bound to 
   - Uses DXGI + WDDM `D3DKMTQueryAdapterInfo` to enumerate real physical hardware GPUs while strictly excluding CPU software renderers (WARP), remote adapters, and virtual indirect display drivers (such as Virtual Desktop, SuperDisplay, and Parsec).
   - Automatically accelerates via native `OpenCL.dll` P/Invoke (four-key interleaved kernel with hardware `rotate` and `bitselect`) on NVIDIA, AMD, and Intel drivers, and transparently falls back to DirectCompute (`D3D11 cs_5_0`) on any Windows GPU lacking an OpenCL ICD (including Windows on ARM).
 - **Multi-GPU Parallelism and Real-Time Median Speed Control**
-  - First-launch Setup lets you choose language, enter your desired 1-16 hex Key ID suffix, and select hardware GPUs with zero speculative speed estimates.
-  - Starting a search automatically measures each GPU at full speed for 30 seconds on your real target pattern (zero wasted candidates; auto-stops immediately on the first match if enabled) to lock in a true median baseline.
-  - A two-stage throttle slider provides `1%-99%` precision rate limiting (`%` + actual rate limit) and a detent-separated `MAX` (full-speed) position that continuously refines the median baseline at low frequency and stops sampling the moment you drag back into `1%-99%`.
+  - First-launch Setup puts target Key ID input, hardware GPU selection, language selector, and Start in a single unified card with zero speculative speed estimates; clicking **Start** immediately enters the dashboard and begins the 30-second actual speed measurement on your real target pattern (zero wasted candidates; auto-stops immediately on the first match if enabled).
+  - Before the 30-second baseline finishes, the throttle slider stays locked at `MAX`. Once measured, the two-stage slider offers `1%-99%` capped precision (`%` indicator only) and a magnetic resistance detent separating `99%` from uncapped `MAX` (with dynamic median tracking that stops sampling the moment you drag back into `1%-99%`).
 - **Minimalist Dashboard, Extensible i18n, and Separate Settings Window**
-  - Main window stays focused on current target preview, live measured hash rate, two-stage rate slider, unified Start/Stop action (always persisting progress on stop), GPU-friendly smooth progress bar, cumulative hit probability with single-hash probability tooltip, scientific-notation checked candidate count, live ETA, and an always-visible adaptive results panel with one-click clear-all.
-  - Independent Settings window puts an extensible JSON-backed language selector (`Strings/*.json`) at the top, followed by Key ID suffix editing, responsive preferences layout, and hardware GPU selection.
+  - Main window stays focused on current target preview, live measured hash rate, two-stage rate slider, unified Start/Stop action (always persisting progress on stop), GPU-friendly smooth progress bar, cumulative hit probability with single-hash probability tooltip (switching cleanly to `Found` with locked 100% bar once a matching key exists for the active target), scientific-notation checked candidate count (`^`), live ETA, and an always-visible adaptive results panel (showing a subtle tray speedup hint while running before the first match, and auto-stretching to display up to 5 saved results).
+  - Independent Settings window puts an extensible JSON-backed language selector (`Strings/*.json`, loaded from embedded defaults or a side-by-side `Strings` folder) at the top, followed by Key ID suffix editing, responsive preferences layout, and hardware GPU selection, automatically sized to fit content within the monitor work area.
 - **System Tray Keep-Alive & Zero-GPU-Overhead Mini HUD**
   - Closing the main window minimizes PGPMint to the Windows notification area so WinUI 3 stops consuming GPU rendering cycles while search runs at full throughput.
   - Optional pure-CPU Win32 layered floating Mini HUD (rendered via Direct2D Software RenderTarget + DirectWrite grayscale antialiasing, auto dark/light theme, draggable with saved position, auto-hides during fullscreen games/presentations) displays live hash rate, cumulative probability, ETA, and progress bar while minimized to tray.
@@ -107,10 +106,10 @@ CPU: Recompute full SHA-1 fingerprint -> Verify suffix -> Encrypt seed via DPAPI
 ## Quick Start
 
 1. Launch `PGPMint.exe`.
-2. **Initial Setup**: Pick your language, enter your desired 1-16 hex Key ID suffix (`0-9`, `A-F`, e.g. `01 2345 6789`), select hardware GPU(s), and click **Finish**.
-3. Press **Start** on the main dashboard. On the first run, PGPMint automatically runs at full speed for 30 seconds to measure your GPU's real median throughput while searching your target.
-4. Once measured, use the two-stage slider anytime (`1%–99%` capped with live limit readout, or push past the right detent for uncapped `MAX` with dynamic median tracking), press **Stop** anytime to halt and persist all checked progress, or close the window to keep searching quietly in the system tray with the pure-CPU floating Mini HUD.
-5. Click the gear icon to open **Settings** whenever you want to switch language (or drop additional `Strings/*.json` locale files), edit the target Key ID suffix, adjust preferences, or toggle GPUs.
+2. **Initial Setup**: Enter your desired 1-16 hex Key ID suffix (`0-9`, `A-F`, e.g. `01 2345 6789`), select hardware GPU(s), pick your language, and click **Start**.
+3. On the first run, PGPMint automatically runs at full speed for 30 seconds to measure your GPU's real median throughput while searching your target.
+4. Once measured, use the two-stage slider anytime (`1%-99%` capped, or push past the magnetic resistance detent to uncapped `MAX` with dynamic median tracking), press **Stop** anytime to halt and persist all checked progress, or close the window to keep searching quietly in the system tray with the pure-CPU floating Mini HUD.
+5. Click the gear icon to open **Settings** whenever you want to switch language (or place additional `Strings/*.json` locale files next to `PGPMint.exe`), edit the target Key ID suffix, adjust preferences, or toggle GPUs.
 
 ---
 
@@ -155,8 +154,11 @@ dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64 --filter "C
 # Build Release solution
 dotnet build PGPMint.sln -p:Platform=x64 -c Release
 
-# Publish standalone portable self-contained build (x64)
-dotnet publish src\PGPMint.App\PGPMint.App.csproj -p:Platform=x64 -c Release -r win-x64 --self-contained true
+# Publish standalone compressed single-file executable (x64)
+dotnet publish src\PGPMint.App\PGPMint.App.csproj -p:Platform=x64 -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+
+# Publish standalone compressed single-file executable (ARM64)
+dotnet publish src\PGPMint.App\PGPMint.App.csproj -p:Platform=ARM64 -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true
 ```
 
 ---

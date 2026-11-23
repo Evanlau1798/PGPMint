@@ -68,7 +68,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private bool _suppressSliderCallback;
     private bool _suppressGpuToggleCallback;
     private bool _suppressLanguageCallback;
-    private bool _isInitialized;
     private bool _wasCalibrating;
     private bool _mainWindowInTray;
     private long _lastHitNotifyTick = -NotificationThrottleMs;
@@ -77,8 +76,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private double _trayFullSpeedEmaHps;
     private double _fgFullSpeedEmaHps;
     private long _lastTraySpeedPersistTick;
+    private long _lastTrayHintUiUpdateTick = -1000;
 
-    public bool IsInitialized => _isInitialized;
+    [ObservableProperty] private bool _isInitialized;
 
     // Telemetry snapshot anchors for GPU-friendly smooth progress bar interpolation
     private KeyIdPattern? _activePatternObj;
@@ -143,15 +143,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private int _matchesCount;
 
     [ObservableProperty] private bool _autoPauseOnHit = true;
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowTraySpeedupHint))]
-    private bool _minimizeToTrayOnClose = true;
+    [ObservableProperty] private bool _minimizeToTrayOnClose = true;
+    [ObservableProperty] private bool _showTraySpeedupHint;
     [ObservableProperty] private bool _showMiniHudInTray = true;
     [ObservableProperty] private bool _startWithWindows;
     [ObservableProperty] private string _selectedLanguageCode = LocalizationService.AutoLanguageCode;
     [ObservableProperty] private string _transientNotice = string.Empty;
-
-    public bool ShowTraySpeedupHint => MinimizeToTrayOnClose;
 
     public MainViewModel(
         MultiGpuCoordinator coordinator,
@@ -187,7 +184,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public async Task InitializeAsync(bool startedMinimized)
     {
-        if (_isInitialized)
+        if (IsInitialized)
         {
             return;
         }
@@ -241,7 +238,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ShowSetupWizard = !(persisted.HasCompletedSetup && hasSavedValidTarget);
 
         _miniHud.SetSetupActive(ShowSetupWizard);
-        _isInitialized = true;
+        IsInitialized = true;
 
         ValidateDraftTarget();
         ApplyTelemetry(_coordinator.LatestTelemetry);
@@ -297,6 +294,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _coordinator.SetTargetPattern(parsed);
         ValidateDraftTarget();
         ApplyTelemetry(_coordinator.LatestTelemetry);
+        return true;
+    }
+
+    public async Task<bool> CompleteSetupAndStartAsync()
+    {
+        if (!CompleteSetup())
+        {
+            return false;
+        }
+
+        await PrimaryActionAsync();
         return true;
     }
 
@@ -483,7 +491,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             Loc.ApplySetting(langSetting);
             SelectedLanguageCode = Loc.SettingValue;
             RebuildLanguageOptions();
-            if (_isInitialized)
+            if (IsInitialized)
             {
                 _stateStore.Update(s => s.Language = Loc.SettingValue);
             }
@@ -527,7 +535,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnAutoPauseOnHitChanged(bool value)
     {
-        if (_isInitialized)
+        if (IsInitialized)
         {
             _coordinator.SetAutoPauseOnHit(value);
         }
@@ -535,19 +543,24 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnMinimizeToTrayOnCloseChanged(bool value)
     {
-        if (_isInitialized)
+        if (IsInitialized)
         {
             _stateStore.Update(s => s.MinimizeToTrayOnClose = value);
+            UpdateShowTraySpeedupHint(_coordinator.LatestTelemetry);
         }
     }
 
     partial void OnShowMiniHudInTrayChanged(bool value)
     {
-        if (_isInitialized)
+        if (IsInitialized)
         {
             _miniHud.SetEnabledByUser(value);
             _stateStore.Update(s => s.ShowMiniHudInTray = value);
-            UpdateTrayState(_coordinator.LatestTelemetry, ProgressPercent);
+            CoordinatorTelemetry latest = _coordinator.LatestTelemetry;
+            UpdateTrayState(
+                latest,
+                ProgressPercent,
+                latest.State != CoordinatorState.Calibrating && HasMatchForActivePattern());
         }
     }
 
@@ -574,7 +587,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnStartWithWindowsChanged(bool value)
     {
-        if (_isInitialized)
+        if (IsInitialized)
         {
             StartupRegistryService.SetEnabled(value);
             _stateStore.Update(s => s.StartWithWindows = value);
@@ -608,6 +621,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             if (_vaultStore.DeleteMatch(recordId))
             {
                 ReloadMatchesFromVault();
+                ApplyTelemetry(_coordinator.LatestTelemetry);
                 _coordinator.NotifyVaultCountChanged(MatchesCount);
             }
         }
@@ -624,6 +638,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             if (_vaultStore.ClearAllMatches() > 0)
             {
                 ReloadMatchesFromVault();
+                ApplyTelemetry(_coordinator.LatestTelemetry);
                 _coordinator.NotifyVaultCountChanged(0);
             }
         }
@@ -667,6 +682,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _dispatcher.TryEnqueue(() =>
         {
             ReloadMatchesFromVault();
+            ApplyTelemetry(_coordinator.LatestTelemetry);
 
             long nowTick = Environment.TickCount64;
             if (AutoPauseOnHit || nowTick - _lastHitNotifyTick >= NotificationThrottleMs)
@@ -678,7 +694,26 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         });
     }
 
-    private void ApplyTelemetry(CoordinatorTelemetry t)
+    public bool HasMatchForActivePattern()
+    {
+        if (_activePatternObj is null || Matches.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (MatchedKeyItemViewModel item in Matches)
+        {
+            if (string.Equals(item.Record.MatchedPattern, _activePatternObj.CanonicalMask, StringComparison.OrdinalIgnoreCase) ||
+                _activePatternObj.MatchesKeyIdHex(item.Record.KeyId))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void ApplyTelemetry(CoordinatorTelemetry t, bool forceTrayHintTextUpdate = false)
     {
         State = t.State;
         bool activeCompute = t.State is CoordinatorState.Running or CoordinatorState.Calibrating;
@@ -686,6 +721,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _powerKeepAlive.SetActive(activeCompute);
 
         bool hasMeasuredBaseline = t.AllEnabledFullyCalibrated && t.TotalBaselineHps > 0.0;
+        bool activeTargetFound = t.State != CoordinatorState.Calibrating && HasMatchForActivePattern();
 
         // Before or during the initial 30s measurement, hold slider visually at Full Speed (locked).
         // Once measurement finishes, restore the persisted/coordinator logical slider position.
@@ -715,13 +751,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             ? 1.0
             : RateControl.UiSliderToLogical(SliderValue);
         UpdateTargetCapDisplay(logicalSlider, t);
-        UpdateTraySpeedupHint(t);
+        UpdateTraySpeedupHint(t, forceTrayHintTextUpdate);
 
         double rawProgressPercent;
         if (t.State == CoordinatorState.Calibrating)
         {
             double calTotal = _coordinator.FullCalibrationDurationSeconds;
             rawProgressPercent = Math.Clamp((1.0 - (t.CalibrationRemainingSeconds / calTotal)) * 100.0, 0.0, 100.0);
+        }
+        else if (activeTargetFound)
+        {
+            rawProgressPercent = 100.0;
         }
         else
         {
@@ -733,7 +773,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _snapActualHps = t.TotalActualHps;
         _snapCalRemainingSec = t.CalibrationRemainingSeconds;
 
-        if (!activeCompute || _mainWindowInTray || rawProgressPercent < _smoothProgressCurrent - 0.5)
+        if (!activeCompute || _mainWindowInTray ||
+            activeTargetFound ||
+            rawProgressPercent < _smoothProgressCurrent - 0.5)
         {
             _smoothProgressCurrent = rawProgressPercent;
             ProgressPercent = rawProgressPercent;
@@ -746,13 +788,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         SyncSmoothProgressTimer();
 
-        ProbabilityText = FormattingHelpers.FormatLabeledProbability(t.CumulativeProbability, Loc.ProbabilityPrefix);
+        ProbabilityText = activeTargetFound
+            ? Loc.Found
+            : FormattingHelpers.FormatLabeledProbability(t.CumulativeProbability, Loc.ProbabilityPrefix);
         SingleHashProbabilityTooltip = _activePatternObj is not null
             ? Loc.FormatSingleHashProbability(FormattingHelpers.FormatSingleHashProbabilityDetail(_activePatternObj.FixedHexLength))
             : string.Empty;
         CheckedCountText = FormattingHelpers.FormatCheckedCount(t.TotalChecked);
         CheckedCountTooltip = FormattingHelpers.FormatCheckedCountExact(t.TotalChecked);
-        LiveEtaText = FormattingHelpers.FormatEta(t.EstimatedMeanWait, Loc.IsChinese);
+        LiveEtaText = activeTargetFound
+            ? "\u2014"
+            : FormattingHelpers.FormatEta(t.EstimatedMeanWait, Loc.IsChinese);
 
         if (!string.IsNullOrWhiteSpace(t.ErrorMessage))
         {
@@ -784,12 +830,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         UpdateActionPermissions(t);
         ValidateDraftTarget();
-        UpdateTrayState(t, rawProgressPercent);
+        UpdateTrayState(t, rawProgressPercent, activeTargetFound);
     }
 
     private void SyncSmoothProgressTimer()
     {
-        bool shouldRun = !_mainWindowInTray && !ShowSetupWizard &&
+        bool activeTargetFoundInRun = State == CoordinatorState.Running && HasMatchForActivePattern();
+        bool shouldRun = !_mainWindowInTray && !ShowSetupWizard && !activeTargetFoundInRun &&
                          State is CoordinatorState.Running or CoordinatorState.Calibrating;
         if (shouldRun && !_smoothProgressTimer.IsRunning)
         {
@@ -827,6 +874,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
         else if (_activePatternObj is not null)
         {
+            if (HasMatchForActivePattern())
+            {
+                _smoothProgressCurrent = 100.0;
+                if (ProgressPercent < 100.0)
+                {
+                    ProgressPercent = 100.0;
+                }
+                _smoothProgressTimer.Stop();
+                return;
+            }
+
             ulong extra = _snapActualHps > 0.0 ? (ulong)Math.Max(0.0, _snapActualHps * elapsed) : 0UL;
             double prob = _activePatternObj.ComputeCumulativeProbability(_snapTotalChecked + extra);
             targetPct = Math.Clamp(prob * 100.0, 0.0, 100.0);
@@ -872,8 +930,19 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         TargetCapText = $"{pct}%";
     }
 
-    private void UpdateTraySpeedupHint(CoordinatorTelemetry t)
+    private void UpdateShowTraySpeedupHint(CoordinatorTelemetry t)
     {
+        bool hasMeasuredBaseline = t.AllEnabledFullyCalibrated && t.TotalBaselineHps > 0.0;
+        ShowTraySpeedupHint = MinimizeToTrayOnClose &&
+                              !HasMatches &&
+                              t.State == CoordinatorState.Running &&
+                              hasMeasuredBaseline;
+    }
+
+    private void UpdateTraySpeedupHint(CoordinatorTelemetry t, bool forceUiUpdate = false)
+    {
+        UpdateShowTraySpeedupHint(t);
+
         bool activeFullSpeed = t.IsFullSpeed &&
                                t.State is CoordinatorState.Running or CoordinatorState.Calibrating &&
                                t.TotalActualHps > 0.0;
@@ -913,6 +982,16 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             _persistedTrayFullSpeedHps = 0.0;
             _trayFullSpeedEmaHps = 0.0;
         }
+
+        long nowHintTick = Environment.TickCount64;
+        if (!forceUiUpdate &&
+            !string.IsNullOrEmpty(TraySpeedupHintText) &&
+            nowHintTick - _lastTrayHintUiUpdateTick < 1000)
+        {
+            return;
+        }
+
+        _lastTrayHintUiUpdateTick = nowHintTick;
 
         double refTrayHps = Math.Max(_persistedTrayFullSpeedHps, t.TotalBaselineHps);
         double fgHps = _fgFullSpeedEmaHps > 0.0 ? _fgFullSpeedEmaHps : (activeFullSpeed && !_mainWindowInTray ? t.TotalActualHps : 0.0);
@@ -961,7 +1040,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void UpdateTrayState(CoordinatorTelemetry t, double rawProgressPercent)
+    private void UpdateTrayState(CoordinatorTelemetry t, double rawProgressPercent, bool activeTargetFound)
     {
         string toggleLabel = t.State is CoordinatorState.Running or CoordinatorState.Paused
             ? Loc.Stop
@@ -981,7 +1060,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 : hudMeasuring,
             CoordinatorState.Stopping => Loc.Stopping,
             CoordinatorState.Faulted => Loc.Error,
-            _ => t.TotalChecked > 0
+            _ => (t.TotalChecked > 0 || activeTargetFound)
                 ? $"{Loc.Idle}  |  {ProbabilityText}"
                 : Loc.Idle
         };
@@ -1014,7 +1093,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 ? $"PGPMint  {hudMeasuring}\n{rateCompact}"
                 : $"PGPMint  {hudMeasuring}",
             CoordinatorState.Faulted => $"PGPMint - {Loc.Error}",
-            _ => t.TotalChecked > 0
+            _ => (t.TotalChecked > 0 || activeTargetFound)
                 ? $"PGPMint - {Loc.Idle}\n{ProbabilityText} | {CheckedCountText}"
                 : (string.IsNullOrEmpty(ActiveTargetSuffix)
                     ? $"PGPMint - {Loc.Idle}"
@@ -1034,12 +1113,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         string hudProb = t.State == CoordinatorState.Calibrating
             ? $"{Math.Round(rawProgressPercent):F0}%"
-            : probCompact;
+            : (activeTargetFound ? Loc.Found : probCompact);
 
         string hudEta = t.State switch
         {
             CoordinatorState.Calibrating => hudMeasuring,
-            CoordinatorState.Running => LiveEtaText,
+            CoordinatorState.Running => activeTargetFound ? "\u2014" : LiveEtaText,
             _ => "\u2014"
         };
 
@@ -1084,7 +1163,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void RefreshLocalizedDisplays()
     {
         ValidateDraftTarget();
-        ApplyTelemetry(_coordinator.LatestTelemetry);
+        ApplyTelemetry(_coordinator.LatestTelemetry, forceTrayHintTextUpdate: true);
     }
 
     public void Dispose()

@@ -49,7 +49,8 @@
                     BorderThickness="1"
                     CornerRadius="8"
                     Padding="12,8"
-                    Margin="0,0,0,12">
+                    Margin="0,0,0,12"
+                    SizeChanged="OnErrorBannerSizeChanged">
                 <TextBlock Text="{x:Bind ViewModel.ErrorText, Mode=OneWay}"
                            FontSize="12"
                            TextWrapping="Wrap" />
@@ -60,8 +61,10 @@
                           Grid.Row="1"
                           VerticalScrollBarVisibility="Auto"
                           Visibility="Collapsed">
-                <StackPanel Spacing="12" VerticalAlignment="Top">
-                    <Border Style="{StaticResource SurfaceCardStyle}">
+                <StackPanel x:Name="SetupContentPanel"
+                            VerticalAlignment="Top"
+                            SizeChanged="OnSetupContentSizeChanged">
+                    <Border Style="{StaticResource SurfaceCardStyle}" Padding="16">
                         <StackPanel Spacing="12">
                             <TextBlock Text="{x:Bind ViewModel.Loc.SetupTitle, Mode=OneWay}"
                                        FontSize="16"
@@ -91,11 +94,16 @@
                                            Text="{x:Bind ViewModel.DraftErrorText, Mode=OneWay}"
                                            Foreground="#EF4444"
                                            FontSize="12"
+                                           HorizontalAlignment="Center"
+                                           TextAlignment="Center"
+                                           TextWrapping="Wrap"
                                            Visibility="Collapsed" />
 
                                 <TextBlock Text="{x:Bind ViewModel.Loc.SuffixRuleHint, Mode=OneWay}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            FontSize="12"
+                                           HorizontalAlignment="Center"
+                                           TextAlignment="Center"
                                            TextWrapping="Wrap" />
                             </StackPanel>
 
@@ -106,11 +114,13 @@
                                            FontSize="13"
                                            FontWeight="SemiBold" />
 
-                                <ItemsRepeater ItemsSource="{x:Bind ViewModel.Gpus}">
-                                    <ItemsRepeater.Layout>
-                                        <StackLayout Spacing="6" />
-                                    </ItemsRepeater.Layout>
-                                    <ItemsRepeater.ItemTemplate>
+                                <ItemsControl ItemsSource="{x:Bind ViewModel.Gpus}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Spacing="6" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:GpuItemViewModel">
                                             <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8" MinHeight="28">
                                                 <CheckBox Grid.Column="0"
@@ -137,34 +147,33 @@
                                                 </Border>
                                             </Grid>
                                         </DataTemplate>
-                                    </ItemsRepeater.ItemTemplate>
-                                </ItemsRepeater>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                             </StackPanel>
 
-                            <Button Content="{x:Bind ViewModel.Loc.Finish, Mode=OneWay}"
+                            <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <TextBlock Grid.Column="0"
+                                           Text="{x:Bind ViewModel.Loc.SectionLanguage, Mode=OneWay}"
+                                           FontSize="13"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <ComboBox x:Name="SetupLanguageComboBox"
+                                          Grid.Column="1"
+                                          MinWidth="148"
+                                          DisplayMemberPath="DisplayName"
+                                          SelectedValuePath="Code"
+                                          SelectionChanged="OnSetupLanguageSelectionChanged" />
+                            </Grid>
+
+                            <Button Content="{x:Bind ViewModel.Loc.Start, Mode=OneWay}"
                                     Style="{StaticResource AccentButtonStyle}"
                                     HorizontalAlignment="Stretch"
                                     Height="38"
                                     IsEnabled="{x:Bind ViewModel.CanFinishSetup, Mode=OneWay}"
                                     Click="OnSetupFinishClick" />
                         </StackPanel>
-                    </Border>
-
-                    <!-- Language Selection Card Below Main Setup Block -->
-                    <Border Style="{StaticResource SurfaceCardStyle}" Padding="16,10">
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                            <TextBlock Grid.Column="0"
-                                       Text="{x:Bind ViewModel.Loc.SectionLanguage, Mode=OneWay}"
-                                       FontSize="13"
-                                       FontWeight="SemiBold"
-                                       VerticalAlignment="Center" />
-                            <ComboBox x:Name="SetupLanguageComboBox"
-                                      Grid.Column="1"
-                                      MinWidth="148"
-                                      DisplayMemberPath="DisplayName"
-                                      SelectedValuePath="Code"
-                                      SelectionChanged="OnSetupLanguageSelectionChanged" />
-                        </Grid>
                     </Border>
                 </StackPanel>
             </ScrollViewer>
@@ -232,14 +241,6 @@
                                 Height="38"
                                 IsEnabled="{x:Bind ViewModel.CanPrimaryAction, Mode=OneWay}"
                                 Click="OnPrimaryActionClick" />
-
-                        <TextBlock x:Name="TraySpeedupHintTextBlock"
-                                   Text="{x:Bind ViewModel.TraySpeedupHintText, Mode=OneWay}"
-                                   FontSize="11.5"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   HorizontalAlignment="Center"
-                                   TextAlignment="Center"
-                                   TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
 
@@ -281,15 +282,29 @@
                         Grid.Row="2"
                         Style="{StaticResource SurfaceCardStyle}"
                         Padding="14,10"
-                        MinHeight="56"
+                        MinHeight="68"
                         VerticalAlignment="Stretch">
                     <Grid>
-                        <TextBlock x:Name="NoMatchesEmptyText"
-                                   Text="{x:Bind ViewModel.Loc.NoResults, Mode=OneWay}"
-                                   FontSize="13"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center" />
+                        <StackPanel x:Name="NoMatchesEmptyPanel"
+                                    Spacing="4"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center">
+                            <TextBlock x:Name="NoMatchesEmptyText"
+                                       Text="{x:Bind ViewModel.Loc.NoResults, Mode=OneWay}"
+                                       FontSize="13"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       HorizontalAlignment="Center"
+                                       TextAlignment="Center" />
+                            <TextBlock x:Name="TraySpeedupHintTextBlock"
+                                       Text="{x:Bind ViewModel.TraySpeedupHintText, Mode=OneWay}"
+                                       FontSize="11.5"
+                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                       Opacity="0.82"
+                                       HorizontalAlignment="Center"
+                                       TextAlignment="Center"
+                                       TextWrapping="Wrap"
+                                       Visibility="Collapsed" />
+                        </StackPanel>
 
                         <Grid x:Name="MatchesContentGrid"
                               RowDefinitions="Auto,*"
@@ -310,11 +325,13 @@
                             </Grid>
 
                             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                                <ItemsRepeater ItemsSource="{x:Bind ViewModel.Matches}">
-                                    <ItemsRepeater.Layout>
-                                        <StackLayout Spacing="8" />
-                                    </ItemsRepeater.Layout>
-                                    <ItemsRepeater.ItemTemplate>
+                                <ItemsControl ItemsSource="{x:Bind ViewModel.Matches}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Spacing="8" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:MatchedKeyItemViewModel">
                                             <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="6">
                                                 <TextBlock Grid.Column="0"
@@ -351,8 +368,8 @@
                                                 </Button>
                                             </Grid>
                                         </DataTemplate>
-                                    </ItemsRepeater.ItemTemplate>
-                                </ItemsRepeater>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                             </ScrollViewer>
                         </Grid>
                     </Grid>
