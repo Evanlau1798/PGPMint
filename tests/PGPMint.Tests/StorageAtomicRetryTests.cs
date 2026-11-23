@@ -63,8 +63,14 @@ public class StorageAtomicRetryTests
 
             using (var exclusiveLock = new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
-                using var releaseTimer = new Timer(_ => exclusiveLock.Dispose(), null, 120, Timeout.Infinite);
+                var releaser = new Thread(() =>
+                {
+                    Thread.Sleep(120);
+                    exclusiveLock.Dispose();
+                }) { IsBackground = true };
+                releaser.Start();
                 string content = AtomicFileStore.ReadTextWithRetry(filePath, "{}");
+                releaser.Join();
                 Assert.Contains("987654321", content);
             }
         }
@@ -150,8 +156,14 @@ public class StorageAtomicRetryTests
 
             using (var exclusiveLock = new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
-                using var releaseTimer = new Timer(_ => exclusiveLock.Dispose(), null, 80, Timeout.Infinite);
+                var releaser = new Thread(() =>
+                {
+                    Thread.Sleep(80);
+                    exclusiveLock.Dispose();
+                }) { IsBackground = true };
+                releaser.Start();
                 AtomicFileStore.WriteTextAtomic(filePath, "{\"v\":2}");
+                releaser.Join();
             }
 
             Assert.Equal("{\"v\":2}", File.ReadAllText(filePath));

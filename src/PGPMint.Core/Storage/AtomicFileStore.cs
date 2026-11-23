@@ -38,7 +38,7 @@ public static class AtomicFileStore
                 }
                 catch (Exception ex) when (IsTransientSharingError(ex) && attempt < MaxRetries - 1)
                 {
-                    Thread.Sleep(15);
+                    Thread.Sleep(Math.Min(100, 15 + attempt * 10));
                 }
             }
         }
