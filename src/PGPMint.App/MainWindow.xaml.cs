@@ -24,7 +24,7 @@ public sealed partial class MainWindow : Window
     private const uint WmSetIcon = 0x0080;
     private const int SwRestore = 9;
     private const int LogicalDefaultWidth = 480;
-    private const int LogicalDefaultHeight = 460;
+    private const int LogicalDefaultHeight = 480;
     private const int LogicalMinWidth = 420;
     private const int LogicalMinHeight = 380;
 
@@ -34,6 +34,7 @@ public sealed partial class MainWindow : Window
     private readonly IntPtr _hwnd;
     private bool _allowClose;
     private bool _isDialogOpen;
+    private bool _syncingLangCombo;
 
     public MainViewModel ViewModel { get; }
 
@@ -53,9 +54,13 @@ public sealed partial class MainWindow : Window
         _hwnd = WindowNative.GetWindowHandle(this);
         ConfigureWindowChrome();
 
+        SetupLanguageComboBox.ItemsSource = ViewModel.LanguageOptions;
+        SetupLanguageComboBox.Loaded += (_, _) => SyncSetupLanguageCombo();
+
         RateSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnSliderReleased), handledEventsToo: true);
         RateSlider.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(OnSliderReleased), handledEventsToo: true);
-        RateSlider.KeyUp += OnSliderKeyUp;
+        RateSlider.PreviewKeyDown += OnSliderPreviewKeyDown;
+        RateSlider.AddHandler(UIElement.KeyUpEvent, new KeyEventHandler(OnSliderKeyUp), handledEventsToo: true);
 
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         UpdateVisualStates();
@@ -164,11 +169,10 @@ public sealed partial class MainWindow : Window
     {
         if (e.PropertyName is nameof(MainViewModel.State)
             or nameof(MainViewModel.ShowSetupWizard)
-            or nameof(MainViewModel.SetupStep)
             or nameof(MainViewModel.HasDraftError)
-            or nameof(MainViewModel.DraftEtaSeverityLevel)
             or nameof(MainViewModel.HasError)
             or nameof(MainViewModel.HasMatches)
+            or nameof(MainViewModel.SelectedLanguageCode)
             or "")
         {
             UpdateVisualStates();
@@ -180,7 +184,7 @@ public sealed partial class MainWindow : Window
         StatusDot.Fill = ViewModel.State switch
         {
             CoordinatorState.Running => new SolidColorBrush(Color.FromArgb(255, 16, 185, 129)),
-            CoordinatorState.QuickProbing or CoordinatorState.Calibrating => new SolidColorBrush(Color.FromArgb(255, 245, 158, 11)),
+            CoordinatorState.Calibrating => new SolidColorBrush(Color.FromArgb(255, 245, 158, 11)),
             CoordinatorState.Faulted => new SolidColorBrush(Color.FromArgb(255, 239, 68, 68)),
             _ => new SolidColorBrush(Color.FromArgb(255, 128, 128, 128))
         };
@@ -189,27 +193,39 @@ public sealed partial class MainWindow : Window
         DashboardPanel.Visibility = ViewModel.ShowDashboard ? Visibility.Visible : Visibility.Collapsed;
         SettingsButton.Visibility = ViewModel.ShowDashboard ? Visibility.Visible : Visibility.Collapsed;
 
-        SetupStep1Card.Visibility = ViewModel.IsSetupStep1 ? Visibility.Visible : Visibility.Collapsed;
-        SetupStep2Card.Visibility = ViewModel.IsSetupStep2 ? Visibility.Visible : Visibility.Collapsed;
-
         SetupValidationErrorText.Visibility = ViewModel.HasDraftError ? Visibility.Visible : Visibility.Collapsed;
         ApplyTextBoxValidationVisual(SetupInputFrame, SetupTargetInputBox, ViewModel.HasDraftError);
 
-        if (ViewModel.DraftEtaSeverityLevel == 2)
-        {
-            SetupEtaPill.Background = new SolidColorBrush(Color.FromArgb(44, 239, 68, 68));
-        }
-        else if (ViewModel.DraftEtaSeverityLevel == 1)
-        {
-            SetupEtaPill.Background = new SolidColorBrush(Color.FromArgb(44, 245, 158, 11));
-        }
-        else
-        {
-            SetupEtaPill.ClearValue(Border.BackgroundProperty);
-        }
+        SyncSetupLanguageCombo();
 
         ErrorBanner.Visibility = ViewModel.HasError ? Visibility.Visible : Visibility.Collapsed;
         MatchesCard.Visibility = ViewModel.HasMatches ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void SyncSetupLanguageCombo()
+    {
+        _syncingLangCombo = true;
+        try
+        {
+            SetupLanguageComboBox.SelectedValue = ViewModel.SelectedLanguageCode;
+        }
+        finally
+        {
+            _syncingLangCombo = false;
+        }
+    }
+
+    private void OnSetupLanguageSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingLangCombo)
+        {
+            return;
+        }
+
+        if (SetupLanguageComboBox.SelectedValue is string code && !string.IsNullOrWhiteSpace(code))
+        {
+            ViewModel.SetLanguage(code);
+        }
     }
 
     private static void ApplyTextBoxValidationVisual(Border frame, TextBox textBox, bool hasError)
@@ -254,18 +270,6 @@ public sealed partial class MainWindow : Window
         _openSettingsCallback();
     }
 
-    private void OnSetupNextClick(object sender, RoutedEventArgs e)
-    {
-        ViewModel.GoToSetupStep2();
-        UpdateVisualStates();
-    }
-
-    private void OnSetupBackClick(object sender, RoutedEventArgs e)
-    {
-        ViewModel.GoToSetupStep1();
-        UpdateVisualStates();
-    }
-
     private void OnSetupFinishClick(object sender, RoutedEventArgs e)
     {
         ViewModel.CompleteSetup();
@@ -275,6 +279,33 @@ public sealed partial class MainWindow : Window
     private void OnSliderReleased(object sender, PointerRoutedEventArgs e)
     {
         ViewModel.CommitSliderRelease();
+    }
+
+    private void OnSliderPreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (!ViewModel.IsSliderEnabled)
+        {
+            return;
+        }
+
+        if (e.Key is VirtualKey.Right or VirtualKey.Up or VirtualKey.PageUp)
+        {
+            if (ViewModel.SliderValue >= RateControl.UiSliderCappedMax && ViewModel.SliderValue < RateControl.UiSliderFullSpeed)
+            {
+                ViewModel.SliderValue = RateControl.UiSliderFullSpeed;
+                ViewModel.CommitSliderRelease();
+                e.Handled = true;
+            }
+        }
+        else if (e.Key is VirtualKey.Left or VirtualKey.Down or VirtualKey.PageDown)
+        {
+            if (ViewModel.SliderValue >= RateControl.UiSliderFullSpeedThreshold)
+            {
+                ViewModel.SliderValue = RateControl.UiSliderCappedMax;
+                ViewModel.CommitSliderRelease();
+                e.Handled = true;
+            }
+        }
     }
 
     private void OnSliderKeyUp(object sender, KeyRoutedEventArgs e)
@@ -343,6 +374,45 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             ViewModel.ReportError(ex.Message);
+        }
+    }
+
+    private async void OnClearAllMatchesClick(object sender, RoutedEventArgs e)
+    {
+        if (_isDialogOpen || ViewModel.MatchesCount == 0)
+        {
+            return;
+        }
+
+        _isDialogOpen = true;
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                Title = ViewModel.Loc.ClearAllConfirmTitle,
+                Content = new TextBlock
+                {
+                    Text = ViewModel.Loc.FormatClearAllConfirm(ViewModel.MatchesCount),
+                    TextWrapping = TextWrapping.Wrap
+                },
+                PrimaryButtonText = ViewModel.Loc.ClearAll,
+                CloseButtonText = ViewModel.Loc.Cancel,
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = Content.XamlRoot
+            };
+
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                ViewModel.ClearAllMatches();
+            }
+        }
+        catch (Exception ex)
+        {
+            ViewModel.ReportError(ex.Message);
+        }
+        finally
+        {
+            _isDialogOpen = false;
         }
     }
 

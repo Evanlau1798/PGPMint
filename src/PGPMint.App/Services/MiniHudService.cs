@@ -1,6 +1,21 @@
+using System.Drawing;
+using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32;
 using PGPMint.Core.Search;
+using Vortice;
+using Vortice.DCommon;
+using Vortice.Direct2D1;
+using Vortice.DirectWrite;
+using Vortice.DXGI;
+using Vortice.Mathematics;
+using D2D1FactoryType = Vortice.Direct2D1.FactoryType;
+using D2D1ResultCode = Vortice.Direct2D1.ResultCode;
+using D2D1TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode;
+using DCommonAlphaMode = Vortice.DCommon.AlphaMode;
+using DWriteFactoryType = Vortice.DirectWrite.FactoryType;
+using DWriteFontStyle = Vortice.DirectWrite.FontStyle;
 
 namespace PGPMint.App.Services;
 
@@ -12,12 +27,13 @@ public sealed record MiniHudSnapshot(
     double ProgressFraction);
 
 /// <summary>
-/// Pure CPU Win32 layered floating HUD drawn via built-in gdiplus.dll and UpdateLayeredWindow.
-/// Uses zero WinUI 3 / DirectComposition / D3D resources so background GPU search stays at full speed.
+/// Pure CPU Win32 layered floating HUD drawn via Direct2D Software RenderTarget
+/// (RenderTargetType.Software) + DirectWrite grayscale antialiasing and UpdateLayeredWindow.
+/// Uses zero hardware GPU / WinUI 3 resources while delivering crisp modern vector and text quality.
 /// </summary>
 public sealed class MiniHudService : IDisposable
 {
-    private const int LogicalWidth = 264;
+    private const int LogicalWidth = 268;
     private const int LogicalHeight = 38;
     private const int DockMarginDip = 12;
 
@@ -60,18 +76,6 @@ public sealed class MiniHudService : IDisposable
     private const int GwlStyle = -16;
     private const uint WsCaption = 0x00C00000u;
 
-    // GDI+ constants
-    private const int PixelFormat32bppPArgb = 0x000E200B;
-    private const int SmoothingModeAntiAlias = 4;
-    private const int TextRenderingHintAntiAliasGridFit = 3;
-    private const int UnitPixel = 2;
-    private const int FontStyleRegular = 0;
-    private const int FontStyleBold = 1;
-    private const int StringAlignmentNear = 0;
-    private const int StringAlignmentCenter = 1;
-    private const int StringAlignmentFar = 2;
-    private const int StringTrimmingEllipsisCharacter = 3;
-
     // SHQueryUserNotificationState values
     private const int QunsRunningD3dFullScreen = 3;
     private const int QunsPresentationMode = 4;
@@ -80,8 +84,12 @@ public sealed class MiniHudService : IDisposable
     private readonly WndProcDelegate _wndProc;
     private readonly uint _taskbarCreatedMsg;
 
-    private IntPtr _gdipToken;
-    private bool _gdipStarted;
+    private ID2D1Factory? _d2dFactory;
+    private IDWriteFactory? _dwriteFactory;
+    private ID2D1DCRenderTarget? _dcRenderTarget;
+    private string _monoFontFamily = "Cascadia Mono";
+    private string _uiFontFamily = "Segoe UI";
+
     private IntPtr _hwnd;
     private int _widthPx;
     private int _heightPx;
@@ -94,6 +102,7 @@ public sealed class MiniHudService : IDisposable
     private bool _mainWindowInTray;
     private bool _setupActive;
     private bool _isVisible;
+    private bool _hasRenderedSurface;
     private bool _pollTimerRunning;
     private bool _isRecalculating;
 
@@ -117,10 +126,67 @@ public sealed class MiniHudService : IDisposable
         _wndProc = WindowProc;
         _taskbarCreatedMsg = RegisterWindowMessageW("TaskbarCreated");
 
-        var startup = new GdiplusStartupInput { GdiplusVersion = 1 };
-        _gdipStarted = GdiplusStartup(out _gdipToken, ref startup, IntPtr.Zero) == 0;
-
+        InitializeCpuDirect2D();
         CreateHudWindow();
+    }
+
+    private void InitializeCpuDirect2D()
+    {
+        try
+        {
+            _d2dFactory = D2D1.D2D1CreateFactory<ID2D1Factory>(D2D1FactoryType.SingleThreaded);
+            _dwriteFactory = DWrite.DWriteCreateFactory<IDWriteFactory>(DWriteFactoryType.Shared);
+
+            var props = new RenderTargetProperties(
+                RenderTargetType.Software,
+                new PixelFormat(Format.B8G8R8A8_UNorm, DCommonAlphaMode.Premultiplied),
+                96f,
+                96f,
+                RenderTargetUsage.None,
+                FeatureLevel.Default);
+
+            _dcRenderTarget = _d2dFactory.CreateDCRenderTarget(props);
+            _dcRenderTarget.AntialiasMode = AntialiasMode.PerPrimitive;
+            _dcRenderTarget.TextAntialiasMode = D2D1TextAntialiasMode.Grayscale;
+
+            _monoFontFamily = PickInstalledFont(_dwriteFactory, "Cascadia Mono", "Consolas", "Courier New");
+            _uiFontFamily = PickInstalledFont(_dwriteFactory, "Segoe UI Variable Text", "Segoe UI", "Microsoft JhengHei UI");
+        }
+        catch
+        {
+            DisposeDirect2D();
+        }
+    }
+
+    private static string PickInstalledFont(IDWriteFactory factory, params string[] candidates)
+    {
+        try
+        {
+            using IDWriteFontCollection collection = factory.GetSystemFontCollection(false);
+            foreach (string name in candidates)
+            {
+                if (collection.FindFamilyName(name, out _))
+                {
+                    return name;
+                }
+            }
+        }
+        catch
+        {
+            // Keep default fallback
+        }
+
+        return candidates[^1];
+    }
+
+    private void DisposeDirect2D()
+    {
+        _dcRenderTarget?.Dispose();
+        _dcRenderTarget = null;
+        _dwriteFactory?.Dispose();
+        _dwriteFactory = null;
+        _d2dFactory?.Dispose();
+        _d2dFactory = null;
     }
 
     public void Configure(bool enabledByUser, int? savedX, int? savedY)
@@ -256,7 +322,6 @@ public sealed class MiniHudService : IDisposable
             }
             else
             {
-                // Update position/Z-order only; UpdateLayeredWindow in RefreshVisibilityAndRender atomically updates size + pixels.
                 SetWindowPos(_hwnd, new IntPtr(-1), _posX, _posY, 0, 0, SwpNoSize | SwpNoActivate);
             }
         }
@@ -277,7 +342,7 @@ public sealed class MiniHudService : IDisposable
         }
 
         var workArea = new RECT();
-        if (SystemParametersInfoW(0x0030, 0, ref workArea, 0)) // SPI_GETWORKAREA fallback
+        if (SystemParametersInfoW(0x0030, 0, ref workArea, 0))
         {
             int margin = (int)Math.Round(DockMarginDip * scale);
             _posX = workArea.Right - _widthPx - margin;
@@ -332,7 +397,7 @@ public sealed class MiniHudService : IDisposable
             }
             catch
             {
-                // Fallback to per-window DPI on systems without shcore.dll GetDpiForMonitor
+                // Fallback to per-window DPI
             }
         }
 
@@ -387,11 +452,18 @@ public sealed class MiniHudService : IDisposable
 
         if (forceRedraw || !_isVisible || !string.Equals(_lastRenderedKey, renderKey, StringComparison.Ordinal))
         {
-            RenderLayeredSurface(_lastSnapshot, isLight);
-            _lastRenderedKey = renderKey;
+            if (RenderLayeredSurface(_lastSnapshot, isLight))
+            {
+                _lastRenderedKey = renderKey;
+                _hasRenderedSurface = true;
+            }
+            else if (!_hasRenderedSurface)
+            {
+                return;
+            }
         }
 
-        if (!_isVisible)
+        if (!_isVisible && _hasRenderedSurface)
         {
             SetWindowPos(_hwnd, new IntPtr(-1), _posX, _posY, _widthPx, _heightPx, SwpNoActivate);
             ShowWindow(_hwnd, SwShowNoActivate);
@@ -421,7 +493,7 @@ public sealed class MiniHudService : IDisposable
                 return false;
             }
 
-            var classBuf = new System.Text.StringBuilder(64);
+            var classBuf = new StringBuilder(64);
             if (GetClassNameW(fg, classBuf, classBuf.Capacity) > 0)
             {
                 string cls = classBuf.ToString();
@@ -432,8 +504,6 @@ public sealed class MiniHudService : IDisposable
                 }
             }
 
-            // Exclude normal maximized desktop windows (which have WS_CAPTION and overlap rcMonitor
-            // when taskbar is auto-hidden or on secondary monitors without a taskbar).
             uint style = unchecked((uint)GetWindowLongW(fg, GwlStyle));
             if ((style & WsCaption) == WsCaption && IsZoomed(fg))
             {
@@ -511,30 +581,74 @@ public sealed class MiniHudService : IDisposable
         }
     }
 
-    private void RenderLayeredSurface(MiniHudSnapshot snap, bool isLight)
+    private static Color4 FromArgb(byte a, byte r, byte g, byte b) =>
+        new(r / 255f, g / 255f, b / 255f, a / 255f);
+
+    private bool RenderLayeredSurface(MiniHudSnapshot snap, bool isLight)
     {
-        if (!_gdipStarted || _hwnd == IntPtr.Zero || _widthPx <= 0 || _heightPx <= 0)
+        if (_hwnd == IntPtr.Zero || _widthPx <= 0 || _heightPx <= 0)
         {
-            return;
+            return false;
+        }
+
+        if (_dcRenderTarget is null || _dwriteFactory is null)
+        {
+            DisposeDirect2D();
+            InitializeCpuDirect2D();
+            if (_dcRenderTarget is null || _dwriteFactory is null)
+            {
+                return false;
+            }
+        }
+
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            bool needsRecreate;
+            bool ok = TryRenderLayeredSurfaceOnce(snap, isLight, out needsRecreate);
+            if (ok)
+            {
+                return true;
+            }
+
+            if (!needsRecreate)
+            {
+                return false;
+            }
+
+            DisposeDirect2D();
+            InitializeCpuDirect2D();
+            if (_dcRenderTarget is null || _dwriteFactory is null)
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryRenderLayeredSurfaceOnce(MiniHudSnapshot snap, bool isLight, out bool needsRecreate)
+    {
+        needsRecreate = false;
+        if (_dcRenderTarget is null || _dwriteFactory is null)
+        {
+            return false;
         }
 
         IntPtr screenDc = GetDC(IntPtr.Zero);
         if (screenDc == IntPtr.Zero)
         {
-            return;
+            return false;
         }
 
         IntPtr memDc = CreateCompatibleDC(screenDc);
         if (memDc == IntPtr.Zero)
         {
             ReleaseDC(IntPtr.Zero, screenDc);
-            return;
+            return false;
         }
 
         IntPtr hBitmap = IntPtr.Zero;
         IntPtr oldBitmap = IntPtr.Zero;
-        IntPtr gpBitmap = IntPtr.Zero;
-        IntPtr gpGraphics = IntPtr.Zero;
 
         try
         {
@@ -542,7 +656,7 @@ public sealed class MiniHudService : IDisposable
             {
                 biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>(),
                 biWidth = _widthPx,
-                biHeight = -_heightPx, // top-down DIB matches GDI+ scan0 layout
+                biHeight = -_heightPx,
                 biPlanes = 1,
                 biBitCount = 32,
                 biCompression = 0
@@ -551,83 +665,135 @@ public sealed class MiniHudService : IDisposable
             hBitmap = CreateDIBSection(screenDc, ref bmi, 0, out IntPtr bitsPtr, IntPtr.Zero, 0);
             if (hBitmap == IntPtr.Zero || bitsPtr == IntPtr.Zero)
             {
-                return;
+                return false;
             }
 
             oldBitmap = SelectObject(memDc, hBitmap);
-
-            int stride = _widthPx * 4;
-            if (GdipCreateBitmapFromScan0(_widthPx, _heightPx, stride, PixelFormat32bppPArgb, bitsPtr, out gpBitmap) != 0)
+            if (oldBitmap == IntPtr.Zero)
             {
-                return;
+                return false;
             }
-
-            if (GdipGetImageGraphicsContext(gpBitmap, out gpGraphics) != 0)
-            {
-                return;
-            }
-
-            GdipSetSmoothingMode(gpGraphics, SmoothingModeAntiAlias);
-            GdipSetTextRenderingHint(gpGraphics, TextRenderingHintAntiAliasGridFit);
-            GdipGraphicsClear(gpGraphics, 0x00000000u);
 
             float s = (float)(_heightPx / (double)LogicalHeight);
             float w = _widthPx;
             float h = _heightPx;
             float radius = 10f * s;
 
-            // Adaptive Dark / Light translucent pill palette
-            uint bgArgb = isLight ? 0xECF7F8FAu : 0xE816191Eu;
-            uint borderArgb = isLight ? 0x3A111827u : 0x36FFFFFFu;
-            uint primaryTextArgb = isLight ? 0xFF111827u : 0xFFF3F4F6u;
-            uint mutedTextArgb = isLight ? 0xFF4B5563u : 0xFF9CA3AFu;
-            uint trackArgb = isLight ? 0x1F000000u : 0x22FFFFFFu;
-            uint accentArgb = snap.State switch
+            Color4 bgColor = isLight ? FromArgb(242, 247, 248, 250) : FromArgb(238, 22, 25, 30);
+            Color4 borderColor = isLight ? FromArgb(58, 17, 24, 39) : FromArgb(54, 255, 255, 255);
+            Color4 primaryTextColor = isLight ? FromArgb(255, 17, 24, 39) : FromArgb(255, 243, 244, 246);
+            Color4 mutedTextColor = isLight ? FromArgb(255, 55, 65, 81) : FromArgb(255, 181, 188, 200);
+            Color4 trackColor = isLight ? FromArgb(31, 0, 0, 0) : FromArgb(36, 255, 255, 255);
+            Color4 accentColor = snap.State switch
             {
-                CoordinatorState.Running => 0xFF10B981u,
-                CoordinatorState.QuickProbing or CoordinatorState.Calibrating => 0xFFF59E0Bu,
-                CoordinatorState.Faulted => 0xFFEF4444u,
-                _ => 0xFF6B7280u
+                CoordinatorState.Running => FromArgb(255, 16, 185, 129),
+                CoordinatorState.Calibrating => FromArgb(255, 245, 158, 11),
+                CoordinatorState.Faulted => FromArgb(255, 239, 68, 68),
+                _ => FromArgb(255, 107, 114, 128)
             };
 
-            // 1. Rounded pill background + subtle 1px border
-            DrawRoundedPill(gpGraphics, 0.5f, 0.5f, w - 1f, h - 1f, radius, bgArgb, borderArgb, Math.Max(1f, s));
-
-            // 2. Status dot on left
-            float dotSize = 7.5f * s;
-            float dotX = 11f * s;
-            float dotY = ((h - 3f * s) - dotSize) * 0.5f;
-            FillEllipse(gpGraphics, accentArgb, dotX, dotY, dotSize, dotSize);
-
-            // 3. Single-row telemetry: [Rate (bold)]  [Prob]  [ETA (right-aligned)]
-            float contentTop = 2f * s;
-            float contentHeight = h - 6f * s;
-            float rateX = dotX + dotSize + 7f * s;
-            float rateW = 88f * s;
-            float probX = rateX + rateW;
-            float probW = 58f * s;
-            float etaX = probX + probW;
-            float etaW = Math.Max(24f, w - etaX - 10f * s);
-
-            DrawMonoText(gpGraphics, snap.RateText, 12.5f * s, FontStyleBold, primaryTextArgb,
-                rateX, contentTop, rateW, contentHeight, StringAlignmentNear);
-            DrawMonoText(gpGraphics, snap.ProbabilityText, 11.0f * s, FontStyleRegular, mutedTextArgb,
-                probX, contentTop, probW, contentHeight, StringAlignmentCenter);
-            DrawMonoText(gpGraphics, snap.EtaText, 11.0f * s, FontStyleRegular, mutedTextArgb,
-                etaX, contentTop, etaW, contentHeight, StringAlignmentFar);
-
-            // 4. Crisp 2px bottom progress hairline
-            float barPadX = 10f * s;
-            float barH = Math.Max(2f, 2f * s);
-            float barY = h - barH - 2.5f * s;
-            float barW = Math.Max(4f, w - 2f * barPadX);
-            FillRect(gpGraphics, trackArgb, barPadX, barY, barW, barH);
-
-            double clampedFrac = Math.Clamp(snap.ProgressFraction, 0.0, 1.0);
-            if (clampedFrac > 0.0)
+            _dcRenderTarget.BindDC(memDc, new RawRect(0, 0, _widthPx, _heightPx));
+            _dcRenderTarget.BeginDraw();
+            SharpGen.Runtime.Result endHr;
+            try
             {
-                float fillW = Math.Max(barH, (float)(barW * clampedFrac));
-                FillRect(gpGraphics, accentArgb, barPadX, barY, fillW, barH);
+                _dcRenderTarget.Clear(new Color4(0f, 0f, 0f, 0f));
+
+                using ID2D1SolidColorBrush bgBrush = _dcRenderTarget.CreateSolidColorBrush(bgColor);
+                using ID2D1SolidColorBrush borderBrush = _dcRenderTarget.CreateSolidColorBrush(borderColor);
+                using ID2D1SolidColorBrush primaryBrush = _dcRenderTarget.CreateSolidColorBrush(primaryTextColor);
+                using ID2D1SolidColorBrush mutedBrush = _dcRenderTarget.CreateSolidColorBrush(mutedTextColor);
+                using ID2D1SolidColorBrush trackBrush = _dcRenderTarget.CreateSolidColorBrush(trackColor);
+                using ID2D1SolidColorBrush accentBrush = _dcRenderTarget.CreateSolidColorBrush(accentColor);
+
+                // 1. Crisp per-primitive antialiased rounded pill background + subtle border
+                float strokeW = Math.Max(1f, MathF.Round(s));
+                float inset = strokeW * 0.5f;
+                var pillRect = new RoundedRectangle(
+                    new RectangleF(inset, inset, w - strokeW, h - strokeW),
+                    radius,
+                    radius);
+                _dcRenderTarget.FillRoundedRectangle(pillRect, bgBrush);
+                _dcRenderTarget.DrawRoundedRectangle(pillRect, borderBrush, strokeW);
+
+                // 2. Smooth status dot on left
+                float dotRadius = 3.75f * s;
+                float dotCx = 14.75f * s;
+                float dotCy = (h - 3f * s) * 0.5f;
+                var dotCenter = new Vector2(dotCx, dotCy);
+                _dcRenderTarget.FillEllipse(new Ellipse(dotCenter, dotRadius, dotRadius), accentBrush);
+
+                // 3. DirectWrite crisp single-row telemetry: [Rate]  [Prob]  [ETA]
+                float contentTop = 1.5f * s;
+                float contentH = h - 5.5f * s;
+                float rateX = 25.5f * s;
+                float rateW = 92f * s;
+                float probX = rateX + rateW;
+                float probW = 58f * s;
+                float etaX = probX + probW;
+                float etaW = Math.Max(24f, w - etaX - 10f * s);
+
+                DrawDirectWriteText(
+                    snap.RateText,
+                    fontFamily: _monoFontFamily,
+                    fontWeight: FontWeight.SemiBold,
+                    fontSize: 12.2f * s,
+                    brush: primaryBrush,
+                    bounds: new Rect(rateX, contentTop, rateW, contentH),
+                    alignment: TextAlignment.Leading);
+
+                DrawDirectWriteText(
+                    snap.ProbabilityText,
+                    fontFamily: _monoFontFamily,
+                    fontWeight: FontWeight.Normal,
+                    fontSize: 11.0f * s,
+                    brush: mutedBrush,
+                    bounds: new Rect(probX, contentTop, probW, contentH),
+                    alignment: TextAlignment.Center);
+
+                DrawDirectWriteText(
+                    snap.EtaText,
+                    fontFamily: _uiFontFamily,
+                    fontWeight: FontWeight.Medium,
+                    fontSize: 11.2f * s,
+                    brush: mutedBrush,
+                    bounds: new Rect(etaX, contentTop, etaW, contentH),
+                    alignment: TextAlignment.Trailing);
+
+                // 4. Rounded 2px bottom progress hairline
+                float barPadX = 10f * s;
+                float barH = Math.Max(2f, 2f * s);
+                float barY = h - barH - 2.5f * s;
+                float barW = Math.Max(4f, w - 2f * barPadX);
+                float barR = barH * 0.5f;
+
+                _dcRenderTarget.FillRoundedRectangle(
+                    new RoundedRectangle(new RectangleF(barPadX, barY, barW, barH), barR, barR),
+                    trackBrush);
+
+                double clampedFrac = Math.Clamp(snap.ProgressFraction, 0.0, 1.0);
+                if (clampedFrac > 0.0)
+                {
+                    float fillW = Math.Max(barH, (float)(barW * clampedFrac));
+                    _dcRenderTarget.FillRoundedRectangle(
+                        new RoundedRectangle(new RectangleF(barPadX, barY, fillW, barH), barR, barR),
+                        accentBrush);
+                }
+            }
+            finally
+            {
+                endHr = _dcRenderTarget.EndDraw();
+            }
+
+            if (endHr == D2D1ResultCode.RecreateTarget)
+            {
+                needsRecreate = true;
+                return false;
+            }
+
+            if (endHr.Failure)
+            {
+                return false;
             }
 
             var ptDst = new POINT { X = _posX, Y = _posY };
@@ -641,12 +807,19 @@ public sealed class MiniHudService : IDisposable
                 AlphaFormat = AcSrcAlpha
             };
 
-            UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, memDc, ref ptSrc, 0, ref blend, UlwAlpha);
+            return UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, memDc, ref ptSrc, 0, ref blend, UlwAlpha);
+        }
+        catch (SharpGen.Runtime.SharpGenException ex) when (ex.ResultCode == D2D1ResultCode.RecreateTarget)
+        {
+            needsRecreate = true;
+            return false;
+        }
+        catch
+        {
+            return false;
         }
         finally
         {
-            if (gpGraphics != IntPtr.Zero) GdipDeleteGraphics(gpGraphics);
-            if (gpBitmap != IntPtr.Zero) GdipDisposeImage(gpBitmap);
             if (oldBitmap != IntPtr.Zero) SelectObject(memDc, oldBitmap);
             if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap);
             if (memDc != IntPtr.Zero) DeleteDC(memDc);
@@ -654,108 +827,37 @@ public sealed class MiniHudService : IDisposable
         }
     }
 
-    private static void DrawRoundedPill(
-        IntPtr graphics, float x, float y, float width, float height, float radius,
-        uint fillArgb, uint strokeArgb, float strokeWidth)
+    private void DrawDirectWriteText(
+        string text,
+        string fontFamily,
+        FontWeight fontWeight,
+        float fontSize,
+        ID2D1Brush brush,
+        Rect bounds,
+        TextAlignment alignment)
     {
-        if (GdipCreatePath(0, out IntPtr path) != 0)
+        if (string.IsNullOrEmpty(text) || _dwriteFactory is null || _dcRenderTarget is null)
         {
             return;
         }
 
-        IntPtr brush = IntPtr.Zero;
-        IntPtr pen = IntPtr.Zero;
-        try
-        {
-            float d = radius * 2f;
-            GdipAddPathArc(path, x, y, d, d, 180f, 90f);
-            GdipAddPathArc(path, x + width - d, y, d, d, 270f, 90f);
-            GdipAddPathArc(path, x + width - d, y + height - d, d, d, 0f, 90f);
-            GdipAddPathArc(path, x, y + height - d, d, d, 90f, 90f);
-            GdipClosePathFigure(path);
+        using IDWriteTextFormat fmt = _dwriteFactory.CreateTextFormat(
+            fontFamily,
+            null,
+            fontWeight,
+            DWriteFontStyle.Normal,
+            FontStretch.Normal,
+            fontSize,
+            string.Empty);
 
-            if (GdipCreateSolidFill(fillArgb, out brush) == 0)
-            {
-                GdipFillPath(graphics, brush, path);
-            }
+        fmt.TextAlignment = alignment;
+        fmt.ParagraphAlignment = ParagraphAlignment.Center;
+        fmt.WordWrapping = WordWrapping.NoWrap;
 
-            if (GdipCreatePen1(strokeArgb, strokeWidth, UnitPixel, out pen) == 0)
-            {
-                GdipDrawPath(graphics, pen, path);
-            }
-        }
-        finally
-        {
-            if (pen != IntPtr.Zero) GdipDeletePen(pen);
-            if (brush != IntPtr.Zero) GdipDeleteBrush(brush);
-            GdipDeletePath(path);
-        }
-    }
+        using IDWriteInlineObject ellipsis = _dwriteFactory.CreateEllipsisTrimmingSign(fmt);
+        fmt.SetTrimming(new Trimming { Granularity = TrimmingGranularity.Character }, ellipsis);
 
-    private static void FillEllipse(IntPtr graphics, uint argb, float x, float y, float w, float h)
-    {
-        if (GdipCreateSolidFill(argb, out IntPtr brush) != 0) return;
-        try { GdipFillEllipse(graphics, brush, x, y, w, h); }
-        finally { GdipDeleteBrush(brush); }
-    }
-
-    private static void FillRect(IntPtr graphics, uint argb, float x, float y, float w, float h)
-    {
-        if (GdipCreateSolidFill(argb, out IntPtr brush) != 0) return;
-        try { GdipFillRectangle(graphics, brush, x, y, w, h); }
-        finally { GdipDeleteBrush(brush); }
-    }
-
-    private static void DrawMonoText(
-        IntPtr graphics, string text, float pxSize, int style, uint argb,
-        float x, float y, float width, float height, int horizontalAlign)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return;
-        }
-
-        IntPtr family = IntPtr.Zero;
-        IntPtr font = IntPtr.Zero;
-        IntPtr format = IntPtr.Zero;
-        IntPtr brush = IntPtr.Zero;
-        try
-        {
-            if (GdipCreateFontFamilyFromName("Cascadia Mono", IntPtr.Zero, out family) != 0 &&
-                GdipCreateFontFamilyFromName("Consolas", IntPtr.Zero, out family) != 0)
-            {
-                GdipGetGenericFontFamilyMonospace(out family);
-            }
-
-            if (family == IntPtr.Zero || GdipCreateFont(family, pxSize, style, UnitPixel, out font) != 0)
-            {
-                return;
-            }
-
-            if (GdipCreateStringFormat(0x1000, 0, out format) != 0) // StringFormatFlagsNoWrap
-            {
-                return;
-            }
-
-            GdipSetStringFormatAlign(format, horizontalAlign);
-            GdipSetStringFormatLineAlign(format, StringAlignmentCenter);
-            GdipSetStringFormatTrimming(format, StringTrimmingEllipsisCharacter);
-
-            if (GdipCreateSolidFill(argb, out brush) != 0)
-            {
-                return;
-            }
-
-            var rect = new RECTF { X = x, Y = y, Width = width, Height = height };
-            GdipDrawString(graphics, text, text.Length, font, ref rect, format, brush);
-        }
-        finally
-        {
-            if (brush != IntPtr.Zero) GdipDeleteBrush(brush);
-            if (format != IntPtr.Zero) GdipDeleteStringFormat(format);
-            if (font != IntPtr.Zero) GdipDeleteFont(font);
-            if (family != IntPtr.Zero) GdipDeleteFontFamily(family);
-        }
+        _dcRenderTarget.DrawText(text, fmt, bounds, brush, DrawTextOptions.Clip);
     }
 
     private IntPtr WindowProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
@@ -912,13 +1014,7 @@ public sealed class MiniHudService : IDisposable
         }
 
         UnregisterClassW(_className, GetModuleHandleW(null));
-
-        if (_gdipStarted && _gdipToken != IntPtr.Zero)
-        {
-            GdiplusShutdown(_gdipToken);
-            _gdipStarted = false;
-            _gdipToken = IntPtr.Zero;
-        }
+        DisposeDirect2D();
     }
 
     private delegate IntPtr WndProcDelegate(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
@@ -948,9 +1044,6 @@ public sealed class MiniHudService : IDisposable
 
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RECTF { public float X; public float Y; public float Width; public float Height; }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MONITORINFO
@@ -986,16 +1079,7 @@ public sealed class MiniHudService : IDisposable
         public uint biClrImportant;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct GdiplusStartupInput
-    {
-        public uint GdiplusVersion;
-        public IntPtr DebugEventCallback;
-        [MarshalAs(UnmanagedType.Bool)] public bool SuppressBackgroundThread;
-        [MarshalAs(UnmanagedType.Bool)] public bool SuppressExternalCodecs;
-    }
-
-    // User32 / Gdi32 / Shell32 / Kernel32
+    // User32 / Gdi32 / Shcore / Shell32 / Kernel32
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern uint RegisterWindowMessageW(string lpString);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern ushort RegisterClassExW(ref WNDCLASSEXW lpWndClass);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)][return: MarshalAs(UnmanagedType.Bool)] private static extern bool UnregisterClassW(string lpClassName, IntPtr hInstance);
@@ -1025,7 +1109,7 @@ public sealed class MiniHudService : IDisposable
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowLongW(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassNameW(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassNameW(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
     [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
     [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
     [DllImport("gdi32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool DeleteDC(IntPtr hdc);
@@ -1034,38 +1118,4 @@ public sealed class MiniHudService : IDisposable
     [DllImport("gdi32.dll")] private static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFOHEADER pbmi, uint usage, out IntPtr ppvBits, IntPtr hSection, uint offset);
     [DllImport("shell32.dll")] private static extern int SHQueryUserNotificationState(out int pquns);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandleW(string? lpModuleName);
-
-    // Built-in GDI+ flat C API (gdiplus.dll)
-    [DllImport("gdiplus.dll")] private static extern int GdiplusStartup(out IntPtr token, ref GdiplusStartupInput input, IntPtr output);
-    [DllImport("gdiplus.dll")] private static extern void GdiplusShutdown(IntPtr token);
-    [DllImport("gdiplus.dll")] private static extern int GdipCreateBitmapFromScan0(int width, int height, int stride, int format, IntPtr scan0, out IntPtr bitmap);
-    [DllImport("gdiplus.dll")] private static extern int GdipDisposeImage(IntPtr image);
-    [DllImport("gdiplus.dll")] private static extern int GdipGetImageGraphicsContext(IntPtr image, out IntPtr graphics);
-    [DllImport("gdiplus.dll")] private static extern int GdipDeleteGraphics(IntPtr graphics);
-    [DllImport("gdiplus.dll")] private static extern int GdipSetSmoothingMode(IntPtr graphics, int smoothingMode);
-    [DllImport("gdiplus.dll")] private static extern int GdipSetTextRenderingHint(IntPtr graphics, int mode);
-    [DllImport("gdiplus.dll")] private static extern int GdipGraphicsClear(IntPtr graphics, uint color);
-    [DllImport("gdiplus.dll")] private static extern int GdipCreatePath(int brushMode, out IntPtr path);
-    [DllImport("gdiplus.dll")] private static extern int GdipDeletePath(IntPtr path);
-    [DllImport("gdiplus.dll")] private static extern int GdipAddPathArc(IntPtr path, float x, float y, float width, float height, float startAngle, float sweepAngle);
-    [DllImport("gdiplus.dll")] private static extern int GdipClosePathFigure(IntPtr path);
-    [DllImport("gdiplus.dll")] private static extern int GdipCreateSolidFill(uint color, out IntPtr brush);
-    [DllImport("gdiplus.dll")] private static extern int GdipDeleteBrush(IntPtr brush);
-    [DllImport("gdiplus.dll")] private static extern int GdipFillPath(IntPtr graphics, IntPtr brush, IntPtr path);
-    [DllImport("gdiplus.dll")] private static extern int GdipFillEllipse(IntPtr graphics, IntPtr brush, float x, float y, float width, float height);
-    [DllImport("gdiplus.dll")] private static extern int GdipFillRectangle(IntPtr graphics, IntPtr brush, float x, float y, float width, float height);
-    [DllImport("gdiplus.dll")] private static extern int GdipCreatePen1(uint color, float width, int unit, out IntPtr pen);
-    [DllImport("gdiplus.dll")] private static extern int GdipDeletePen(IntPtr pen);
-    [DllImport("gdiplus.dll")] private static extern int GdipDrawPath(IntPtr graphics, IntPtr pen, IntPtr path);
-    [DllImport("gdiplus.dll", CharSet = CharSet.Unicode)] private static extern int GdipCreateFontFamilyFromName(string name, IntPtr fontCollection, out IntPtr fontFamily);
-    [DllImport("gdiplus.dll")] private static extern int GdipGetGenericFontFamilyMonospace(out IntPtr nativeFamily);
-    [DllImport("gdiplus.dll")] private static extern int GdipDeleteFontFamily(IntPtr fontFamily);
-    [DllImport("gdiplus.dll")] private static extern int GdipCreateFont(IntPtr fontFamily, float emSize, int style, int unit, out IntPtr font);
-    [DllImport("gdiplus.dll")] private static extern int GdipDeleteFont(IntPtr font);
-    [DllImport("gdiplus.dll")] private static extern int GdipCreateStringFormat(int formatAttributes, ushort language, out IntPtr format);
-    [DllImport("gdiplus.dll")] private static extern int GdipDeleteStringFormat(IntPtr format);
-    [DllImport("gdiplus.dll")] private static extern int GdipSetStringFormatAlign(IntPtr format, int align);
-    [DllImport("gdiplus.dll")] private static extern int GdipSetStringFormatLineAlign(IntPtr format, int align);
-    [DllImport("gdiplus.dll")] private static extern int GdipSetStringFormatTrimming(IntPtr format, int trimming);
-    [DllImport("gdiplus.dll", CharSet = CharSet.Unicode)] private static extern int GdipDrawString(IntPtr graphics, string str, int length, IntPtr font, ref RECTF layoutRect, IntPtr stringFormat, IntPtr brush);
 }

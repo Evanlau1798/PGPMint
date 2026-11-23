@@ -9,7 +9,6 @@ namespace PGPMint.Core.Search;
 public enum CoordinatorState
 {
     Idle,
-    QuickProbing,
     Calibrating,
     Running,
     Paused,
@@ -25,9 +24,8 @@ public sealed record GpuTelemetrySnapshot(
     bool IsEnabled,
     double ActualHps,
     long TargetHps,
-    double PeakHps,
+    double BaselineHps,
     bool IsFullCalibrated,
-    bool IsProvisionalCalibrated,
     string? Error);
 
 public sealed record CoordinatorTelemetry(
@@ -36,7 +34,7 @@ public sealed record CoordinatorTelemetry(
     double TotalActualHps,
     long TotalTargetHps,
     bool IsFullSpeed,
-    double TotalPeakHps,
+    double TotalBaselineHps,
     bool AllEnabledFullyCalibrated,
     ulong SessionChecked,
     ulong TotalChecked,
@@ -48,18 +46,16 @@ public sealed record CoordinatorTelemetry(
 
 public sealed class CoordinatorOptions
 {
-    public TimeSpan QuickProbeDuration { get; init; } = TimeSpan.FromSeconds(5);
     public TimeSpan FullCalibrationDuration { get; init; } = TimeSpan.FromSeconds(30);
     public TimeSpan CalibrationWindow { get; init; } = TimeSpan.FromSeconds(1);
+    public TimeSpan DynamicMedianInterval { get; init; } = TimeSpan.FromSeconds(30);
+    public int MinDynamicMedianSamples { get; init; } = 3;
     public TimeSpan TelemetryInterval { get; init; } = TimeSpan.FromSeconds(1);
     public string? ExpectedKernelVersionOverride { get; init; }
 }
 
 public sealed class MultiGpuCoordinator : IDisposable
 {
-    private static readonly KeyIdPattern DummyCalibrationPattern =
-        KeyIdPattern.Parse("FFFFFFFFFFFFFFFF");
-
     private readonly IGpuBackend _backend;
     private readonly AppStateStore _stateStore;
     private readonly DpapiVaultStore _vaultStore;
@@ -73,11 +69,12 @@ public sealed class MultiGpuCoordinator : IDisposable
     private IReadOnlyList<GpuDeviceInfo> _devices = Array.Empty<GpuDeviceInfo>();
     private KeyIdPattern? _activePattern;
     private string _persistedPatternMask = string.Empty;
-    private double _sliderPosition = 0.7;
-    private double _lastPositiveSliderPosition = 0.7;
-    private bool _autoPauseOnHit = true;
-    private bool _pausedExplicitly;
-    private bool _pausedByZeroSlider;
+    private double _sliderPosition = 1.0;
+    private double _lastPositiveSliderPosition = 1.0;
+    private volatile bool _autoPauseOnHit = true;
+    private volatile bool _pausedExplicitly;
+    private volatile bool _pausedByZeroSlider;
+    private int _autoPauseTriggered;
     private int _rateEpoch;
 
     private ulong _persistedTotalChecked;
@@ -88,15 +85,14 @@ public sealed class MultiGpuCoordinator : IDisposable
     private double _calibrationRemainingSeconds;
     private string? _errorMessage;
 
-    // Unified single active operation slot (QuickProbe, ManualRecalibration, or Search)
     private CancellationTokenSource? _activeOpCts;
     private Task? _activeOpTask;
-    private bool _stopRequestedOnActiveOp;
     private bool _disposed;
 
     public IReadOnlyList<GpuDeviceInfo> Devices => _devices;
     public CoordinatorState CurrentState => _state;
     public double SliderPosition => Volatile.Read(ref _sliderPosition);
+    public double FullCalibrationDurationSeconds => Math.Max(1.0, _options.FullCalibrationDuration.TotalSeconds);
     public bool AutoPauseOnHit => _autoPauseOnHit;
     public CoordinatorTelemetry LatestTelemetry { get; private set; }
 
@@ -128,7 +124,7 @@ public sealed class MultiGpuCoordinator : IDisposable
             _persistedPatternMask = persisted.LastPatternMask ?? string.Empty;
             _persistedTotalChecked = persisted.TotalCheckedCandidates;
             _sliderPosition = Math.Clamp(persisted.SliderPosition, 0.0, 1.0);
-            _lastPositiveSliderPosition = _sliderPosition > 0.0 ? _sliderPosition : 0.7;
+            _lastPositiveSliderPosition = _sliderPosition > 0.0 ? _sliderPosition : 1.0;
             _autoPauseOnHit = persisted.AutoPauseOnHit;
 
             _calibrations.Clear();
@@ -186,22 +182,6 @@ public sealed class MultiGpuCoordinator : IDisposable
         }
     }
 
-    public bool NeedsQuickProbe()
-    {
-        IReadOnlyList<GpuDeviceInfo> enabled = GetEnabledDevices();
-        if (enabled.Count == 0)
-        {
-            return false;
-        }
-
-        lock (_lifecycleLock)
-        {
-            return enabled.Any(d =>
-                !_calibrations.TryGetValue(d.DeviceKey, out CalibrationRecord? rec) ||
-                !CalibrationValidator.IsValidForDevice(rec, d, ExpectedKernelFor(d), requireFull: false));
-        }
-    }
-
     public bool NeedsFullCalibration()
     {
         IReadOnlyList<GpuDeviceInfo> enabled = GetEnabledDevices();
@@ -222,6 +202,12 @@ public sealed class MultiGpuCoordinator : IDisposable
     {
         _autoPauseOnHit = enabled;
         _stateStore.Update(s => s.AutoPauseOnHit = enabled);
+    }
+
+    public void NotifyVaultCountChanged(int count)
+    {
+        Interlocked.Exchange(ref _totalMatchesCount, Math.Max(0, count));
+        PublishTelemetry();
     }
 
     public void SetTargetPattern(KeyIdPattern pattern)
@@ -253,8 +239,7 @@ public sealed class MultiGpuCoordinator : IDisposable
                 return;
             }
 
-            // Refuse device changes while calibrating, probing, or stopping
-            if (_state is CoordinatorState.QuickProbing or CoordinatorState.Calibrating or CoordinatorState.Stopping)
+            if (_state is CoordinatorState.Calibrating or CoordinatorState.Stopping)
             {
                 return;
             }
@@ -291,261 +276,127 @@ public sealed class MultiGpuCoordinator : IDisposable
     public void SetSliderPosition(double position)
     {
         double clamped = Math.Clamp(position, 0.0, 1.0);
-        Volatile.Write(ref _sliderPosition, clamped);
-
-        if (clamped > 0.0)
+        lock (_lifecycleLock)
         {
-            _lastPositiveSliderPosition = clamped;
-            if (_pausedByZeroSlider)
+            // Slider is locked at full speed during initial 30s baseline measurement.
+            if (_state is CoordinatorState.Calibrating or CoordinatorState.Stopping)
             {
-                _pausedByZeroSlider = false;
-                if (!_pausedExplicitly && _state == CoordinatorState.Paused)
+                return;
+            }
+
+            Volatile.Write(ref _sliderPosition, clamped);
+
+            if (clamped > 0.0)
+            {
+                _lastPositiveSliderPosition = clamped;
+                if (_pausedByZeroSlider)
                 {
-                    _state = CoordinatorState.Running;
+                    _pausedByZeroSlider = false;
+                    if (!_pausedExplicitly && _state == CoordinatorState.Paused)
+                    {
+                        Interlocked.Exchange(ref _autoPauseTriggered, 0);
+                        bool needsCal = NeedsFullCalibrationLocked();
+                        if (needsCal)
+                        {
+                            Volatile.Write(ref _calibrationRemainingSeconds, _options.FullCalibrationDuration.TotalSeconds);
+                        }
+                        _state = needsCal ? CoordinatorState.Calibrating : CoordinatorState.Running;
+                    }
                 }
             }
-        }
-        else
-        {
-            _pausedByZeroSlider = true;
-            if (_state == CoordinatorState.Running)
+            else
             {
-                _state = CoordinatorState.Paused;
+                _pausedByZeroSlider = true;
+                if (_state == CoordinatorState.Running)
+                {
+                    _state = CoordinatorState.Paused;
+                }
             }
+
+            Interlocked.Increment(ref _rateEpoch);
         }
 
-        Interlocked.Increment(ref _rateEpoch);
         _stateStore.Update(s => s.SliderPosition = clamped);
         PublishTelemetry();
     }
 
     public void Pause()
     {
-        if (_state != CoordinatorState.Running)
+        lock (_lifecycleLock)
         {
-            return;
+            if (_state != CoordinatorState.Running)
+            {
+                return;
+            }
+
+            _pausedExplicitly = true;
+            _state = CoordinatorState.Paused;
+            Interlocked.Increment(ref _rateEpoch);
         }
 
-        _pausedExplicitly = true;
-        _state = CoordinatorState.Paused;
-        Interlocked.Increment(ref _rateEpoch);
         PublishTelemetry();
     }
 
     public void Resume()
     {
-        if (_state != CoordinatorState.Paused)
-        {
-            return;
-        }
-
-        if (Volatile.Read(ref _sliderPosition) <= 0.0)
-        {
-            double restored = _lastPositiveSliderPosition > 0.0 ? _lastPositiveSliderPosition : 0.7;
-            Volatile.Write(ref _sliderPosition, restored);
-            _stateStore.Update(s => s.SliderPosition = restored);
-        }
-
-        _pausedExplicitly = false;
-        _pausedByZeroSlider = false;
-        _state = NeedsFullCalibration() ? CoordinatorState.Calibrating : CoordinatorState.Running;
-        Interlocked.Increment(ref _rateEpoch);
-        PublishTelemetry();
-    }
-
-    public async Task RunQuickProbeAsync(CancellationToken externalToken = default)
-    {
-        IReadOnlyList<GpuDeviceInfo> enabled = GetEnabledDevices();
-        if (enabled.Count == 0)
-        {
-            throw new InvalidOperationException("No hardware GPU is available.");
-        }
-
-        Task opTask;
-        CancellationTokenSource linkedCts;
-
+        double? persistedSlider = null;
         lock (_lifecycleLock)
         {
-            if (_activeOpTask is not null && !_activeOpTask.IsCompleted)
+            if (_state != CoordinatorState.Paused)
             {
                 return;
             }
 
-            _errorMessage = null;
-            _stopRequestedOnActiveOp = false;
-            _state = CoordinatorState.QuickProbing;
-            _calibrationRemainingSeconds = _options.QuickProbeDuration.TotalSeconds;
-
-            linkedCts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
-            _activeOpCts = linkedCts;
-
-            opTask = Task.Run(async () =>
+            if (Volatile.Read(ref _sliderPosition) <= 0.0)
             {
-                try
-                {
-                    await RunStandaloneCalibrationCoreAsync(
-                        enabled,
-                        DummyCalibrationPattern,
-                        _options.QuickProbeDuration,
-                        isFullCalibration: false,
-                        countTowardProgress: false,
-                        linkedCts.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Clean cancellation
-                }
-                catch (Exception ex)
-                {
-                    _errorMessage = ex.Message;
-                    _state = CoordinatorState.Faulted;
-                    throw;
-                }
-                finally
-                {
-                    _calibrationRemainingSeconds = 0;
-                    ResetTransientRates();
-                    if (_state != CoordinatorState.Faulted)
-                    {
-                        _state = CoordinatorState.Idle;
-                    }
-                    ClearActiveOperation(linkedCts);
-                    PublishTelemetry();
-                }
-            }, CancellationToken.None);
-
-            _activeOpTask = opTask;
-        }
-
-        PublishTelemetry();
-        await opTask.ConfigureAwait(false);
-    }
-
-    public async Task RunManualRecalibrationAsync(KeyIdPattern? currentPattern = null, CancellationToken externalToken = default)
-    {
-        IReadOnlyList<GpuDeviceInfo> enabled = GetEnabledDevices();
-        if (enabled.Count == 0)
-        {
-            throw new InvalidOperationException("No hardware GPU is available.");
-        }
-
-        CoordinatorState priorState = _state;
-        double priorSlider = Volatile.Read(ref _sliderPosition);
-        bool priorExplicitPause = _pausedExplicitly;
-        bool priorZeroPause = _pausedByZeroSlider;
-        KeyIdPattern? priorPattern = _activePattern ?? currentPattern;
-
-        if (priorState is CoordinatorState.Running or CoordinatorState.Paused)
-        {
-            await StopAsync().ConfigureAwait(false);
-        }
-        else if (priorState is CoordinatorState.QuickProbing or CoordinatorState.Calibrating or CoordinatorState.Stopping)
-        {
-            return;
-        }
-
-        Task opTask;
-        CancellationTokenSource linkedCts;
-        bool wasExternallyCanceled = false;
-        bool wasStopPressed = false;
-        bool faulted = false;
-
-        lock (_lifecycleLock)
-        {
-            if (_activeOpTask is not null && !_activeOpTask.IsCompleted)
-            {
-                return;
+                double restored = _lastPositiveSliderPosition > 0.0 ? _lastPositiveSliderPosition : 1.0;
+                Volatile.Write(ref _sliderPosition, restored);
+                persistedSlider = restored;
             }
 
-            _errorMessage = null;
-            _stopRequestedOnActiveOp = false;
-            _state = CoordinatorState.Calibrating;
-            _calibrationRemainingSeconds = _options.FullCalibrationDuration.TotalSeconds;
+            Interlocked.Exchange(ref _autoPauseTriggered, 0);
+            _pausedExplicitly = false;
+            _pausedByZeroSlider = false;
 
-            linkedCts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
-            _activeOpCts = linkedCts;
-
-            KeyIdPattern pattern = priorPattern ?? DummyCalibrationPattern;
-            bool realSearch = priorPattern is not null;
-            if (realSearch)
+            bool needsCal = NeedsFullCalibrationLocked();
+            if (needsCal)
             {
-                SyncPatternProgressScope(pattern);
-            }
-
-            opTask = Task.Run(async () =>
-            {
-                try
-                {
-                    await RunStandaloneCalibrationCoreAsync(
-                        enabled,
-                        pattern,
-                        _options.FullCalibrationDuration,
-                        isFullCalibration: true,
-                        countTowardProgress: realSearch,
-                        linkedCts.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    wasStopPressed = _stopRequestedOnActiveOp;
-                    wasExternallyCanceled = !wasStopPressed;
-                }
-                catch (Exception ex)
-                {
-                    faulted = true;
-                    _errorMessage = ex.Message;
-                    _state = CoordinatorState.Faulted;
-                }
-                finally
-                {
-                    _calibrationRemainingSeconds = 0;
-                    ResetTransientRates();
-                    ClearActiveOperation(linkedCts);
-                }
-            }, CancellationToken.None);
-
-            _activeOpTask = opTask;
-        }
-
-        PublishTelemetry();
-        await opTask.ConfigureAwait(false);
-
-        if (faulted)
-        {
-            PublishTelemetry();
-            return;
-        }
-
-        // Explicit Stop during calibration stops cleanly in Idle while preserving prior calibration.
-        // External cancellation (e.g. Cancel calibration) preserves prior calibration AND restores prior state.
-        if (wasStopPressed)
-        {
-            _state = CoordinatorState.Idle;
-            PublishTelemetry();
-            return;
-        }
-
-        if (wasExternallyCanceled || true)
-        {
-            if (priorState == CoordinatorState.Running && priorPattern is not null)
-            {
-                Volatile.Write(ref _sliderPosition, priorSlider);
-                _pausedExplicitly = false;
-                _pausedByZeroSlider = priorSlider <= 0.0;
-                await StartSearchAsync(priorPattern).ConfigureAwait(false);
-            }
-            else if (priorState == CoordinatorState.Paused && priorPattern is not null)
-            {
-                Volatile.Write(ref _sliderPosition, priorSlider);
-                _pausedExplicitly = priorExplicitPause;
-                _pausedByZeroSlider = priorZeroPause || priorSlider <= 0.0;
-                await StartSearchAsync(priorPattern).ConfigureAwait(false);
+                Volatile.Write(ref _calibrationRemainingSeconds, _options.FullCalibrationDuration.TotalSeconds);
+                _state = CoordinatorState.Calibrating;
             }
             else
             {
-                _state = CoordinatorState.Idle;
-                PublishTelemetry();
+                _state = CoordinatorState.Running;
+            }
+
+            Interlocked.Increment(ref _rateEpoch);
+        }
+
+        if (persistedSlider.HasValue)
+        {
+            _stateStore.Update(s => s.SliderPosition = persistedSlider.Value);
+        }
+
+        PublishTelemetry();
+    }
+
+    private bool NeedsFullCalibrationLocked()
+    {
+        foreach (GpuDeviceInfo d in _devices)
+        {
+            if (!_enabledDevices.TryGetValue(d.DeviceKey, out bool en) || !en)
+            {
+                continue;
+            }
+
+            if (!_calibrations.TryGetValue(d.DeviceKey, out CalibrationRecord? rec) ||
+                !CalibrationValidator.IsValidForDevice(rec, d, ExpectedKernelFor(d), requireFull: true))
+            {
+                return true;
             }
         }
+
+        return false;
     }
 
     public Task StartSearchAsync(KeyIdPattern pattern)
@@ -569,8 +420,8 @@ public sealed class MultiGpuCoordinator : IDisposable
             SyncPatternProgressScope(pattern);
 
             _errorMessage = null;
-            _stopRequestedOnActiveOp = false;
             Interlocked.Exchange(ref _sessionChecked, 0);
+            Interlocked.Exchange(ref _autoPauseTriggered, 0);
 
             var cts = new CancellationTokenSource();
             _activeOpCts = cts;
@@ -579,17 +430,25 @@ public sealed class MultiGpuCoordinator : IDisposable
                 !_calibrations.TryGetValue(d.DeviceKey, out CalibrationRecord? rec) ||
                 !CalibrationValidator.IsValidForDevice(rec, d, ExpectedKernelFor(d), requireFull: true));
 
-            bool startPaused = _pausedExplicitly || Volatile.Read(ref _sliderPosition) <= 0.0;
-            if (Volatile.Read(ref _sliderPosition) <= 0.0)
+            bool startPaused = _pausedExplicitly || (!needsFullCal && Volatile.Read(ref _sliderPosition) <= 0.0);
+            if (!needsFullCal && Volatile.Read(ref _sliderPosition) <= 0.0)
             {
                 _pausedByZeroSlider = true;
+            }
+            else if (needsFullCal && Volatile.Read(ref _sliderPosition) <= 0.0)
+            {
+                // Initial 30s baseline measurement runs at full speed (100%).
+                Volatile.Write(ref _sliderPosition, 1.0);
+                _lastPositiveSliderPosition = 1.0;
+                _pausedByZeroSlider = false;
+                _stateStore.Update(s => s.SliderPosition = 1.0);
             }
 
             _state = startPaused
                 ? CoordinatorState.Paused
                 : (needsFullCal ? CoordinatorState.Calibrating : CoordinatorState.Running);
 
-            _calibrationRemainingSeconds = (!startPaused && needsFullCal) ? _options.FullCalibrationDuration.TotalSeconds : 0.0;
+            Volatile.Write(ref _calibrationRemainingSeconds, (!startPaused && needsFullCal) ? _options.FullCalibrationDuration.TotalSeconds : 0.0);
 
             _activeOpTask = Task.Run(() => RunMultiGpuSessionAsync(enabled, pattern, cts), CancellationToken.None);
         }
@@ -612,12 +471,11 @@ public sealed class MultiGpuCoordinator : IDisposable
                 _pausedExplicitly = false;
                 _pausedByZeroSlider = false;
                 _state = CoordinatorState.Idle;
-                _calibrationRemainingSeconds = 0;
+                Volatile.Write(ref _calibrationRemainingSeconds, 0.0);
                 PublishTelemetry();
                 return;
             }
 
-            _stopRequestedOnActiveOp = true;
             _state = CoordinatorState.Stopping;
         }
 
@@ -641,7 +499,8 @@ public sealed class MultiGpuCoordinator : IDisposable
             FlushSessionCheckedIntoPersisted();
             _pausedExplicitly = false;
             _pausedByZeroSlider = false;
-            _calibrationRemainingSeconds = 0;
+            Interlocked.Exchange(ref _autoPauseTriggered, 0);
+            Volatile.Write(ref _calibrationRemainingSeconds, 0.0);
             ResetTransientRates();
             if (_state != CoordinatorState.Faulted)
             {
@@ -679,214 +538,6 @@ public sealed class MultiGpuCoordinator : IDisposable
         }
     }
 
-    private async Task RunStandaloneCalibrationCoreAsync(
-        IReadOnlyList<GpuDeviceInfo> enabled,
-        KeyIdPattern pattern,
-        TimeSpan duration,
-        bool isFullCalibration,
-        bool countTowardProgress,
-        CancellationToken ct)
-    {
-        var tasks = new List<Task<CalibrationRecord?>>(enabled.Count);
-        long startTs = Stopwatch.GetTimestamp();
-
-        using var telemetryCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        Task telemetryLoop = Task.Run(async () =>
-        {
-            while (!telemetryCts.IsCancellationRequested)
-            {
-                double elapsed = Stopwatch.GetElapsedTime(startTs).TotalSeconds;
-                _calibrationRemainingSeconds = Math.Max(0.0, duration.TotalSeconds - elapsed);
-                PublishTelemetry();
-                try
-                {
-                    await Task.Delay(_options.TelemetryInterval, telemetryCts.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-            }
-        }, CancellationToken.None);
-
-        try
-        {
-            using var workerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            foreach (GpuDeviceInfo dev in enabled)
-            {
-                tasks.Add(Task.Run(() =>
-                {
-                    try
-                    {
-                        return CalibrateSingleDevice(dev, pattern, duration, isFullCalibration, countTowardProgress, workerCts.Token);
-                    }
-                    catch when (!workerCts.IsCancellationRequested)
-                    {
-                        workerCts.Cancel();
-                        throw;
-                    }
-                }, CancellationToken.None));
-            }
-
-            CalibrationRecord?[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
-            ct.ThrowIfCancellationRequested();
-
-            foreach (CalibrationRecord? record in results)
-            {
-                if (record is not null)
-                {
-                    SaveCalibrationRecord(record);
-                }
-            }
-        }
-        finally
-        {
-            telemetryCts.Cancel();
-            try { await telemetryLoop.ConfigureAwait(false); } catch { }
-            if (countTowardProgress)
-            {
-                FlushSessionCheckedIntoPersisted();
-            }
-        }
-    }
-
-    private CalibrationRecord? CalibrateSingleDevice(
-        GpuDeviceInfo devInfo,
-        KeyIdPattern pattern,
-        TimeSpan duration,
-        bool isFullCalibration,
-        bool countTowardProgress,
-        CancellationToken ct)
-    {
-        WorkerRuntimeState rt = GetOrCreateRuntimeState(devInfo.DeviceKey);
-        rt.Error = null;
-        rt.ActualHps = 0;
-
-        using IGpuSearchDevice device = _backend.CreateDevice(devInfo);
-        ReconcileActualDeviceInfo(device);
-        GpuDeviceInfo actualInfo = device.Info with { KernelVersion = device.KernelVersion };
-        Ed25519KeyPair[] keys = GenerateKeyGroup(device.KeysPerBatch);
-        byte[][] pubKeys = keys.Select(k => k.PublicKey).ToArray();
-        uint cursor = 1u;
-        uint end = CurrentTimestampUpperBound();
-
-        try
-        {
-            ct.ThrowIfCancellationRequested();
-
-            // Warmup batch before measurement clock starts
-            uint warmupStamps = RateControl.ComputeBatchTimestamps(
-                device.MaxCandidatesPerBatch,
-                device.KeysPerBatch,
-                new RateDirective(RateMode.FullSpeed, RateControl.FullSpeedSentinel),
-                end - cursor);
-
-            var warmupHits = device.ScanGroup(pubKeys, cursor, warmupStamps, pattern);
-            if (countTowardProgress)
-            {
-                HandleVerifiedHits(devInfo, keys, warmupHits, pattern, allowAutoPause: false);
-                Interlocked.Add(ref _sessionChecked, (long)warmupStamps * device.KeysPerBatch);
-            }
-            cursor += warmupStamps;
-
-            var samples = new List<double>();
-            long calStart = Stopwatch.GetTimestamp();
-            long windowStart = calStart;
-            long windowChecked = 0;
-            long totalMeasuredChecked = 0;
-
-            while (!ct.IsCancellationRequested)
-            {
-                double totalElapsed = Stopwatch.GetElapsedTime(calStart).TotalSeconds;
-                if (totalElapsed >= duration.TotalSeconds)
-                {
-                    break;
-                }
-
-                if (cursor >= end)
-                {
-                    ZeroKeyGroup(keys);
-                    keys = GenerateKeyGroup(device.KeysPerBatch);
-                    pubKeys = keys.Select(k => k.PublicKey).ToArray();
-                    cursor = 1u;
-                    end = CurrentTimestampUpperBound();
-                }
-
-                uint stamps = RateControl.ComputeBatchTimestamps(
-                    device.MaxCandidatesPerBatch,
-                    device.KeysPerBatch,
-                    new RateDirective(RateMode.FullSpeed, RateControl.FullSpeedSentinel),
-                    end - cursor);
-
-                var hits = device.ScanGroup(pubKeys, cursor, stamps, pattern);
-                long batchCandidates = (long)stamps * device.KeysPerBatch;
-
-                if (countTowardProgress)
-                {
-                    HandleVerifiedHits(devInfo, keys, hits, pattern, allowAutoPause: false);
-                    Interlocked.Add(ref _sessionChecked, batchCandidates);
-                }
-
-                cursor += stamps;
-                windowChecked += batchCandidates;
-                totalMeasuredChecked += batchCandidates;
-
-                double windowElapsed = Stopwatch.GetElapsedTime(windowStart).TotalSeconds;
-                if (windowElapsed >= _options.CalibrationWindow.TotalSeconds)
-                {
-                    double hps = windowChecked / windowElapsed;
-                    samples.Add(hps);
-                    rt.ActualHps = hps;
-                    windowStart = Stopwatch.GetTimestamp();
-                    windowChecked = 0;
-                }
-            }
-
-            ct.ThrowIfCancellationRequested();
-
-            if (samples.Count == 0 && totalMeasuredChecked > 0)
-            {
-                double elapsed = Math.Max(0.001, Stopwatch.GetElapsedTime(calStart).TotalSeconds);
-                samples.Add(totalMeasuredChecked / elapsed);
-            }
-
-            if (samples.Count == 0)
-            {
-                return null;
-            }
-
-            samples.Sort();
-            double peak = samples[^1];
-            double median = samples.Count % 2 == 1
-                ? samples[samples.Count / 2]
-                : 0.5 * (samples[samples.Count / 2 - 1] + samples[samples.Count / 2]);
-
-            return new CalibrationRecord(
-                DeviceKey: actualInfo.DeviceKey,
-                DeviceName: actualInfo.Name,
-                DriverVersion: actualInfo.DriverVersion,
-                KernelVersion: actualInfo.KernelVersion,
-                PeakHashesPerSecond: peak,
-                MedianHashesPerSecond: median,
-                IsFullCalibration: isFullCalibration,
-                CalibratedAtUtc: DateTimeOffset.UtcNow);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            rt.Error = ex.Message;
-            throw;
-        }
-        finally
-        {
-            rt.ActualHps = 0;
-            ZeroKeyGroup(keys);
-        }
-    }
-
     private async Task RunMultiGpuSessionAsync(
         IReadOnlyList<GpuDeviceInfo> enabled,
         KeyIdPattern pattern,
@@ -899,6 +550,7 @@ public sealed class MultiGpuCoordinator : IDisposable
 
         Task? telemetryLoop = null;
         long calStartTimestamp = Stopwatch.GetTimestamp();
+        int calClockActive = 0;
 
         try
         {
@@ -914,14 +566,14 @@ public sealed class MultiGpuCoordinator : IDisposable
                 long lastPersist = Stopwatch.GetTimestamp();
                 while (!telemetryCts.IsCancellationRequested)
                 {
-                    if (_state == CoordinatorState.Calibrating)
+                    if (_state == CoordinatorState.Calibrating && Volatile.Read(ref calClockActive) == 1)
                     {
                         double elapsed = Stopwatch.GetElapsedTime(Volatile.Read(ref calStartTimestamp)).TotalSeconds;
-                        _calibrationRemainingSeconds = Math.Max(0.0, _options.FullCalibrationDuration.TotalSeconds - elapsed);
+                        Volatile.Write(ref _calibrationRemainingSeconds, Math.Max(0.0, _options.FullCalibrationDuration.TotalSeconds - elapsed));
                     }
-                    else
+                    else if (_state != CoordinatorState.Calibrating)
                     {
-                        _calibrationRemainingSeconds = 0.0;
+                        Volatile.Write(ref _calibrationRemainingSeconds, 0.0);
                     }
 
                     PublishTelemetry();
@@ -943,23 +595,31 @@ public sealed class MultiGpuCoordinator : IDisposable
                 }
             }, CancellationToken.None);
 
-            // Phase 1: Zero-waste 30s full calibration on open devices.
-            // If interrupted by pause (e.g. AutoPauseOnHit or slider=0), wait cleanly while paused and retry calibration upon Resume.
+            // Phase 1: Automatic 30s full-speed measurement on open devices when baseline is missing.
+            // If interrupted by pause (e.g. AutoPauseOnHit on simple suffix), wait while paused and retry upon Resume.
+            bool pausedNotified = false;
             while (!failureLinkedCts.IsCancellationRequested && NeedsFullCalibration())
             {
                 if (IsCurrentlyPaused())
                 {
-                    _state = CoordinatorState.Paused;
-                    _calibrationRemainingSeconds = 0.0;
-                    ResetTransientRates();
-                    PublishTelemetry();
+                    Volatile.Write(ref calClockActive, 0);
+                    if (!pausedNotified || _state != CoordinatorState.Paused)
+                    {
+                        _state = CoordinatorState.Paused;
+                        Volatile.Write(ref _calibrationRemainingSeconds, 0.0);
+                        ResetTransientRates();
+                        PublishTelemetry();
+                        pausedNotified = true;
+                    }
                     await Task.Delay(40, failureLinkedCts.Token).ConfigureAwait(false);
                     continue;
                 }
 
-                _state = CoordinatorState.Calibrating;
+                pausedNotified = false;
                 Volatile.Write(ref calStartTimestamp, Stopwatch.GetTimestamp());
-                _calibrationRemainingSeconds = _options.FullCalibrationDuration.TotalSeconds;
+                Volatile.Write(ref _calibrationRemainingSeconds, _options.FullCalibrationDuration.TotalSeconds);
+                Volatile.Write(ref calClockActive, 1);
+                _state = CoordinatorState.Calibrating;
                 PublishTelemetry();
 
                 var calTasks = devices.Select(dev => Task.Run(() =>
@@ -976,6 +636,7 @@ public sealed class MultiGpuCoordinator : IDisposable
                 }, CancellationToken.None)).ToArray();
 
                 CalibrationRecord?[] records = await Task.WhenAll(calTasks).ConfigureAwait(false);
+                Volatile.Write(ref calClockActive, 0);
 
                 if (failureLinkedCts.IsCancellationRequested)
                 {
@@ -994,7 +655,7 @@ public sealed class MultiGpuCoordinator : IDisposable
                     }
 
                     PersistTotalChecked();
-                    _calibrationRemainingSeconds = 0.0;
+                    Volatile.Write(ref _calibrationRemainingSeconds, 0.0);
                     break;
                 }
             }
@@ -1004,7 +665,7 @@ public sealed class MultiGpuCoordinator : IDisposable
                 _state = IsCurrentlyPaused() ? CoordinatorState.Paused : CoordinatorState.Running;
                 PublishTelemetry();
 
-                // Phase 2: Continuous multi-GPU throttled search on the already-open devices
+                // Phase 2: Continuous multi-GPU search (dynamic median updates only while in FullSpeed mode)
                 var workerTasks = devices.Select(dev => Task.Run(() =>
                 {
                     try
@@ -1120,7 +781,7 @@ public sealed class MultiGpuCoordinator : IDisposable
                 {
                     double hps = windowChecked / windowElapsed;
                     samples.Add(hps);
-                    rt.ActualHps = hps;
+                    Volatile.Write(ref rt.ActualHps, hps);
                     windowStart = Stopwatch.GetTimestamp();
                     windowChecked = 0;
                 }
@@ -1142,21 +803,7 @@ public sealed class MultiGpuCoordinator : IDisposable
                 return null;
             }
 
-            samples.Sort();
-            double peak = samples[^1];
-            double median = samples.Count % 2 == 1
-                ? samples[samples.Count / 2]
-                : 0.5 * (samples[samples.Count / 2 - 1] + samples[samples.Count / 2]);
-
-            return new CalibrationRecord(
-                DeviceKey: device.Info.DeviceKey,
-                DeviceName: device.Info.Name,
-                DriverVersion: device.Info.DriverVersion,
-                KernelVersion: device.KernelVersion,
-                PeakHashesPerSecond: peak,
-                MedianHashesPerSecond: median,
-                IsFullCalibration: true,
-                CalibratedAtUtc: DateTimeOffset.UtcNow);
+            return BuildCalibrationRecordFromSamples(device, samples, priorPeakHps: 0.0);
         }
         catch (Exception ex)
         {
@@ -1183,43 +830,75 @@ public sealed class MultiGpuCoordinator : IDisposable
         long sampleStart = Stopwatch.GetTimestamp();
         long sampleChecked = 0;
         int seenRateEpoch = -1;
+        RateMode lastMode = RateMode.Paused;
+
+        // Dynamic median tracking: active ONLY while slider is continuously at FullSpeed (100%).
+        var fullSpeedSamples = new List<double>();
+        long dynamicMedianStart = Stopwatch.GetTimestamp();
+        int minMedianSamples = Math.Max(1, _options.MinDynamicMedianSamples);
 
         try
         {
             while (!ct.IsCancellationRequested)
             {
-                int currentEpoch = Volatile.Read(ref _rateEpoch);
+                int epochBefore = Volatile.Read(ref _rateEpoch);
                 double slider = IsCurrentlyPaused() ? 0.0 : Volatile.Read(ref _sliderPosition);
-                double devicePeak = GetValidatedDevicePeakHps(device.Info);
-                RateDirective directive = RateControl.FromSlider(slider, devicePeak);
+                double deviceBaseline = GetValidatedDeviceBaselineHps(device.Info);
+                RateDirective directive = RateControl.FromSlider(slider, deviceBaseline);
+                int epochAfter = Volatile.Read(ref _rateEpoch);
 
                 double nowSec = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
 
-                if (currentEpoch != seenRateEpoch)
+                if (epochBefore != seenRateEpoch || epochAfter != epochBefore || directive.Mode != lastMode)
                 {
-                    seenRateEpoch = currentEpoch;
+                    seenRateEpoch = epochAfter;
+                    lastMode = directive.Mode;
                     readyTimeSec = nowSec;
                     sampleStart = Stopwatch.GetTimestamp();
                     sampleChecked = 0;
+                    fullSpeedSamples.Clear();
+                    dynamicMedianStart = Stopwatch.GetTimestamp();
+
                     if (directive.Mode == RateMode.Paused)
                     {
-                        rt.ActualHps = 0;
+                        Volatile.Write(ref rt.ActualHps, 0.0);
                     }
                 }
                 else
                 {
-                    double sampleElapsed = Stopwatch.GetElapsedTime(sampleStart).TotalSeconds;
-                    if (sampleElapsed >= 1.0)
+                    if (directive.Mode != RateMode.FullSpeed)
                     {
-                        rt.ActualHps = directive.Mode == RateMode.Paused ? 0.0 : sampleChecked / sampleElapsed;
+                        fullSpeedSamples.Clear();
+                        dynamicMedianStart = Stopwatch.GetTimestamp();
+                    }
+
+                    double sampleElapsed = Stopwatch.GetElapsedTime(sampleStart).TotalSeconds;
+                    if (sampleElapsed >= _options.CalibrationWindow.TotalSeconds)
+                    {
+                        double hps = directive.Mode == RateMode.Paused ? 0.0 : sampleChecked / sampleElapsed;
+                        Volatile.Write(ref rt.ActualHps, hps);
                         sampleStart = Stopwatch.GetTimestamp();
                         sampleChecked = 0;
+
+                        if (directive.Mode == RateMode.FullSpeed && hps > 0.0)
+                        {
+                            fullSpeedSamples.Add(hps);
+                            if (Stopwatch.GetElapsedTime(dynamicMedianStart) >= _options.DynamicMedianInterval &&
+                                fullSpeedSamples.Count >= minMedianSamples)
+                            {
+                                double priorPeak = GetStoredDevicePeakHps(device.Info.DeviceKey);
+                                CalibrationRecord updated = BuildCalibrationRecordFromSamples(device, fullSpeedSamples, priorPeak);
+                                SaveCalibrationRecord(updated);
+                                fullSpeedSamples.Clear();
+                                dynamicMedianStart = Stopwatch.GetTimestamp();
+                            }
+                        }
                     }
                 }
 
                 if (directive.Mode == RateMode.Paused)
                 {
-                    rt.ActualHps = 0;
+                    Volatile.Write(ref rt.ActualHps, 0.0);
                     Thread.Sleep(25);
                     continue;
                 }
@@ -1273,9 +952,32 @@ public sealed class MultiGpuCoordinator : IDisposable
         }
         finally
         {
-            rt.ActualHps = 0;
+            Volatile.Write(ref rt.ActualHps, 0.0);
             ZeroKeyGroup(keys);
         }
+    }
+
+    private static CalibrationRecord BuildCalibrationRecordFromSamples(
+        IGpuSearchDevice device,
+        List<double> samples,
+        double priorPeakHps)
+    {
+        var sorted = new List<double>(samples);
+        sorted.Sort();
+        double peak = Math.Max(priorPeakHps, sorted[^1]);
+        double median = sorted.Count % 2 == 1
+            ? sorted[sorted.Count / 2]
+            : 0.5 * (sorted[sorted.Count / 2 - 1] + sorted[sorted.Count / 2]);
+
+        return new CalibrationRecord(
+            DeviceKey: device.Info.DeviceKey,
+            DeviceName: device.Info.Name,
+            DriverVersion: device.Info.DriverVersion,
+            KernelVersion: device.KernelVersion,
+            PeakHashesPerSecond: peak,
+            MedianHashesPerSecond: median,
+            IsFullCalibration: true,
+            CalibratedAtUtc: DateTimeOffset.UtcNow);
     }
 
     private void HandleVerifiedHits(
@@ -1285,7 +987,7 @@ public sealed class MultiGpuCoordinator : IDisposable
         KeyIdPattern pattern,
         bool allowAutoPause)
     {
-        bool anySaved = false;
+        bool shouldAutoPause = allowAutoPause && _autoPauseOnHit;
 
         for (int lane = 0; lane < keys.Length; lane++)
         {
@@ -1305,26 +1007,47 @@ public sealed class MultiGpuCoordinator : IDisposable
                         $"GPU hit verification failed on '{deviceInfo.Name}': keyId {keyIdValue:X16} did not match {pattern.CanonicalMask}.");
                 }
 
+                if (shouldAutoPause)
+                {
+                    if (Interlocked.Exchange(ref _autoPauseTriggered, 1) != 0)
+                    {
+                        // Another worker already recorded the hit and triggered auto-pause.
+                        return;
+                    }
+
+                    // Signal all other GPU workers to stop dispatching immediately before disk I/O.
+                    _pausedExplicitly = true;
+                    Interlocked.Increment(ref _rateEpoch);
+                }
+
                 MatchedKeyRecord record = _vaultStore.SaveMatch(
                     keys[lane].PrivateSeed,
                     keys[lane].PublicKey,
                     ts,
                     fullFingerprint,
                     pattern.CanonicalMask,
-                    deviceInfo.Name);
+                    deviceInfo.Name,
+                    out int storedCount);
 
-                Interlocked.Exchange(ref _totalMatchesCount, _vaultStore.LoadMatches().Count);
-                anySaved = true;
+                Interlocked.Exchange(ref _totalMatchesCount, storedCount);
+
+                if (shouldAutoPause)
+                {
+                    lock (_lifecycleLock)
+                    {
+                        if (_state is CoordinatorState.Running or CoordinatorState.Calibrating)
+                        {
+                            _state = CoordinatorState.Paused;
+                        }
+                    }
+                    PublishTelemetry();
+                }
+
                 MatchFound?.Invoke(this, record);
-            }
-        }
 
-        if (anySaved && allowAutoPause && _autoPauseOnHit)
-        {
-            _pausedExplicitly = true;
-            _state = CoordinatorState.Paused;
-            Interlocked.Increment(ref _rateEpoch);
-            PublishTelemetry();
+                // Cap to at most 1 saved match per GPU batch to prevent simple suffixes from flooding storage/UI.
+                return;
+            }
         }
     }
 
@@ -1416,16 +1139,26 @@ public sealed class MultiGpuCoordinator : IDisposable
     private string ExpectedKernelFor(GpuDeviceInfo device) =>
         _options.ExpectedKernelVersionOverride ?? device.KernelVersion;
 
-    private double GetValidatedDevicePeakHps(GpuDeviceInfo device)
+    private double GetValidatedDeviceBaselineHps(GpuDeviceInfo device)
     {
         lock (_lifecycleLock)
         {
             if (_calibrations.TryGetValue(device.DeviceKey, out CalibrationRecord? rec) &&
-                CalibrationValidator.IsValidForDevice(rec, device, ExpectedKernelFor(device), requireFull: false))
+                CalibrationValidator.IsValidForDevice(rec, device, ExpectedKernelFor(device), requireFull: true))
             {
-                return rec.PeakHashesPerSecond;
+                return CalibrationValidator.GetBaselineHps(rec);
             }
             return 0.0;
+        }
+    }
+
+    private double GetStoredDevicePeakHps(string deviceKey)
+    {
+        lock (_lifecycleLock)
+        {
+            return _calibrations.TryGetValue(deviceKey, out CalibrationRecord? rec)
+                ? rec.PeakHashesPerSecond
+                : 0.0;
         }
     }
 
@@ -1448,7 +1181,7 @@ public sealed class MultiGpuCoordinator : IDisposable
         {
             foreach (WorkerRuntimeState rt in _workerStates.Values)
             {
-                rt.ActualHps = 0;
+                Volatile.Write(ref rt.ActualHps, 0.0);
             }
         }
     }
@@ -1466,10 +1199,10 @@ public sealed class MultiGpuCoordinator : IDisposable
         double slider = paused ? 0.0 : Volatile.Read(ref _sliderPosition);
         double totalActual = 0.0;
         long totalTarget = 0;
-        double totalPeak = 0.0;
+        double totalBaseline = 0.0;
         bool allFull = true;
         bool anyEnabled = false;
-        bool isFullSpeed = slider >= 1.0 && !paused;
+        bool isFullSpeed = (_state == CoordinatorState.Calibrating) || (slider >= 1.0 && !paused);
 
         var deviceSnaps = new List<GpuTelemetrySnapshot>(_devices.Count);
         lock (_lifecycleLock)
@@ -1481,20 +1214,19 @@ public sealed class MultiGpuCoordinator : IDisposable
                 _calibrations.TryGetValue(dev.DeviceKey, out CalibrationRecord? cal);
 
                 bool fullCal = CalibrationValidator.IsValidForDevice(cal, dev, ExpectedKernelFor(dev), requireFull: true);
-                bool provCal = CalibrationValidator.IsValidForDevice(cal, dev, ExpectedKernelFor(dev), requireFull: false);
-                double peak = provCal ? cal!.PeakHashesPerSecond : 0.0;
-                double actual = rt?.ActualHps ?? 0.0;
+                double baseline = fullCal ? CalibrationValidator.GetBaselineHps(cal) : 0.0;
+                double actual = rt is not null ? Volatile.Read(ref rt.ActualHps) : 0.0;
 
-                RateDirective dir = enabled ? RateControl.FromSlider(slider, peak) : new RateDirective(RateMode.Paused, 0);
+                RateDirective dir = enabled ? RateControl.FromSlider(slider, baseline) : new RateDirective(RateMode.Paused, 0);
                 long devTarget = dir.Mode == RateMode.Capped
                     ? dir.TargetHashesPerSecond
-                    : (dir.Mode == RateMode.FullSpeed ? (long)Math.Round(peak) : 0L);
+                    : (dir.Mode == RateMode.FullSpeed ? (long)Math.Round(baseline) : 0L);
 
                 if (enabled)
                 {
                     anyEnabled = true;
                     totalActual += actual;
-                    totalPeak += peak;
+                    totalBaseline += baseline;
                     totalTarget += devTarget;
                     if (!fullCal)
                     {
@@ -1510,9 +1242,8 @@ public sealed class MultiGpuCoordinator : IDisposable
                     IsEnabled: enabled,
                     ActualHps: actual,
                     TargetHps: devTarget,
-                    PeakHps: peak,
+                    BaselineHps: baseline,
                     IsFullCalibrated: fullCal,
-                    IsProvisionalCalibrated: provCal,
                     Error: rt?.Error));
             }
         }
@@ -1520,20 +1251,19 @@ public sealed class MultiGpuCoordinator : IDisposable
         ulong sessionChecked = (ulong)Math.Max(0L, Interlocked.Read(ref _sessionChecked));
         ulong totalChecked = _persistedTotalChecked + sessionChecked;
         double probability = _activePattern?.ComputeCumulativeProbability(totalChecked) ?? 0.0;
-        double etaRate = _state is CoordinatorState.Running or CoordinatorState.Calibrating
-            ? (totalActual > 0.0 ? totalActual : (isFullSpeed ? totalPeak : totalTarget))
-            : (isFullSpeed ? totalPeak : (totalTarget > 0 ? totalTarget : totalPeak));
-        TimeSpan? eta = (_state == CoordinatorState.Paused || etaRate <= 0.0)
-            ? null
-            : _activePattern?.EstimateMeanWait(etaRate);
+
+        // Compute ETA strictly from live measured speed while active (no speculative estimates).
+        TimeSpan? eta = (_state is CoordinatorState.Running or CoordinatorState.Calibrating && totalActual > 0.0)
+            ? _activePattern?.EstimateMeanWait(totalActual)
+            : null;
 
         return new CoordinatorTelemetry(
             State: _state,
-            CalibrationRemainingSeconds: _calibrationRemainingSeconds,
+            CalibrationRemainingSeconds: Volatile.Read(ref _calibrationRemainingSeconds),
             TotalActualHps: totalActual,
             TotalTargetHps: totalTarget,
             IsFullSpeed: isFullSpeed,
-            TotalPeakHps: totalPeak,
+            TotalBaselineHps: totalBaseline,
             AllEnabledFullyCalibrated: anyEnabled && allFull,
             SessionChecked: sessionChecked,
             TotalChecked: totalChecked,

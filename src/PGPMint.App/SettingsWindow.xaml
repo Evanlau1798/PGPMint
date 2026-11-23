@@ -6,7 +6,7 @@
     xmlns:vm="using:PGPMint.App.ViewModels"
     Title="PGPMint - Settings">
 
-    <Grid RowDefinitions="38,*">
+    <Grid x:Name="RootLayout" RowDefinitions="38,*" SizeChanged="OnRootLayoutSizeChanged">
         <Grid x:Name="TitleBarDragArea" Grid.Row="0" Padding="16,0,144,0" Background="Transparent">
             <TextBlock Text="{x:Bind ViewModel.Loc.Settings, Mode=OneWay}"
                        FontSize="13"
@@ -17,23 +17,29 @@
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel Padding="16,6,16,16" Spacing="12">
 
-                <!-- 1. Target Key ID Suffix Card -->
+                <!-- 1. Language (Top Row, Extensible Dropdown) -->
+                <Border Style="{StaticResource SurfaceCardStyle}">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <TextBlock Grid.Column="0"
+                                   Text="{x:Bind ViewModel.Loc.SectionLanguage, Mode=OneWay}"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center" />
+                        <ComboBox x:Name="LanguageComboBox"
+                                  Grid.Column="1"
+                                  MinWidth="168"
+                                  DisplayMemberPath="DisplayName"
+                                  SelectedValuePath="Code"
+                                  SelectionChanged="OnLanguageSelectionChanged" />
+                    </Grid>
+                </Border>
+
+                <!-- 2. Target Key ID Suffix Card (No speculative speed/ETA) -->
                 <Border Style="{StaticResource SurfaceCardStyle}">
                     <StackPanel Spacing="10">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Text="{x:Bind ViewModel.Loc.SectionTarget, Mode=OneWay}"
-                                       FontSize="13"
-                                       FontWeight="SemiBold"
-                                       VerticalAlignment="Center" />
-                            <Border x:Name="SettingsEtaPill"
-                                    Grid.Column="1"
-                                    Style="{StaticResource EtaPillStyle}">
-                                <TextBlock Text="{x:Bind ViewModel.DraftEtaText, Mode=OneWay}"
-                                           FontFamily="{StaticResource MonoFont}"
-                                           FontSize="13"
-                                           FontWeight="SemiBold" />
-                            </Border>
-                        </Grid>
+                        <TextBlock Text="{x:Bind ViewModel.Loc.SectionTarget, Mode=OneWay}"
+                                   FontSize="13"
+                                   FontWeight="SemiBold" />
 
                         <TextBlock Text="{x:Bind ViewModel.DraftFormattedPreview, Mode=OneWay}"
                                    FontFamily="{StaticResource MonoFont}"
@@ -80,7 +86,38 @@
                     </StackPanel>
                 </Border>
 
-                <!-- 2. Hardware GPUs & 30s Calibration Card -->
+                <!-- 3. Preferences Card (Responsive 1-column / 2-column grid based on window width) -->
+                <Border Style="{StaticResource SurfaceCardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="{x:Bind ViewModel.Loc.SectionPreferences, Mode=OneWay}"
+                                   FontSize="13"
+                                   FontWeight="SemiBold" />
+
+                        <Grid x:Name="PreferencesGrid" ColumnSpacing="16" RowSpacing="8">
+                            <ToggleSwitch x:Name="PrefAutoPause"
+                                          Header="{x:Bind ViewModel.Loc.SettingAutoPauseOnHit, Mode=OneWay}"
+                                          IsOn="{x:Bind ViewModel.AutoPauseOnHit, Mode=TwoWay}"
+                                          OnContent="" OffContent="" MinWidth="0" />
+
+                            <ToggleSwitch x:Name="PrefMinimizeToTray"
+                                          Header="{x:Bind ViewModel.Loc.SettingMinimizeToTray, Mode=OneWay}"
+                                          IsOn="{x:Bind ViewModel.MinimizeToTrayOnClose, Mode=TwoWay}"
+                                          OnContent="" OffContent="" MinWidth="0" />
+
+                            <ToggleSwitch x:Name="PrefShowMiniHud"
+                                          Header="{x:Bind ViewModel.Loc.SettingShowMiniHud, Mode=OneWay}"
+                                          IsOn="{x:Bind ViewModel.ShowMiniHudInTray, Mode=TwoWay}"
+                                          OnContent="" OffContent="" MinWidth="0" />
+
+                            <ToggleSwitch x:Name="PrefStartWithWindows"
+                                          Header="{x:Bind ViewModel.Loc.SettingStartWithWindows, Mode=OneWay}"
+                                          IsOn="{x:Bind ViewModel.StartWithWindows, Mode=TwoWay}"
+                                          OnContent="" OffContent="" MinWidth="0" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- 4. Hardware GPUs Card (Selection only; no estimated speeds, no manual test button) -->
                 <Border Style="{StaticResource SurfaceCardStyle}">
                     <StackPanel Spacing="10">
                         <TextBlock Text="{x:Bind ViewModel.Loc.SectionGpus, Mode=OneWay}"
@@ -93,7 +130,7 @@
                             </ItemsRepeater.Layout>
                             <ItemsRepeater.ItemTemplate>
                                 <DataTemplate x:DataType="vm:GpuItemViewModel">
-                                    <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8" MinHeight="28">
+                                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8" MinHeight="28">
                                         <CheckBox Grid.Column="0"
                                                   IsChecked="{x:Bind IsEnabled, Mode=OneWay}"
                                                   IsEnabled="{x:Bind CanToggle, Mode=OneWay}"
@@ -116,54 +153,10 @@
                                                        FontSize="11"
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                         </Border>
-                                        <TextBlock Grid.Column="3"
-                                                   Text="{x:Bind RateText, Mode=OneWay}"
-                                                   FontFamily="{StaticResource MonoFont}"
-                                                   FontSize="13"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                   VerticalAlignment="Center" />
                                     </Grid>
                                 </DataTemplate>
                             </ItemsRepeater.ItemTemplate>
                         </ItemsRepeater>
-
-                        <Button Content="{x:Bind ViewModel.Loc.SettingRecalibrate30s, Mode=OneWay}"
-                                HorizontalAlignment="Stretch"
-                                IsEnabled="{x:Bind ViewModel.CanRecalibrate, Mode=OneWay}"
-                                Click="OnRecalibrateClick" />
-                    </StackPanel>
-                </Border>
-
-                <!-- 3. System Preferences Card -->
-                <Border Style="{StaticResource SurfaceCardStyle}">
-                    <StackPanel Spacing="10">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Text="{x:Bind ViewModel.Loc.SettingLanguage, Mode=OneWay}"
-                                       VerticalAlignment="Center"
-                                       FontSize="13" />
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
-                                <ToggleButton x:Name="LangZhButton" Content="繁中" Padding="10,4" FontSize="12" Click="OnLangZhClick" />
-                                <ToggleButton x:Name="LangEnButton" Content="EN" Padding="10,4" FontSize="12" Click="OnLangEnClick" />
-                            </StackPanel>
-                        </Grid>
-
-                        <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
-
-                        <ToggleSwitch Header="{x:Bind ViewModel.Loc.SettingAutoPauseOnHit, Mode=OneWay}"
-                                      IsOn="{x:Bind ViewModel.AutoPauseOnHit, Mode=TwoWay}"
-                                      OnContent="" OffContent="" MinWidth="0" />
-
-                        <ToggleSwitch Header="{x:Bind ViewModel.Loc.SettingMinimizeToTray, Mode=OneWay}"
-                                      IsOn="{x:Bind ViewModel.MinimizeToTrayOnClose, Mode=TwoWay}"
-                                      OnContent="" OffContent="" MinWidth="0" />
-
-                        <ToggleSwitch Header="{x:Bind ViewModel.Loc.SettingShowMiniHud, Mode=OneWay}"
-                                      IsOn="{x:Bind ViewModel.ShowMiniHudInTray, Mode=TwoWay}"
-                                      OnContent="" OffContent="" MinWidth="0" />
-
-                        <ToggleSwitch Header="{x:Bind ViewModel.Loc.SettingStartWithWindows, Mode=OneWay}"
-                                      IsOn="{x:Bind ViewModel.StartWithWindows, Mode=TwoWay}"
-                                      OnContent="" OffContent="" MinWidth="0" />
                     </StackPanel>
                 </Border>
 

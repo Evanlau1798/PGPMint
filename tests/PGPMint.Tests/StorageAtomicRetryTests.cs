@@ -88,6 +88,7 @@ public class StorageAtomicRetryTests
         {
             var store = new AppStateStore(tempDir);
             AppPersistedState state = store.Load();
+            Assert.Equal(1.0, state.SliderPosition, 6);
             state.TotalCheckedCandidates = 42_000_000_000UL;
             state.TargetInput = "1145141919810";
             state.HasCompletedSetup = true;
@@ -167,6 +168,38 @@ public class StorageAtomicRetryTests
             }
 
             Assert.Equal("{\"v\":2}", File.ReadAllText(filePath));
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void DpapiVaultCapsStoredMatchesAtLimitAndSupportsClearAll()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), "pm-cap-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var vault = new DpapiVaultStore(tempDir);
+            Ed25519KeyPair pair = Ed25519KeyGenerator.Generate();
+            int totalToInsert = DpapiVaultStore.MaxStoredMatches + 5;
+
+            for (int i = 0; i < totalToInsert; i++)
+            {
+                uint ts = 1700000000u + (uint)i;
+                string fp = OpenPgpV4Packet.ComputeFingerprint(pair.PublicKey, ts);
+                vault.SaveMatch(pair.PrivateSeed, pair.PublicKey, ts, fp, "***0", "Test GPU");
+            }
+
+            IReadOnlyList<MatchedKeyRecord> stored = vault.LoadMatches();
+            Assert.Equal(DpapiVaultStore.MaxStoredMatches, stored.Count);
+            // Most recent inserted item is kept at index 0
+            Assert.Equal(1700000000u + (uint)(totalToInsert - 1), stored[0].CreationTimestamp);
+
+            int cleared = vault.ClearAllMatches();
+            Assert.Equal(DpapiVaultStore.MaxStoredMatches, cleared);
+            Assert.Empty(vault.LoadMatches());
         }
         finally
         {

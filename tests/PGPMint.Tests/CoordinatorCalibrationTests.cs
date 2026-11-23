@@ -8,18 +8,35 @@ namespace PGPMint.Tests;
 public class CoordinatorCalibrationTests
 {
     [Fact]
-    public void SliderMathMatchesExactHandoffIntegerSpecification()
+    public void TwoStageSliderMappingAndRateMathMatchSpecification()
     {
-        RateDirective dir37 = RateControl.FromSlider(0.37, 22_351_000_000.0);
+        // Logical -> RateDirective
+        RateDirective dir37 = RateControl.FromSlider(0.37, 22_000_000_000.0);
         Assert.Equal(RateMode.Capped, dir37.Mode);
-        Assert.Equal(8_269_870_000L, dir37.TargetHashesPerSecond);
+        Assert.Equal(8_140_000_000L, dir37.TargetHashesPerSecond);
 
-        RateDirective dirZero = RateControl.FromSlider(0.0, 22_351_000_000.0);
+        RateDirective dir99 = RateControl.FromSlider(0.99, 22_000_000_000.0);
+        Assert.Equal(RateMode.Capped, dir99.Mode);
+        Assert.Equal(21_780_000_000L, dir99.TargetHashesPerSecond);
+
+        RateDirective dirZero = RateControl.FromSlider(0.0, 22_000_000_000.0);
         Assert.Equal(RateMode.Paused, dirZero.Mode);
         Assert.Equal(0L, dirZero.TargetHashesPerSecond);
 
-        RateDirective dirFull = RateControl.FromSlider(1.0, 22_351_000_000.0);
+        RateDirective dirFull = RateControl.FromSlider(1.0, 22_000_000_000.0);
         Assert.Equal(RateMode.FullSpeed, dirFull.Mode);
+
+        // Two-stage UI slider (0 = Paused, 10..990 = 1%..99%, 991..1074 = detent buffer holding 99%, 1075..1080 = FullSpeed)
+        Assert.Equal(0.0, RateControl.UiSliderToLogical(0.0));
+        Assert.Equal(0.01, RateControl.UiSliderToLogical(10.0), 6);
+        Assert.Equal(0.50, RateControl.UiSliderToLogical(500.0), 6);
+        Assert.Equal(0.99, RateControl.UiSliderToLogical(990.0), 6);
+        Assert.Equal(0.99, RateControl.UiSliderToLogical(1040.0), 6); // inside detent buffer
+        Assert.Equal(990.0, RateControl.SnapUiSliderOnRelease(1040.0)); // snaps back to 99%
+        Assert.Equal(1.0, RateControl.UiSliderToLogical(1080.0), 6);
+        Assert.Equal(1080.0, RateControl.LogicalToUiSlider(1.0));
+        Assert.Equal(990.0, RateControl.LogicalToUiSlider(0.99));
+        Assert.Equal(0.0, RateControl.LogicalToUiSlider(0.0));
     }
 
     [Fact]
@@ -32,13 +49,13 @@ public class CoordinatorCalibrationTests
             var validRec = new CalibrationRecord(gpu.DeviceKey, gpu.Name, gpu.DriverVersion, "k1", 20e9, 19e9, true, DateTimeOffset.UtcNow);
 
             Assert.True(CalibrationValidator.IsValidForDevice(validRec, gpu, "k1", requireFull: true));
+            Assert.Equal(19e9, CalibrationValidator.GetBaselineHps(validRec));
             Assert.False(CalibrationValidator.IsValidForDevice(validRec with { DriverVersion = "32.0.15.0000" }, gpu, "k1", requireFull: true));
             Assert.False(CalibrationValidator.IsValidForDevice(validRec with { KernelVersion = "k2" }, gpu, "k1", requireFull: true));
 
             var stateStore = new AppStateStore(tempDir);
             stateStore.Update(s => s.Calibrations[gpu.DeviceKey] = validRec);
 
-            // Coordinator expecting "k2" must invalidate cached "k1" record
             var backend = new FakeGpuBackend(new[] { gpu }, batchDelayMs: 5, maxCandidatesPerBatch: 4000, kernelVersion: "k2");
             using var coord = new MultiGpuCoordinator(
                 backend,
@@ -47,9 +64,9 @@ public class CoordinatorCalibrationTests
                 new CoordinatorOptions { ExpectedKernelVersionOverride = "k2" });
             coord.Initialize();
 
-            Assert.True(coord.NeedsQuickProbe());
             Assert.True(coord.NeedsFullCalibration());
-            Assert.Equal(0.0, coord.LatestTelemetry.TotalPeakHps);
+            Assert.Equal(0.0, coord.LatestTelemetry.TotalBaselineHps);
+            Assert.Null(coord.LatestTelemetry.EstimatedMeanWait);
         }
         finally
         {
@@ -58,7 +75,53 @@ public class CoordinatorCalibrationTests
     }
 
     [Fact]
-    public async Task TwoStageProbeThenZeroWasteFullCalibrationAndMultiGpuHitAndPatternSwitchWorks()
+    public async Task AutoPauseOnHitSavesExactlyOneMatchEvenWhenBatchReturnsManyHits()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), "pm-onehit-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var gpu0 = new GpuDeviceInfo("GPU-0", 101, "Mock RTX A", 0x10DE, 1, 0, 1, 10_000_000_000UL, "1.0", true);
+            var gpu1 = new GpuDeviceInfo("GPU-1", 102, "Mock RX B", 0x1002, 2, 0, 1, 8_000_000_000UL, "2.0", true);
+            // Large scan per batch on 1-hex suffix ("0") guarantees many hits across all 4 lanes on both GPUs
+            var backend = new FakeGpuBackend(new[] { gpu0, gpu1 }, batchDelayMs: 2, maxCandidatesPerBatch: 4096);
+            var stateStore = new AppStateStore(tempDir);
+            var vault = new DpapiVaultStore(tempDir);
+
+            using var coordinator = new MultiGpuCoordinator(
+                backend,
+                stateStore,
+                vault,
+                new CoordinatorOptions
+                {
+                    FullCalibrationDuration = TimeSpan.FromMilliseconds(500),
+                    CalibrationWindow = TimeSpan.FromMilliseconds(80),
+                    TelemetryInterval = TimeSpan.FromMilliseconds(30),
+                    ExpectedKernelVersionOverride = "fake-kernel-v1"
+                });
+
+            coordinator.Initialize();
+            coordinator.SetAutoPauseOnHit(true);
+
+            int notifiedCount = 0;
+            coordinator.MatchFound += (_, _) => Interlocked.Increment(ref notifiedCount);
+
+            await coordinator.StartSearchAsync(KeyIdPattern.Parse("0"));
+            await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Paused, TimeSpan.FromSeconds(5));
+            await Task.Delay(120);
+
+            Assert.Equal(1, notifiedCount);
+            Assert.Single(vault.LoadMatches());
+
+            await coordinator.StopAsync();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task SliderIsLockedDuringInitialCalibrationAndZeroWasteMultiGpuSearchWorks()
     {
         string tempDir = Path.Combine(Path.GetTempPath(), "pm-coord-" + Guid.NewGuid().ToString("N")[..8]);
         try
@@ -76,42 +139,42 @@ public class CoordinatorCalibrationTests
                 vault,
                 new CoordinatorOptions
                 {
-                    QuickProbeDuration = TimeSpan.FromMilliseconds(220),
                     FullCalibrationDuration = TimeSpan.FromMilliseconds(320),
                     CalibrationWindow = TimeSpan.FromMilliseconds(80),
+                    DynamicMedianInterval = TimeSpan.FromSeconds(30),
                     TelemetryInterval = TimeSpan.FromMilliseconds(40),
                     ExpectedKernelVersionOverride = "fake-kernel-v1"
                 });
 
             coordinator.Initialize();
             Assert.Equal(2, coordinator.Devices.Count);
+            Assert.Equal(1.0, coordinator.SliderPosition, 6);
+            Assert.Equal(0.0, coordinator.LatestTelemetry.TotalBaselineHps);
 
-            // Stage 1: Quick probe measures both GPUs and returns cleanly to Idle
-            await coordinator.RunQuickProbeAsync();
-            Assert.Equal(CoordinatorState.Idle, coordinator.CurrentState);
-
-            var stateAfterProbe = stateStore.Load();
-            Assert.True(stateAfterProbe.Calibrations[gpu0.DeviceKey].PeakHashesPerSecond > 0);
-            Assert.True(stateAfterProbe.Calibrations[gpu1.DeviceKey].PeakHashesPerSecond > 0);
-            Assert.False(stateAfterProbe.Calibrations[gpu0.DeviceKey].IsFullCalibration);
-
-            // Stage 2: Start search with 1-hex suffix ("0") and AutoPauseOnHit=false so full calibration completes AND captures real hits
+            // Start with 1-hex suffix and AutoPauseOnHit=false so 30s (320ms) measurement completes and captures hits
             coordinator.SetAutoPauseOnHit(false);
-            coordinator.SetSliderPosition(0.5);
             var pattern = KeyIdPattern.Parse("0");
 
             await coordinator.StartSearchAsync(pattern);
+            await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Calibrating, TimeSpan.FromSeconds(2));
+
+            // Attempting to adjust slider during initial full-speed measurement must be ignored
+            coordinator.SetSliderPosition(0.4);
+            Assert.Equal(1.0, coordinator.SliderPosition, 6);
+
             await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Running, TimeSpan.FromSeconds(5));
 
             var stateAfterCal = stateStore.Load();
             Assert.True(stateAfterCal.Calibrations[gpu0.DeviceKey].IsFullCalibration);
             Assert.True(stateAfterCal.Calibrations[gpu1.DeviceKey].IsFullCalibration);
+            Assert.True(stateAfterCal.Calibrations[gpu0.DeviceKey].MedianHashesPerSecond > 0);
+            Assert.True(coordinator.LatestTelemetry.TotalBaselineHps > 0);
             Assert.True(vault.LoadMatches().Count > 0);
 
-            // Pause via slider = 0 finishes the active in-flight batch and publishes final telemetry before pausing
+            // Pause via slider = 0
             coordinator.SetSliderPosition(0.0);
             await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Paused, TimeSpan.FromSeconds(3));
-            await Task.Delay(120); // allow in-flight 5ms mock batch + 40ms telemetry tick to settle
+            await Task.Delay(120);
             ulong checkedAtPause = coordinator.LatestTelemetry.TotalChecked;
             await Task.Delay(160);
             Assert.Equal(checkedAtPause, coordinator.LatestTelemetry.TotalChecked);
@@ -122,6 +185,7 @@ public class CoordinatorCalibrationTests
 
             await coordinator.StopAsync();
             Assert.Equal(CoordinatorState.Idle, coordinator.CurrentState);
+            Assert.Null(coordinator.LatestTelemetry.EstimatedMeanWait); // Idle shows no speculative ETA
             ulong persistedTotal1 = stateStore.Load().TotalCheckedCandidates;
             Assert.True(persistedTotal1 > checkedAtPause);
 
@@ -146,19 +210,21 @@ public class CoordinatorCalibrationTests
     }
 
     [Fact]
-    public async Task ManualRecalibrationCancelFromRunningPreservesPriorPeakAndRestoresRunning()
+    public async Task FullSpeedDynamicMedianUpdatesOnlyAtFullSpeedAndStopsWhenCapped()
     {
-        string tempDir = Path.Combine(Path.GetTempPath(), "pm-recal-run-" + Guid.NewGuid().ToString("N")[..8]);
+        string tempDir = Path.Combine(Path.GetTempPath(), "pm-dynmed-" + Guid.NewGuid().ToString("N")[..8]);
         try
         {
             var gpu0 = new GpuDeviceInfo("GPU-0", 101, "Mock GPU", 0x10DE, 1, 0, 1, 10_000_000_000UL, "1.0", true);
-            var backend = new FakeGpuBackend(new[] { gpu0 }, batchDelayMs: 15, maxCandidatesPerBatch: 4000);
+            var backend = new FakeGpuBackend(new[] { gpu0 }, batchDelayMs: 4, maxCandidatesPerBatch: 4000);
             var stateStore = new AppStateStore(tempDir);
             var vault = new DpapiVaultStore(tempDir);
 
+            // Seed with a known valid full calibration from earlier
+            var initialTimestamp = DateTimeOffset.UtcNow.AddMinutes(-10);
             stateStore.Update(s => s.Calibrations[gpu0.DeviceKey] = new CalibrationRecord(
                 gpu0.DeviceKey, gpu0.Name, gpu0.DriverVersion, "fake-kernel-v1",
-                12_345_678_900.0, 11_000_000_000.0, true, DateTimeOffset.UtcNow));
+                50_000.0, 50_000.0, true, initialTimestamp));
 
             using var coordinator = new MultiGpuCoordinator(
                 backend,
@@ -166,64 +232,32 @@ public class CoordinatorCalibrationTests
                 vault,
                 new CoordinatorOptions
                 {
-                    FullCalibrationDuration = TimeSpan.FromSeconds(5),
-                    CalibrationWindow = TimeSpan.FromMilliseconds(100),
+                    CalibrationWindow = TimeSpan.FromMilliseconds(50),
+                    DynamicMedianInterval = TimeSpan.FromMilliseconds(160),
+                    TelemetryInterval = TimeSpan.FromMilliseconds(40),
                     ExpectedKernelVersionOverride = "fake-kernel-v1"
                 });
 
             coordinator.Initialize();
-            coordinator.SetSliderPosition(0.45);
-            var pattern = KeyIdPattern.Parse("FFFFFFFFFFFFFFFF");
-            await coordinator.StartSearchAsync(pattern);
-            await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Running, TimeSpan.FromSeconds(3));
+            Assert.Equal(1.0, coordinator.SliderPosition, 6);
 
-            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(180));
-            await coordinator.RunManualRecalibrationAsync(pattern, cts.Token);
+            await coordinator.StartSearchAsync(KeyIdPattern.Parse("FFFFFFFFFFFFFFFF"));
+            await WaitUntilAsync(() =>
+                stateStore.Load().Calibrations[gpu0.DeviceKey].CalibratedAtUtc > initialTimestamp,
+                TimeSpan.FromSeconds(4));
 
-            // External cancellation restores Running at prior slider (0.45) and preserves prior peak
-            await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Running, TimeSpan.FromSeconds(3));
-            Assert.Equal(0.45, coordinator.SliderPosition, 6);
-            Assert.Equal(12_345_678_900.0, stateStore.Load().Calibrations[gpu0.DeviceKey].PeakHashesPerSecond);
+            // Dynamic median updated while running in FullSpeed mode
+            DateTimeOffset updatedAtFullSpeed = stateStore.Load().Calibrations[gpu0.DeviceKey].CalibratedAtUtc;
+            Assert.True(updatedAtFullSpeed > initialTimestamp);
 
-            await coordinator.StopAsync();
-        }
-        finally
-        {
-            try { Directory.Delete(tempDir, recursive: true); } catch { }
-        }
-    }
-
-    [Fact]
-    public async Task StopDuringQuickProbeCancelsAndAwaitsWorkerCleanly()
-    {
-        string tempDir = Path.Combine(Path.GetTempPath(), "pm-qstop-" + Guid.NewGuid().ToString("N")[..8]);
-        try
-        {
-            var gpu0 = new GpuDeviceInfo("GPU-0", 101, "Mock GPU", 0x10DE, 1, 0, 1, 10_000_000_000UL, "1.0", true);
-            var backend = new FakeGpuBackend(new[] { gpu0 }, batchDelayMs: 25, maxCandidatesPerBatch: 4000);
-            var stateStore = new AppStateStore(tempDir);
-            var vault = new DpapiVaultStore(tempDir);
-
-            using var coordinator = new MultiGpuCoordinator(
-                backend,
-                stateStore,
-                vault,
-                new CoordinatorOptions
-                {
-                    QuickProbeDuration = TimeSpan.FromSeconds(10),
-                    CalibrationWindow = TimeSpan.FromMilliseconds(100),
-                    ExpectedKernelVersionOverride = "fake-kernel-v1"
-                });
-
-            coordinator.Initialize();
-            Task probeTask = coordinator.RunQuickProbeAsync();
-            await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.QuickProbing, TimeSpan.FromSeconds(2));
+            // Move slider to 95% (Capped mode): dynamic median sampling must immediately stop
+            coordinator.SetSliderPosition(0.95);
+            await Task.Delay(60); // settle in-flight tick
+            DateTimeOffset stampedAfterCap = stateStore.Load().Calibrations[gpu0.DeviceKey].CalibratedAtUtc;
+            await Task.Delay(320); // well past DynamicMedianInterval (160ms)
+            Assert.Equal(stampedAfterCap, stateStore.Load().Calibrations[gpu0.DeviceKey].CalibratedAtUtc);
 
             await coordinator.StopAsync();
-            await probeTask.WaitAsync(TimeSpan.FromSeconds(2));
-
-            Assert.Equal(CoordinatorState.Idle, coordinator.CurrentState);
-            Assert.False(stateStore.Load().Calibrations.ContainsKey(gpu0.DeviceKey));
         }
         finally
         {
@@ -255,7 +289,6 @@ public class CoordinatorCalibrationTests
 
             coordinator.Initialize();
             coordinator.SetAutoPauseOnHit(true);
-            coordinator.SetSliderPosition(0.8);
 
             MatchedKeyRecord? notifiedHit = null;
             coordinator.MatchFound += (_, hit) => notifiedHit ??= hit;
@@ -265,7 +298,7 @@ public class CoordinatorCalibrationTests
             await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Paused, TimeSpan.FromSeconds(5));
 
             Assert.NotNull(notifiedHit);
-            Assert.NotEmpty(vault.LoadMatches());
+            Assert.Single(vault.LoadMatches());
             // Partial interrupted calibration must NOT be saved as complete
             Assert.True(coordinator.NeedsFullCalibration());
 
@@ -307,22 +340,19 @@ public class CoordinatorCalibrationTests
                 new DpapiVaultStore(tempDir),
                 new CoordinatorOptions
                 {
-                    QuickProbeDuration = TimeSpan.FromMilliseconds(180),
                     FullCalibrationDuration = TimeSpan.FromMilliseconds(240),
                     CalibrationWindow = TimeSpan.FromMilliseconds(80)
                 });
 
             coordinator.Initialize();
-            await coordinator.RunQuickProbeAsync();
-            Assert.False(coordinator.NeedsQuickProbe());
-
             coordinator.SetTargetPattern(KeyIdPattern.Parse("FFFFFFFFFFFFFFFF"));
-            Assert.NotNull(coordinator.LatestTelemetry.EstimatedMeanWait);
+            Assert.Null(coordinator.LatestTelemetry.EstimatedMeanWait); // No speculative ETA before running
 
             await coordinator.StartSearchAsync(KeyIdPattern.Parse("FFFFFFFFFFFFFFFF"));
             await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Running, TimeSpan.FromSeconds(4));
             Assert.False(coordinator.NeedsFullCalibration());
             Assert.True(coordinator.LatestTelemetry.AllEnabledFullyCalibrated);
+            Assert.True(coordinator.LatestTelemetry.TotalBaselineHps > 0);
             await coordinator.StopAsync();
         }
         finally
@@ -337,7 +367,6 @@ public class CoordinatorCalibrationTests
         string tempDir = Path.Combine(Path.GetTempPath(), "pm-fallback-" + Guid.NewGuid().ToString("N")[..8]);
         try
         {
-            // Enumerated initially as OpenCL, but CreateDevice falls back to DirectCompute
             var enumeratedInfo = new GpuDeviceInfo("GPU-FB", 1, "Mock GPU", 0x10DE, 1, 0, 1, 10_000_000_000UL, "1.0", true, "OpenCL", "opencl-sha1-four-v1");
             var backend = new FallbackFakeBackend(enumeratedInfo);
             var stateStore = new AppStateStore(tempDir);
@@ -356,12 +385,10 @@ public class CoordinatorCalibrationTests
             await coordinator.StartSearchAsync(KeyIdPattern.Parse("FFFFFFFFFFFFFFFF"));
             await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Running, TimeSpan.FromSeconds(4));
 
-            // Device descriptor must have reconciled to DirectCompute and calibration must be valid
             Assert.Equal("DirectCompute", coordinator.LatestTelemetry.Devices[0].BackendName);
             Assert.False(coordinator.NeedsFullCalibration());
-            Assert.True(coordinator.LatestTelemetry.TotalPeakHps > 0);
+            Assert.True(coordinator.LatestTelemetry.TotalBaselineHps > 0);
 
-            // Pause -> Resume must return cleanly to Running (not stuck in Calibrating)
             coordinator.Pause();
             Assert.Equal(CoordinatorState.Paused, coordinator.CurrentState);
             coordinator.Resume();

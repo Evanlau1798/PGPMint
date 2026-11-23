@@ -16,14 +16,17 @@ public sealed partial class SettingsWindow : Window
 {
     private const uint WmSetIcon = 0x0080;
     private const int SwRestore = 9;
-    private const int LogicalDefaultWidth = 460;
-    private const int LogicalDefaultHeight = 620;
-    private const int LogicalMinWidth = 400;
-    private const int LogicalMinHeight = 500;
+    private const int LogicalDefaultWidth = 520;
+    private const int LogicalDefaultHeight = 560;
+    private const int LogicalMinWidth = 380;
+    private const int LogicalMinHeight = 460;
+    private const double TwoColumnBreakpointDip = 460.0;
 
     private readonly IntPtr _hwnd;
     private readonly TrayIconService _trayIcon;
     private bool _isClosed;
+    private bool _syncingLangCombo;
+    private int _currentPrefColumns;
 
     public MainViewModel ViewModel { get; }
 
@@ -37,9 +40,13 @@ public sealed partial class SettingsWindow : Window
         _hwnd = WindowNative.GetWindowHandle(this);
         ConfigureWindowChrome();
 
+        LanguageComboBox.ItemsSource = ViewModel.LanguageOptions;
+        LanguageComboBox.Loaded += (_, _) => SyncLanguageCombo();
+
         ViewModel.SyncDraftFromActive();
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         Closed += OnSettingsWindowClosed;
+        ApplyResponsivePreferencesLayout(LogicalDefaultWidth);
         UpdateVisualStates();
     }
 
@@ -109,6 +116,42 @@ public sealed partial class SettingsWindow : Window
         }
     }
 
+    private void OnRootLayoutSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        ApplyResponsivePreferencesLayout(e.NewSize.Width);
+    }
+
+    private void ApplyResponsivePreferencesLayout(double widthDip)
+    {
+        int cols = widthDip >= TwoColumnBreakpointDip ? 2 : 1;
+        if (cols == _currentPrefColumns)
+        {
+            return;
+        }
+
+        _currentPrefColumns = cols;
+        PreferencesGrid.ColumnDefinitions.Clear();
+        PreferencesGrid.RowDefinitions.Clear();
+
+        for (int c = 0; c < cols; c++)
+        {
+            PreferencesGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        }
+
+        ToggleSwitch[] switches = [PrefAutoPause, PrefMinimizeToTray, PrefShowMiniHud, PrefStartWithWindows];
+        int rows = (switches.Length + cols - 1) / cols;
+        for (int r = 0; r < rows; r++)
+        {
+            PreferencesGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        }
+
+        for (int i = 0; i < switches.Length; i++)
+        {
+            Grid.SetRow(switches[i], i / cols);
+            Grid.SetColumn(switches[i], i % cols);
+        }
+    }
+
     public void FocusWindow()
     {
         AppWindow.Show();
@@ -120,9 +163,8 @@ public sealed partial class SettingsWindow : Window
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(MainViewModel.HasDraftError)
-            or nameof(MainViewModel.DraftEtaSeverityLevel)
             or nameof(MainViewModel.CanEditTarget)
-            or nameof(MainViewModel.SelectedLanguage)
+            or nameof(MainViewModel.SelectedLanguageCode)
             or "")
         {
             UpdateVisualStates();
@@ -135,23 +177,35 @@ public sealed partial class SettingsWindow : Window
         StopToEditNotice.Visibility = !ViewModel.CanEditTarget ? Visibility.Visible : Visibility.Collapsed;
 
         ApplyTextBoxValidationVisual(SettingsInputFrame, SettingsTargetInputBox, ViewModel.HasDraftError);
+        SyncLanguageCombo();
 
-        if (ViewModel.DraftEtaSeverityLevel == 2)
-        {
-            SettingsEtaPill.Background = new SolidColorBrush(Color.FromArgb(44, 239, 68, 68));
-        }
-        else if (ViewModel.DraftEtaSeverityLevel == 1)
-        {
-            SettingsEtaPill.Background = new SolidColorBrush(Color.FromArgb(44, 245, 158, 11));
-        }
-        else
-        {
-            SettingsEtaPill.ClearValue(Border.BackgroundProperty);
-        }
-
-        LangZhButton.IsChecked = ViewModel.Loc.IsChinese;
-        LangEnButton.IsChecked = !ViewModel.Loc.IsChinese;
         Title = $"PGPMint - {ViewModel.Loc.Settings}";
+    }
+
+    private void SyncLanguageCombo()
+    {
+        _syncingLangCombo = true;
+        try
+        {
+            LanguageComboBox.SelectedValue = ViewModel.SelectedLanguageCode;
+        }
+        finally
+        {
+            _syncingLangCombo = false;
+        }
+    }
+
+    private void OnLanguageSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingLangCombo)
+        {
+            return;
+        }
+
+        if (LanguageComboBox.SelectedValue is string code && !string.IsNullOrWhiteSpace(code))
+        {
+            ViewModel.SetLanguage(code);
+        }
     }
 
     private static void ApplyTextBoxValidationVisual(Border frame, TextBox textBox, bool hasError)
@@ -219,30 +273,6 @@ public sealed partial class SettingsWindow : Window
                 ViewModel.ReportError(ex.Message);
             }
         }
-    }
-
-    private async void OnRecalibrateClick(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            await ViewModel.Recalibrate30sAsync();
-        }
-        catch (Exception ex)
-        {
-            ViewModel.ReportError(ex.Message);
-        }
-    }
-
-    private void OnLangZhClick(object sender, RoutedEventArgs e)
-    {
-        ViewModel.SetLanguage("zh-Hant");
-        UpdateVisualStates();
-    }
-
-    private void OnLangEnClick(object sender, RoutedEventArgs e)
-    {
-        ViewModel.SetLanguage("en-US");
-        UpdateVisualStates();
     }
 
     [DllImport("user32.dll")]

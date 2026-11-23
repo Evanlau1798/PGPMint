@@ -17,8 +17,6 @@ public sealed partial class GpuItemViewModel : ObservableObject
 
     [ObservableProperty] private string _backendName;
     [ObservableProperty] private bool _isEnabled;
-    [ObservableProperty] private string _rateText = "\u2014";
-    [ObservableProperty] private bool _isFullCalibrated;
     [ObservableProperty] private bool _canToggle;
 
     public GpuItemViewModel(GpuDeviceInfo info, bool isEnabled, bool canToggle)
@@ -35,13 +33,15 @@ public sealed partial class GpuItemViewModel : ObservableObject
 public sealed class MatchedKeyItemViewModel
 {
     public MatchedKeyRecord Record { get; }
+    public LocalizationService Loc { get; }
     public string FormattedKeyId { get; }
     public string Fingerprint => Record.Fingerprint;
     public string FoundAtLocalText { get; }
 
-    public MatchedKeyItemViewModel(MatchedKeyRecord record)
+    public MatchedKeyItemViewModel(MatchedKeyRecord record, LocalizationService loc)
     {
         Record = record;
+        Loc = loc;
         FormattedKeyId = FormattingHelpers.FormatKeyIdSpaced(record.KeyId);
         FoundAtLocalText = record.FoundAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
     }
@@ -49,6 +49,8 @@ public sealed class MatchedKeyItemViewModel
 
 public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
+    private const long NotificationThrottleMs = 5000;
+
     private readonly MultiGpuCoordinator _coordinator;
     private readonly AppStateStore _stateStore;
     private readonly DpapiVaultStore _vaultStore;
@@ -63,48 +65,43 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private bool _sliderDirty;
     private bool _suppressSliderCallback;
     private bool _suppressGpuToggleCallback;
+    private bool _suppressLanguageCallback;
     private bool _isInitialized;
+    private bool _wasCalibrating;
+    private long _lastHitNotifyTick = -NotificationThrottleMs;
 
     public LocalizationService Loc { get; }
     public ObservableCollection<GpuItemViewModel> Gpus { get; } = new();
     public ObservableCollection<MatchedKeyItemViewModel> Matches { get; } = new();
+    public ObservableCollection<LanguageOption> LanguageOptions { get; } = new();
 
     // Setup Wizard vs Main Dashboard visibility
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowDashboard))]
-    [NotifyPropertyChangedFor(nameof(IsSetupStep1))]
-    [NotifyPropertyChangedFor(nameof(IsSetupStep2))]
     private bool _showSetupWizard;
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsSetupStep1))]
-    [NotifyPropertyChangedFor(nameof(IsSetupStep2))]
-    private int _setupStep = 1;
-
     public bool ShowDashboard => !ShowSetupWizard;
-    public bool IsSetupStep1 => ShowSetupWizard && SetupStep == 1;
-    public bool IsSetupStep2 => ShowSetupWizard && SetupStep == 2;
 
     // Active committed target (read-only on Main Dashboard)
     [ObservableProperty] private string _activeTargetSuffix = string.Empty;
     [ObservableProperty] private string _activeFormattedPreview = "**** **** **** ****";
 
-    // Draft target edited in Setup Wizard Step 2 and SettingsWindow
+    // Draft target edited in Setup Wizard and SettingsWindow
     [ObservableProperty] private string _draftTargetInput = string.Empty;
     [ObservableProperty] private string _draftFormattedPreview = "**** **** **** ****";
-    [ObservableProperty] private bool _isDraftValid;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanFinishSetup))]
+    private bool _isDraftValid;
     [ObservableProperty] private bool _hasDraftError;
     [ObservableProperty] private string _draftErrorText = string.Empty;
-    [ObservableProperty] private string _draftEtaText = "\u2014";
-    [ObservableProperty] private int _draftEtaSeverityLevel; // 0 = normal, 1 = >7d, 2 = >1y
     [ObservableProperty] private bool _canApplyDraftTarget;
-    [ObservableProperty] private string _gpuSummaryText = "\u2014";
+    public bool CanFinishSetup => HasHardwareGpu && IsDraftValid;
 
-    // Live telemetry & throttle state
+    // Live telemetry & two-stage throttle state (UI slider 0..1080)
     [ObservableProperty] private string _actualRateNumber = "0.00";
     [ObservableProperty] private string _actualRateUnit = "GH/s";
-    [ObservableProperty] private string _targetCapText = "\u2014";
-    [ObservableProperty] private double _sliderValue = 700.0; // 0..1000
+    [ObservableProperty] private string _targetCapText = "100%";
+    [ObservableProperty] private double _sliderValue = RateControl.UiSliderFullSpeed;
     [ObservableProperty] private bool _isSliderEnabled = true;
 
     [ObservableProperty] private double _progressPercent;
@@ -117,9 +114,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _canPrimaryAction;
     [ObservableProperty] private bool _canStop;
     [ObservableProperty] private bool _canEditTarget = true;
-    [ObservableProperty] private bool _canRecalibrate = true;
-    [ObservableProperty] private bool _canAdvanceFromStep1;
-    [ObservableProperty] private bool _hasHardwareGpu;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanFinishSetup))]
+    private bool _hasHardwareGpu;
     [ObservableProperty] private bool _hasError;
     [ObservableProperty] private string _errorText = string.Empty;
     [ObservableProperty] private bool _hasMatches;
@@ -129,7 +126,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _minimizeToTrayOnClose = true;
     [ObservableProperty] private bool _showMiniHudInTray = true;
     [ObservableProperty] private bool _startWithWindows;
-    [ObservableProperty] private string _selectedLanguage = "auto";
+    [ObservableProperty] private string _selectedLanguageCode = LocalizationService.AutoLanguageCode;
     [ObservableProperty] private string _transientNotice = string.Empty;
 
     public MainViewModel(
@@ -155,6 +152,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _coordinator.TelemetryUpdated += OnCoordinatorTelemetryUpdated;
         _coordinator.MatchFound += OnCoordinatorMatchFound;
         Loc.PropertyChanged += (_, _) => RefreshLocalizedDisplays();
+
+        RebuildLanguageOptions();
     }
 
     public async Task InitializeAsync(bool startedMinimized)
@@ -165,8 +164,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
 
         AppPersistedState persisted = _stateStore.Load();
+        _suppressLanguageCallback = true;
         Loc.ApplySetting(persisted.Language);
-        SelectedLanguage = persisted.Language;
+        SelectedLanguageCode = Loc.SettingValue;
+        RebuildLanguageOptions();
+        _suppressLanguageCallback = false;
+
         AutoPauseOnHit = persisted.AutoPauseOnHit;
         MinimizeToTrayOnClose = persisted.MinimizeToTrayOnClose;
         ShowMiniHudInTray = persisted.ShowMiniHudInTray;
@@ -185,7 +188,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ReloadMatchesFromVault();
 
         _suppressSliderCallback = true;
-        SliderValue = Math.Round(Math.Clamp(persisted.SliderPosition, 0.0, 1.0) * 1000.0);
+        SliderValue = RateControl.LogicalToUiSlider(persisted.SliderPosition);
         _suppressSliderCallback = false;
 
         bool hasSavedValidTarget = KeyIdPattern.TryParse(persisted.TargetInput, out KeyIdPattern? savedPattern, out _);
@@ -204,7 +207,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
 
         ShowSetupWizard = !(persisted.HasCompletedSetup && hasSavedValidTarget);
-        SetupStep = 1;
 
         _miniHud.SetSetupActive(ShowSetupWizard);
         _isInitialized = true;
@@ -218,28 +220,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             ReportError(Loc.NoGpuError);
             return;
         }
-
-        // Stage 1: automatic 5-second quick probe if enabled GPUs lack calibration
-        if (_coordinator.NeedsQuickProbe())
-        {
-            try
-            {
-                await _coordinator.RunQuickProbeAsync();
-            }
-            catch (Exception ex)
-            {
-                ReportError(ex.Message);
-            }
-        }
-
-        // In Setup Wizard Step 1, auto-advance to Step 2 on single-GPU setups after probe finishes
-        if (ShowSetupWizard && SetupStep == 1 && HasHardwareGpu && Gpus.Count == 1 && _coordinator.CurrentState == CoordinatorState.Idle)
-        {
-            SetupStep = 2;
-        }
-
-        ValidateDraftTarget();
-        ApplyTelemetry(_coordinator.LatestTelemetry);
 
         // Auto-resume if launched silently with --minimized after setup was already completed
         if (!ShowSetupWizard && startedMinimized && persisted.WasRunningOnExit &&
@@ -260,26 +240,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ErrorText = message;
     }
 
-    public void GoToSetupStep2()
-    {
-        if (ShowSetupWizard && CanAdvanceFromStep1)
-        {
-            SetupStep = 2;
-            ValidateDraftTarget();
-        }
-    }
-
-    public void GoToSetupStep1()
-    {
-        if (ShowSetupWizard)
-        {
-            SetupStep = 1;
-        }
-    }
-
     public bool CompleteSetup()
     {
-        if (!KeyIdPattern.TryParse(DraftTargetInput, out KeyIdPattern? parsed, out _))
+        if (!HasHardwareGpu || !KeyIdPattern.TryParse(DraftTargetInput, out KeyIdPattern? parsed, out _))
         {
             ValidateDraftTarget();
             return false;
@@ -343,15 +306,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             HasDraftError = false;
             DraftErrorText = string.Empty;
             DraftFormattedPreview = parsed.FormattedDisplay;
-
-            double refRate = ComputeReferenceRateForEta();
-            TimeSpan? eta = parsed.EstimateMeanWait(refRate);
-            DraftEtaText = FormattingHelpers.FormatEta(eta, Loc.IsChinese);
-            DraftEtaSeverityLevel = eta is null
-                ? 0
-                : eta.Value.TotalDays > 365.25
-                    ? 2
-                    : eta.Value.TotalDays > 7.0 ? 1 : 0;
         }
         else
         {
@@ -359,8 +313,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             HasDraftError = error is KeyIdValidationError.InvalidCharacters or KeyIdValidationError.TooLong;
             DraftErrorText = HasDraftError ? Loc.GetKeyIdValidationMessage(error) : string.Empty;
             DraftFormattedPreview = "**** **** **** ****";
-            DraftEtaText = "\u2014";
-            DraftEtaSeverityLevel = 0;
         }
 
         CanApplyDraftTarget = CanEditTarget && IsDraftValid &&
@@ -369,37 +321,47 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnSliderValueChanged(double value)
     {
-        double p = Math.Clamp(value / 1000.0, 0.0, 1.0);
-        UpdateTargetCapDisplay(p, _coordinator.LatestTelemetry);
+        double logical = RateControl.UiSliderToLogical(value);
+        UpdateTargetCapDisplay(logical, _coordinator.LatestTelemetry);
 
-        if (_suppressSliderCallback)
+        if (_suppressSliderCallback || _coordinator.CurrentState == CoordinatorState.Calibrating)
         {
             return;
         }
 
         _sliderDirty = true;
-        Volatile.Write(ref _pendingSliderPosition, p);
+        Volatile.Write(ref _pendingSliderPosition, logical);
         if (Interlocked.Exchange(ref _hasPendingSlider, 1) == 0)
         {
             _sliderDebounceTimer.Change(100, Timeout.Infinite);
         }
-
-        ValidateDraftTarget();
     }
 
     public void CommitSliderRelease()
     {
+        if (_coordinator.CurrentState == CoordinatorState.Calibrating)
+        {
+            return;
+        }
+
+        double snappedUi = RateControl.SnapUiSliderOnRelease(SliderValue);
+        if (Math.Abs(snappedUi - SliderValue) > 0.5)
+        {
+            _suppressSliderCallback = true;
+            SliderValue = snappedUi;
+            _suppressSliderCallback = false;
+        }
+
         if (!_sliderDirty)
         {
             return;
         }
 
         _sliderDirty = false;
-        double p = Math.Clamp(SliderValue / 1000.0, 0.0, 1.0);
+        double logical = RateControl.UiSliderToLogical(snappedUi);
         Interlocked.Exchange(ref _hasPendingSlider, 0);
         _sliderDebounceTimer.Change(Timeout.Infinite, Timeout.Infinite);
-        _coordinator.SetSliderPosition(p);
-        ValidateDraftTarget();
+        _coordinator.SetSliderPosition(logical);
     }
 
     private void OnSliderDebounceTick(object? state)
@@ -427,12 +389,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                     return;
                 }
 
-                if (SliderValue <= 0.0)
+                if (RateControl.UiSliderToLogical(SliderValue) <= 0.0)
                 {
                     _suppressSliderCallback = true;
-                    SliderValue = 700.0;
+                    SliderValue = RateControl.UiSliderFullSpeed;
                     _suppressSliderCallback = false;
-                    _coordinator.SetSliderPosition(0.7);
+                    _coordinator.SetSliderPosition(1.0);
                 }
 
                 HasError = false;
@@ -447,7 +409,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             case CoordinatorState.Paused:
                 _coordinator.Resume();
                 _suppressSliderCallback = true;
-                SliderValue = Math.Round(Math.Clamp(_coordinator.SliderPosition, 0.0, 1.0) * 1000.0);
+                SliderValue = RateControl.LogicalToUiSlider(_coordinator.SliderPosition);
                 _suppressSliderCallback = false;
                 break;
         }
@@ -456,17 +418,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public async Task StopAsync()
     {
         await _coordinator.StopAsync();
-    }
-
-    public async Task Recalibrate30sAsync()
-    {
-        if (!HasHardwareGpu || _coordinator.CurrentState is CoordinatorState.QuickProbing or CoordinatorState.Calibrating or CoordinatorState.Stopping)
-        {
-            return;
-        }
-
-        KeyIdPattern.TryParse(ActiveTargetSuffix, out KeyIdPattern? currentPattern, out _);
-        await _coordinator.RunManualRecalibrationAsync(currentPattern);
     }
 
     public async Task<bool> ToggleGpuAsync(string deviceKey, bool isEnabled)
@@ -478,15 +429,62 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         await _coordinator.SetDeviceEnabledAsync(deviceKey, isEnabled);
         SyncGpuToggleStates();
-        ValidateDraftTarget();
         return _coordinator.IsDeviceEnabled(deviceKey);
     }
 
     public void SetLanguage(string langSetting)
     {
-        Loc.ApplySetting(langSetting);
-        SelectedLanguage = langSetting;
-        _stateStore.Update(s => s.Language = langSetting);
+        if (_suppressLanguageCallback || string.IsNullOrWhiteSpace(langSetting))
+        {
+            return;
+        }
+
+        _suppressLanguageCallback = true;
+        try
+        {
+            Loc.ApplySetting(langSetting);
+            SelectedLanguageCode = Loc.SettingValue;
+            RebuildLanguageOptions();
+            if (_isInitialized)
+            {
+                _stateStore.Update(s => s.Language = Loc.SettingValue);
+            }
+        }
+        finally
+        {
+            _suppressLanguageCallback = false;
+        }
+    }
+
+    private void RebuildLanguageOptions()
+    {
+        IReadOnlyList<LanguageOption> latest = Loc.GetLanguageOptions();
+        for (int i = 0; i < latest.Count; i++)
+        {
+            if (i < LanguageOptions.Count)
+            {
+                if (string.Equals(LanguageOptions[i].Code, latest[i].Code, StringComparison.Ordinal))
+                {
+                    // Update DisplayName in place without replacing collection item so ComboBox keeps selection intact.
+                    LanguageOptions[i].DisplayName = latest[i].DisplayName;
+                }
+                else
+                {
+                    LanguageOptions[i] = latest[i];
+                }
+            }
+            else
+            {
+                LanguageOptions.Add(latest[i]);
+            }
+        }
+
+        while (LanguageOptions.Count > latest.Count)
+        {
+            LanguageOptions.RemoveAt(LanguageOptions.Count - 1);
+        }
+
+        OnPropertyChanged(nameof(SelectedLanguageCode));
     }
 
     partial void OnAutoPauseOnHitChanged(bool value)
@@ -570,6 +568,23 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             if (_vaultStore.DeleteMatch(recordId))
             {
                 ReloadMatchesFromVault();
+                _coordinator.NotifyVaultCountChanged(MatchesCount);
+            }
+        }
+        catch (Exception ex)
+        {
+            ReportError(ex.Message);
+        }
+    }
+
+    public void ClearAllMatches()
+    {
+        try
+        {
+            if (_vaultStore.ClearAllMatches() > 0)
+            {
+                ReloadMatchesFromVault();
+                _coordinator.NotifyVaultCountChanged(0);
             }
         }
         catch (Exception ex)
@@ -602,28 +617,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         await StopAsync();
     }
 
-    private double ComputeReferenceRateForEta()
-    {
-        CoordinatorTelemetry t = _coordinator.LatestTelemetry;
-        if (t.State is CoordinatorState.Running or CoordinatorState.Calibrating && t.TotalActualHps > 0.0)
-        {
-            return t.TotalActualHps;
-        }
-
-        if (t.TotalPeakHps <= 0.0)
-        {
-            return 0.0;
-        }
-
-        if (ShowSetupWizard)
-        {
-            return t.TotalPeakHps;
-        }
-
-        double p = Math.Clamp(SliderValue / 1000.0, 0.0, 1.0);
-        return p >= 1.0 || p <= 0.0 ? t.TotalPeakHps : t.TotalPeakHps * p;
-    }
-
     private void OnCoordinatorTelemetryUpdated(object? sender, CoordinatorTelemetry telemetry)
     {
         _dispatcher.TryEnqueue(() => ApplyTelemetry(telemetry));
@@ -634,28 +627,57 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _dispatcher.TryEnqueue(() =>
         {
             ReloadMatchesFromVault();
-            string formattedId = FormattingHelpers.FormatKeyIdSpaced(record.KeyId);
-            _trayIcon.ShowNotification(Loc.HitNotificationTitle, formattedId);
+
+            long nowTick = Environment.TickCount64;
+            if (AutoPauseOnHit || nowTick - _lastHitNotifyTick >= NotificationThrottleMs)
+            {
+                _lastHitNotifyTick = nowTick;
+                string formattedId = FormattingHelpers.FormatKeyIdSpaced(record.KeyId);
+                _trayIcon.ShowNotification(Loc.HitNotificationTitle, formattedId);
+            }
         });
     }
 
     private void ApplyTelemetry(CoordinatorTelemetry t)
     {
         State = t.State;
-        bool activeCompute = t.State is CoordinatorState.Running or CoordinatorState.Calibrating or CoordinatorState.QuickProbing;
-        bool busyCal = t.State is CoordinatorState.QuickProbing or CoordinatorState.Calibrating or CoordinatorState.Stopping;
+        bool activeCompute = t.State is CoordinatorState.Running or CoordinatorState.Calibrating;
+        bool busyCal = t.State is CoordinatorState.Calibrating or CoordinatorState.Stopping;
         _powerKeepAlive.SetActive(activeCompute);
+
+        // During initial 30s measurement, hold slider visually at 100% (locked).
+        // Once measurement finishes, restore the persisted/coordinator logical slider position.
+        if (t.State == CoordinatorState.Calibrating)
+        {
+            _wasCalibrating = true;
+            if (Math.Abs(SliderValue - RateControl.UiSliderFullSpeed) > 0.5)
+            {
+                _suppressSliderCallback = true;
+                SliderValue = RateControl.UiSliderFullSpeed;
+                _suppressSliderCallback = false;
+            }
+        }
+        else if (_wasCalibrating)
+        {
+            _wasCalibrating = false;
+            double restoredUi = RateControl.LogicalToUiSlider(_coordinator.SliderPosition);
+            _suppressSliderCallback = true;
+            SliderValue = restoredUi;
+            _suppressSliderCallback = false;
+        }
 
         ActualRateNumber = FormattingHelpers.FormatHashRateValue(t.TotalActualHps);
         ActualRateUnit = FormattingHelpers.FormatHashRateUnit(t.TotalActualHps);
 
-        double sliderP = Math.Clamp(SliderValue / 1000.0, 0.0, 1.0);
-        UpdateTargetCapDisplay(sliderP, t);
+        double logicalSlider = t.State == CoordinatorState.Calibrating
+            ? 1.0
+            : RateControl.UiSliderToLogical(SliderValue);
+        UpdateTargetCapDisplay(logicalSlider, t);
 
-        if (t.State is CoordinatorState.QuickProbing or CoordinatorState.Calibrating)
+        if (t.State == CoordinatorState.Calibrating)
         {
-            double totalSec = t.State == CoordinatorState.QuickProbing ? 5.0 : 30.0;
-            ProgressPercent = Math.Clamp((1.0 - (t.CalibrationRemainingSeconds / totalSec)) * 100.0, 0.0, 100.0);
+            double calTotal = _coordinator.FullCalibrationDurationSeconds;
+            ProgressPercent = Math.Clamp((1.0 - (t.CalibrationRemainingSeconds / calTotal)) * 100.0, 0.0, 100.0);
         }
         else
         {
@@ -678,7 +700,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
 
         bool multiGpu = Gpus.Count > 1;
-        var enabledNames = new List<string>();
         foreach (GpuTelemetrySnapshot devSnap in t.Devices)
         {
             GpuItemViewModel? vm = Gpus.FirstOrDefault(g => g.DeviceKey == devSnap.DeviceKey);
@@ -693,50 +714,18 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
             vm.BackendName = devSnap.BackendName;
             vm.CanToggle = multiGpu && !busyCal;
-            vm.IsFullCalibrated = devSnap.IsFullCalibrated;
-
-            if (devSnap.IsEnabled)
-            {
-                enabledNames.Add(devSnap.Name);
-            }
-
-            if (!devSnap.IsEnabled && activeCompute)
-            {
-                vm.RateText = "\u2014";
-            }
-            else
-            {
-                double shownRate = activeCompute && devSnap.IsEnabled ? devSnap.ActualHps : devSnap.PeakHps;
-                vm.RateText = shownRate > 0.0 ? FormattingHelpers.FormatHashRateCompact(shownRate) : "\u2014";
-            }
         }
 
-        if (t.TotalPeakHps > 0.0)
-        {
-            string gpuLabel = enabledNames.Count == 1 ? enabledNames[0] : $"{enabledNames.Count} GPUs";
-            GpuSummaryText = $"{gpuLabel}  |  {FormattingHelpers.FormatHashRateCompact(t.TotalPeakHps)}";
-        }
-        else
-        {
-            GpuSummaryText = enabledNames.Count > 0 ? string.Join(", ", enabledNames) : "\u2014";
-        }
-
-        UpdateActionPermissions();
+        UpdateActionPermissions(t);
         ValidateDraftTarget();
         UpdateTrayState(t);
     }
 
-    private void UpdateTargetCapDisplay(double sliderP, CoordinatorTelemetry t)
+    private void UpdateTargetCapDisplay(double logicalSlider, CoordinatorTelemetry t)
     {
-        if (t.State == CoordinatorState.QuickProbing)
-        {
-            TargetCapText = $"{Loc.Probing} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s";
-            return;
-        }
-
         if (t.State == CoordinatorState.Calibrating)
         {
-            TargetCapText = $"{Loc.Calibrating} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s";
+            TargetCapText = "100%";
             return;
         }
 
@@ -746,41 +735,44 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
-        if (t.State == CoordinatorState.Paused || sliderP <= 0.0)
+        if (logicalSlider <= 0.0)
         {
-            TargetCapText = Loc.Paused;
+            TargetCapText = "0%";
             return;
         }
 
-        if (sliderP >= 1.0)
+        bool hasMeasuredBaseline = t.AllEnabledFullyCalibrated && t.TotalBaselineHps > 0.0;
+
+        if (logicalSlider >= 1.0)
         {
-            TargetCapText = Loc.FullSpeed;
+            TargetCapText = hasMeasuredBaseline
+                ? $"{Loc.FullSpeed} · {FormattingHelpers.FormatHashRateCompact(t.TotalBaselineHps)}"
+                : "100%";
             return;
         }
 
-        if (t.TotalPeakHps > 0.0)
+        int pct = (int)Math.Clamp(Math.Round(logicalSlider * 100.0, MidpointRounding.AwayFromZero), 1.0, 99.0);
+        if (hasMeasuredBaseline)
         {
-            RateDirective dir = RateControl.FromSlider(sliderP, t.TotalPeakHps);
-            TargetCapText = FormattingHelpers.FormatHashRateCompact(dir.TargetHashesPerSecond);
+            RateDirective dir = RateControl.FromSlider(logicalSlider, t.TotalBaselineHps);
+            TargetCapText = $"{pct}% · {FormattingHelpers.FormatHashRateCompact(dir.TargetHashesPerSecond)}";
         }
         else
         {
-            TargetCapText = $"{Math.Round(sliderP * 100.0):F0}%";
+            TargetCapText = $"{pct}%";
         }
     }
 
-    private void UpdateActionPermissions()
+    private void UpdateActionPermissions(CoordinatorTelemetry t)
     {
-        bool busyCal = State is CoordinatorState.QuickProbing or CoordinatorState.Calibrating or CoordinatorState.Stopping;
-        CanEditTarget = State is CoordinatorState.Idle or CoordinatorState.Faulted;
-        CanStop = State is CoordinatorState.Running or CoordinatorState.Paused or CoordinatorState.Calibrating or CoordinatorState.QuickProbing;
-        CanRecalibrate = HasHardwareGpu && !busyCal;
-        CanAdvanceFromStep1 = HasHardwareGpu && !busyCal;
+        bool busyCal = t.State is CoordinatorState.Calibrating or CoordinatorState.Stopping;
+        CanEditTarget = t.State is CoordinatorState.Idle or CoordinatorState.Faulted;
+        CanStop = t.State is CoordinatorState.Running or CoordinatorState.Paused or CoordinatorState.Calibrating;
         IsSliderEnabled = HasHardwareGpu && !busyCal;
 
         bool hasValidActiveTarget = KeyIdPattern.TryParse(ActiveTargetSuffix, out _, out _);
 
-        switch (State)
+        switch (t.State)
         {
             case CoordinatorState.Running:
                 PrimaryButtonText = Loc.Pause;
@@ -790,12 +782,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 PrimaryButtonText = Loc.Resume;
                 CanPrimaryAction = true;
                 break;
-            case CoordinatorState.QuickProbing:
-                PrimaryButtonText = Loc.Probing;
-                CanPrimaryAction = false;
-                break;
             case CoordinatorState.Calibrating:
-                PrimaryButtonText = Loc.Calibrating;
+                PrimaryButtonText = Loc.FormatMeasuringSpeed((int)Math.Ceiling(t.CalibrationRemainingSeconds));
                 CanPrimaryAction = false;
                 break;
             case CoordinatorState.Stopping:
@@ -820,16 +808,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         string rateCompact = FormattingHelpers.FormatHashRateCompact(t.TotalActualHps);
         bool hasRate = t.TotalActualHps > 0.0;
+        int remainSec = (int)Math.Ceiling(t.CalibrationRemainingSeconds);
+        string hudMeasuring = Loc.FormatHudMeasuring(remainSec);
 
         string summaryLine1 = t.State switch
         {
             CoordinatorState.Running => $"{rateCompact}  |  {ProbabilityText}  |  {LiveEtaText}",
             CoordinatorState.Calibrating => hasRate
-                ? $"{Loc.Calibrating} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s  |  {rateCompact}"
-                : $"{Loc.Calibrating} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s",
-            CoordinatorState.QuickProbing => hasRate
-                ? $"{Loc.Probing} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s  |  {rateCompact}"
-                : $"{Loc.Probing} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s",
+                ? $"{hudMeasuring}  |  {rateCompact}"
+                : hudMeasuring,
             CoordinatorState.Paused => t.TotalChecked > 0
                 ? $"{Loc.Paused}  |  {ProbabilityText}"
                 : Loc.Paused,
@@ -863,11 +850,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 ? $"PGPMint  {rateCompact}\n{ProbabilityText} | {LiveEtaText} | {CheckedCountText}"
                 : $"PGPMint  {rateCompact}\n{ProbabilityText} | {LiveEtaText} | {CheckedCountText}\n{ActiveFormattedPreview}",
             CoordinatorState.Calibrating => hasRate
-                ? $"PGPMint  {Loc.Calibrating} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s\n{rateCompact}"
-                : $"PGPMint  {Loc.Calibrating} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s",
-            CoordinatorState.QuickProbing => hasRate
-                ? $"PGPMint  {Loc.Probing} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s\n{rateCompact}"
-                : $"PGPMint  {Loc.Probing} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s",
+                ? $"PGPMint  {hudMeasuring}\n{rateCompact}"
+                : $"PGPMint  {hudMeasuring}",
             CoordinatorState.Paused => t.TotalChecked > 0
                 ? $"PGPMint  {Loc.Paused}\n{ProbabilityText} | {CheckedCountText}"
                 : $"PGPMint - {Loc.Paused}",
@@ -882,22 +866,20 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         string hudPrimary = t.State switch
         {
             CoordinatorState.Running => rateCompact,
-            CoordinatorState.Calibrating => hasRate ? rateCompact : Loc.Calibrating,
-            CoordinatorState.QuickProbing => hasRate ? rateCompact : Loc.Probing,
+            CoordinatorState.Calibrating => hasRate ? rateCompact : hudMeasuring,
             CoordinatorState.Paused => Loc.Paused,
             CoordinatorState.Stopping => Loc.Stopping,
             CoordinatorState.Faulted => Loc.Error,
             _ => Loc.Idle
         };
 
-        string hudProb = t.State is CoordinatorState.QuickProbing or CoordinatorState.Calibrating
+        string hudProb = t.State == CoordinatorState.Calibrating
             ? $"{Math.Round(ProgressPercent):F0}%"
             : ProbabilityText;
 
         string hudEta = t.State switch
         {
-            CoordinatorState.QuickProbing => $"{Loc.Probing} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s",
-            CoordinatorState.Calibrating => $"{Loc.Calibrating} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s",
+            CoordinatorState.Calibrating => hudMeasuring,
             CoordinatorState.Running => LiveEtaText,
             _ => "\u2014"
         };
@@ -928,7 +910,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             Matches.Clear();
             foreach (MatchedKeyRecord rec in records)
             {
-                Matches.Add(new MatchedKeyItemViewModel(rec));
+                Matches.Add(new MatchedKeyItemViewModel(rec, Loc));
             }
 
             MatchesCount = Matches.Count;

@@ -47,18 +47,18 @@ Most existing OpenPGP vanity key generators are command-line utilities bound to 
 - **Hybrid Zero-Dependency GPU Engine (GPU-Only)**
   - Uses DXGI + WDDM `D3DKMTQueryAdapterInfo` to enumerate real physical hardware GPUs while strictly excluding CPU software renderers (WARP), remote adapters, and virtual indirect display drivers (such as Virtual Desktop, SuperDisplay, and Parsec).
   - Automatically accelerates via native `OpenCL.dll` P/Invoke (four-key interleaved kernel with hardware `rotate` and `bitselect`) on NVIDIA, AMD, and Intel drivers, and transparently falls back to DirectCompute (`D3D11 cs_5_0`) on any Windows GPU lacking an OpenCL ICD (including Windows on ARM).
-- **Multi-GPU Parallelism and Two-Stage Calibration**
-  - First-launch Setup Wizard runs a 5-second quick probe so you see realistic mean wait times (ETA) while choosing your desired 1-16 hex Key ID suffix.
-  - Starting a search automatically runs a zero-waste 30-second full calibration on your real target pattern (every candidate and match is retained) to anchor each GPU's peak hash rate.
-  - A stepless throttle slider lets you run silently in the background while working, pause cleanly keeping your active key cursor in memory, or run uncapped at full speed.
-- **Minimalist Dashboard and Separate Settings Window**
-  - Main window stays focused on current target preview, live aggregate hash rate, stepless rate slider, cumulative hit probability, checked candidate count, ETA, and matched keys.
-  - Independent Settings window consolidates Key ID suffix editing (with live validation and ETA), multi-GPU device selection, 30-second recalibration, bilingual UI toggle (Traditional Chinese / English), and system preferences.
+- **Multi-GPU Parallelism and Real-Time Median Speed Control**
+  - First-launch Setup lets you choose language, enter your desired 1-16 hex Key ID suffix, and select hardware GPUs with zero speculative speed estimates.
+  - Starting a search automatically measures each GPU at full speed for 30 seconds on your real target pattern (zero wasted candidates; auto-pauses immediately on the first match if enabled) to lock in a true median baseline.
+  - A two-stage throttle slider provides `0%` pause, `1%-99%` precision rate limiting (`%` + actual rate limit), and a detent-separated `MAX` (full-speed) position that continuously refines the median baseline at low frequency and stops sampling the moment you drag back into `1%-99%`.
+- **Minimalist Dashboard, Extensible i18n, and Separate Settings Window**
+  - Main window stays focused on current target preview, live measured hash rate, two-stage rate slider, cumulative hit probability, checked candidate count, live ETA, and a scrollable matched keys list with one-click clear-all.
+  - Independent Settings window puts an extensible JSON-backed language selector (`Strings/*.json`) at the top, followed by Key ID suffix editing, responsive preferences layout, and hardware GPU selection.
 - **System Tray Keep-Alive & Zero-GPU-Overhead Mini HUD**
   - Closing the main window minimizes PGPMint to the Windows notification area so WinUI 3 stops consuming GPU rendering cycles while search runs at full throughput.
-  - Optional pure-CPU Win32 layered floating Mini HUD (rendered via built-in `gdiplus.dll`, auto dark/light theme, draggable with saved position, auto-hides during fullscreen games/presentations) displays live hash rate, cumulative probability, ETA, and progress bar while minimized to tray.
+  - Optional pure-CPU Win32 layered floating Mini HUD (rendered via Direct2D Software RenderTarget + DirectWrite grayscale antialiasing, auto dark/light theme, draggable with saved position, auto-hides during fullscreen games/presentations) displays live hash rate, cumulative probability, ETA, and progress bar while minimized to tray.
   - Right-click context menu and multi-line tray tooltip show live rate, progress, ETA, active target suffix, and checked count; double-click restores the main window.
-  - Prevents system sleep during active search while still allowing the display to power off, sends native Windows notifications on match, enforces single-instance activation, and supports optional launch at Windows startup (`--minimized`).
+  - Prevents system sleep during active search while still allowing the display to power off, throttles notifications on rapid matches, defaults to single-hit auto-pause, enforces single-instance activation, and supports optional launch at Windows startup (`--minimized`).
 - **Signing-Ready OpenPGP Export**
   - Matched Ed25519 private seeds and creation timestamps are double-verified on CPU and encrypted locally using Windows DPAPI (`CurrentUser`).
   - Exports RFC 9580 / GnuPG-compatible OpenPGP v4 ASCII-armored secret (`.secret.asc`) and public (`.public.asc`) keys with User ID positive certification self-signature, `Certify | Sign` key flags (`0x03`), and optional AES-256-CFB passphrase protection (Iterated & Salted SHA-256 S2K).
@@ -107,11 +107,10 @@ CPU: Recompute full SHA-1 fingerprint -> Verify suffix -> Encrypt seed via DPAPI
 ## Quick Start
 
 1. Launch `PGPMint.exe`.
-2. **Setup Step 1**: PGPMint automatically detects your hardware GPU(s) and runs a 5-second quick benchmark.
-3. **Setup Step 2**: Enter your desired 1-16 hex Key ID suffix (`0-9`, `A-F`) and review the real-time ETA calculated from your GPU's measured speed.
-4. Click **Finish**, then press **Start** on the main dashboard.
-5. Drag the stepless slider anytime to balance speed vs. system responsiveness, or close the window to keep searching quietly in the system tray.
-6. Click the gear icon to open **Settings** whenever you want to change the target Key ID suffix, toggle GPUs, recalibrate (30s), or switch language.
+2. **Initial Setup**: Pick your language, enter your desired 1-16 hex Key ID suffix (`0-9`, `A-F`, e.g. `01 2345 6789`), select hardware GPU(s), and click **Finish**.
+3. Press **Start** on the main dashboard. On the first run, PGPMint automatically runs at full speed for 30 seconds to measure your GPU's real median throughput while searching your target.
+4. Once measured, use the two-stage slider anytime (`0%` pause, `1%–99%` capped with live limit readout, or push past the right detent for uncapped `MAX` with dynamic median tracking), or close the window to keep searching quietly in the system tray with the pure-CPU floating Mini HUD.
+5. Click the gear icon to open **Settings** whenever you want to switch language (or drop additional `Strings/*.json` locale files), edit the target Key ID suffix, adjust preferences, or toggle GPUs.
 
 ---
 

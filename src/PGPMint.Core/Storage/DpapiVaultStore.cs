@@ -8,6 +8,8 @@ namespace PGPMint.Core.Storage;
 
 public sealed class DpapiVaultStore
 {
+    public const int MaxStoredMatches = 50;
+
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("PGPMint.Ed25519.Vault.v1");
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
@@ -36,7 +38,17 @@ public sealed class DpapiVaultStore
         uint creationTimestamp,
         string fingerprint,
         string matchedPattern,
-        string deviceName)
+        string deviceName) =>
+        SaveMatch(privateSeed, publicKey, creationTimestamp, fingerprint, matchedPattern, deviceName, out _);
+
+    public MatchedKeyRecord SaveMatch(
+        ReadOnlySpan<byte> privateSeed,
+        ReadOnlySpan<byte> publicKey,
+        uint creationTimestamp,
+        string fingerprint,
+        string matchedPattern,
+        string deviceName,
+        out int totalStoredCount)
     {
         if (privateSeed.Length != Ed25519KeyGenerator.KeyByteLength)
         {
@@ -75,6 +87,7 @@ public sealed class DpapiVaultStore
 
             if (duplicate is not null)
             {
+                totalStoredCount = existing.Count;
                 return duplicate;
             }
 
@@ -90,8 +103,13 @@ public sealed class DpapiVaultStore
                 ProtectedPrivateSeedBase64: protectedB64);
 
             existing.Insert(0, record);
+            if (existing.Count > MaxStoredMatches)
+            {
+                existing.RemoveRange(MaxStoredMatches, existing.Count - MaxStoredMatches);
+            }
             string json = JsonSerializer.Serialize(existing, JsonOptions);
             AtomicFileStore.WriteTextAtomic(VaultFilePath, json);
+            totalStoredCount = existing.Count;
             return record;
         }
     }
@@ -117,6 +135,20 @@ public sealed class DpapiVaultStore
             }
 
             return false;
+        }
+    }
+
+    public int ClearAllMatches()
+    {
+        lock (_gate)
+        {
+            List<MatchedKeyRecord> existing = LoadInternal();
+            int count = existing.Count;
+            if (count > 0)
+            {
+                AtomicFileStore.WriteTextAtomic(VaultFilePath, "[]");
+            }
+            return count;
         }
     }
 

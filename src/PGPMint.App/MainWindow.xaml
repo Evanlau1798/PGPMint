@@ -54,96 +54,21 @@
                                TextWrapping="Wrap" />
                 </Border>
 
-                <!-- ==================== SETUP WIZARD (First Launch) ==================== -->
+                <!-- ==================== SETUP WIZARD (Single-Page First Launch) ==================== -->
                 <StackPanel x:Name="SetupWizardPanel" Spacing="12" Visibility="Collapsed">
-                    <!-- Step 1: GPU Detection & 5-Second Quick Benchmark -->
-                    <Border x:Name="SetupStep1Card" Style="{StaticResource SurfaceCardStyle}">
+                    <Border Style="{StaticResource SurfaceCardStyle}">
                         <StackPanel Spacing="12">
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="{x:Bind ViewModel.Loc.SetupStep1Title, Mode=OneWay}"
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <TextBlock Text="{x:Bind ViewModel.Loc.SetupTitle, Mode=OneWay}"
                                            FontSize="16"
                                            FontWeight="SemiBold"
                                            VerticalAlignment="Center" />
-                                <Border Grid.Column="1"
-                                        CornerRadius="6"
-                                        Padding="8,3"
-                                        Background="{ThemeResource ControlFillColorSecondaryBrush}">
-                                    <TextBlock Text="{x:Bind ViewModel.TargetCapText, Mode=OneWay}"
-                                               FontFamily="{StaticResource MonoFont}"
-                                               FontSize="12"
-                                               FontWeight="SemiBold" />
-                                </Border>
-                            </Grid>
-
-                            <ProgressBar Minimum="0"
-                                         Maximum="100"
-                                         Value="{x:Bind ViewModel.ProgressPercent, Mode=OneWay}"
-                                         Height="4" />
-
-                            <ItemsRepeater ItemsSource="{x:Bind ViewModel.Gpus}">
-                                <ItemsRepeater.Layout>
-                                    <StackLayout Spacing="6" />
-                                </ItemsRepeater.Layout>
-                                <ItemsRepeater.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:GpuItemViewModel">
-                                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8" MinHeight="28">
-                                            <CheckBox Grid.Column="0"
-                                                      IsChecked="{x:Bind IsEnabled, Mode=OneWay}"
-                                                      IsEnabled="{x:Bind CanToggle, Mode=OneWay}"
-                                                      MinWidth="0"
-                                                      Padding="0"
-                                                      Tag="{x:Bind DeviceKey}"
-                                                      Click="OnGpuToggleClick" />
-                                            <TextBlock Grid.Column="1"
-                                                       Text="{x:Bind Name}"
-                                                       FontSize="13"
-                                                       TextTrimming="CharacterEllipsis"
-                                                       VerticalAlignment="Center" />
-                                            <Border Grid.Column="2"
-                                                    CornerRadius="4"
-                                                    Padding="6,2"
-                                                    VerticalAlignment="Center"
-                                                    Background="{ThemeResource ControlFillColorSecondaryBrush}">
-                                                <TextBlock Text="{x:Bind BackendName, Mode=OneWay}"
-                                                           FontFamily="{StaticResource MonoFont}"
-                                                           FontSize="11"
-                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            </Border>
-                                            <TextBlock Grid.Column="3"
-                                                       Text="{x:Bind RateText, Mode=OneWay}"
-                                                       FontFamily="{StaticResource MonoFont}"
-                                                       FontSize="13"
-                                                       VerticalAlignment="Center" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsRepeater.ItemTemplate>
-                            </ItemsRepeater>
-
-                            <Button Content="{x:Bind ViewModel.Loc.Next, Mode=OneWay}"
-                                    Style="{StaticResource AccentButtonStyle}"
-                                    HorizontalAlignment="Stretch"
-                                    Height="38"
-                                    IsEnabled="{x:Bind ViewModel.CanAdvanceFromStep1, Mode=OneWay}"
-                                    Click="OnSetupNextClick" />
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Step 2: Set Target Key ID Suffix -->
-                    <Border x:Name="SetupStep2Card" Style="{StaticResource SurfaceCardStyle}" Visibility="Collapsed">
-                        <StackPanel Spacing="12">
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="{x:Bind ViewModel.Loc.SetupStep2Title, Mode=OneWay}"
-                                           FontSize="16"
-                                           FontWeight="SemiBold"
-                                           VerticalAlignment="Center" />
-                                <Border x:Name="SetupEtaPill"
-                                        Grid.Column="1"
-                                        Style="{StaticResource EtaPillStyle}">
-                                    <TextBlock Text="{x:Bind ViewModel.DraftEtaText, Mode=OneWay}"
-                                               FontFamily="{StaticResource MonoFont}"
-                                               FontSize="13"
-                                               FontWeight="SemiBold" />
-                                </Border>
+                                <ComboBox x:Name="SetupLanguageComboBox"
+                                          Grid.Column="1"
+                                          MinWidth="128"
+                                          DisplayMemberPath="DisplayName"
+                                          SelectedValuePath="Code"
+                                          SelectionChanged="OnSetupLanguageSelectionChanged" />
                             </Grid>
 
                             <TextBlock Text="{x:Bind ViewModel.DraftFormattedPreview, Mode=OneWay}"
@@ -177,26 +102,54 @@
                                            TextWrapping="Wrap" />
                             </StackPanel>
 
-                            <TextBlock Text="{x:Bind ViewModel.GpuSummaryText, Mode=OneWay}"
-                                       FontFamily="{StaticResource MonoFont}"
-                                       FontSize="12"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                       HorizontalAlignment="Center" />
+                            <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
 
-                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
-                                <Button Grid.Column="0"
-                                        Content="{x:Bind ViewModel.Loc.Back, Mode=OneWay}"
-                                        MinWidth="84"
-                                        Height="38"
-                                        Click="OnSetupBackClick" />
-                                <Button Grid.Column="1"
-                                        Content="{x:Bind ViewModel.Loc.Finish, Mode=OneWay}"
-                                        Style="{StaticResource AccentButtonStyle}"
-                                        HorizontalAlignment="Stretch"
-                                        Height="38"
-                                        IsEnabled="{x:Bind ViewModel.IsDraftValid, Mode=OneWay}"
-                                        Click="OnSetupFinishClick" />
-                            </Grid>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="{x:Bind ViewModel.Loc.SectionGpus, Mode=OneWay}"
+                                           FontSize="13"
+                                           FontWeight="SemiBold" />
+
+                                <ItemsRepeater ItemsSource="{x:Bind ViewModel.Gpus}">
+                                    <ItemsRepeater.Layout>
+                                        <StackLayout Spacing="6" />
+                                    </ItemsRepeater.Layout>
+                                    <ItemsRepeater.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:GpuItemViewModel">
+                                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8" MinHeight="28">
+                                                <CheckBox Grid.Column="0"
+                                                          IsChecked="{x:Bind IsEnabled, Mode=OneWay}"
+                                                          IsEnabled="{x:Bind CanToggle, Mode=OneWay}"
+                                                          MinWidth="0"
+                                                          Padding="0"
+                                                          Tag="{x:Bind DeviceKey}"
+                                                          Click="OnGpuToggleClick" />
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{x:Bind Name}"
+                                                           FontSize="13"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           VerticalAlignment="Center" />
+                                                <Border Grid.Column="2"
+                                                        CornerRadius="4"
+                                                        Padding="6,2"
+                                                        VerticalAlignment="Center"
+                                                        Background="{ThemeResource ControlFillColorSecondaryBrush}">
+                                                    <TextBlock Text="{x:Bind BackendName, Mode=OneWay}"
+                                                               FontFamily="{StaticResource MonoFont}"
+                                                               FontSize="11"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </Border>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsRepeater.ItemTemplate>
+                                </ItemsRepeater>
+                            </StackPanel>
+
+                            <Button Content="{x:Bind ViewModel.Loc.Finish, Mode=OneWay}"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    HorizontalAlignment="Stretch"
+                                    Height="38"
+                                    IsEnabled="{x:Bind ViewModel.CanFinishSetup, Mode=OneWay}"
+                                    Click="OnSetupFinishClick" />
                         </StackPanel>
                     </Border>
                 </StackPanel>
@@ -204,10 +157,9 @@
                 <!-- ==================== MINIMALIST MAIN DASHBOARD ==================== -->
                 <StackPanel x:Name="DashboardPanel" Spacing="12" Visibility="Collapsed">
 
-                    <!-- 1. Speed, Current Target & Stepless Throttle Card -->
+                    <!-- 1. Live Speed, Current Target & Two-Stage Throttle Card -->
                     <Border Style="{StaticResource SurfaceCardStyle}">
                         <StackPanel Spacing="12">
-                            <!-- Read-only current target Key ID -->
                             <TextBlock Text="{x:Bind ViewModel.ActiveFormattedPreview, Mode=OneWay}"
                                        FontFamily="{StaticResource MonoFont}"
                                        FontSize="18"
@@ -246,8 +198,8 @@
 
                             <Slider x:Name="RateSlider"
                                     Minimum="0"
-                                    Maximum="1000"
-                                    StepFrequency="1"
+                                    Maximum="1080"
+                                    StepFrequency="10"
                                     SmallChange="10"
                                     LargeChange="50"
                                     IsThumbToolTipEnabled="False"
@@ -303,54 +255,72 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- 3. Matched Keys List (Visible only when matches exist) -->
+                    <!-- 3. Matched Keys List (Scrollable, capped, with Clear All action) -->
                     <Border x:Name="MatchesCard"
                             Style="{StaticResource SurfaceCardStyle}"
                             Padding="14,10"
                             Visibility="Collapsed">
-                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.Matches}">
-                            <ItemsRepeater.Layout>
-                                <StackLayout Spacing="8" />
-                            </ItemsRepeater.Layout>
-                            <ItemsRepeater.ItemTemplate>
-                                <DataTemplate x:DataType="vm:MatchedKeyItemViewModel">
-                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="6">
-                                        <TextBlock Grid.Column="0"
-                                                   Text="{x:Bind FormattedKeyId}"
-                                                   FontFamily="{StaticResource MonoFont}"
-                                                   FontSize="14"
-                                                   FontWeight="SemiBold"
-                                                   VerticalAlignment="Center" />
+                        <StackPanel Spacing="8">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0"
+                                           Text="{x:Bind ViewModel.MatchesCount, Mode=OneWay}"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="12"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           VerticalAlignment="Center" />
+                                <Button Grid.Column="1"
+                                        Content="{x:Bind ViewModel.Loc.ClearAll, Mode=OneWay}"
+                                        FontSize="12"
+                                        Padding="8,3"
+                                        Click="OnClearAllMatchesClick" />
+                            </Grid>
 
-                                        <Button Grid.Column="1"
-                                                Style="{StaticResource IconGhostButtonStyle}"
-                                                ToolTipService.ToolTip="Copy fingerprint"
-                                                AutomationProperties.Name="Copy fingerprint"
-                                                Tag="{x:Bind Fingerprint}"
-                                                Click="OnCopyFingerprintClick">
-                                            <FontIcon Glyph="&#xE8C8;" FontSize="13" />
-                                        </Button>
+                            <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto">
+                                <ItemsRepeater ItemsSource="{x:Bind ViewModel.Matches}">
+                                    <ItemsRepeater.Layout>
+                                        <StackLayout Spacing="8" />
+                                    </ItemsRepeater.Layout>
+                                    <ItemsRepeater.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:MatchedKeyItemViewModel">
+                                            <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="6">
+                                                <TextBlock Grid.Column="0"
+                                                           Text="{x:Bind FormattedKeyId}"
+                                                           FontFamily="{StaticResource MonoFont}"
+                                                           FontSize="14"
+                                                           FontWeight="SemiBold"
+                                                           VerticalAlignment="Center" />
 
-                                        <Button Grid.Column="2"
-                                                Content=".asc"
-                                                FontFamily="{StaticResource MonoFont}"
-                                                FontSize="12"
-                                                Padding="10,4"
-                                                Tag="{x:Bind Record}"
-                                                Click="OnExportMatchClick" />
+                                                <Button Grid.Column="1"
+                                                        Style="{StaticResource IconGhostButtonStyle}"
+                                                        ToolTipService.ToolTip="{x:Bind Loc.Copy, Mode=OneWay}"
+                                                        AutomationProperties.Name="{x:Bind Loc.Copy, Mode=OneWay}"
+                                                        Tag="{x:Bind Fingerprint}"
+                                                        Click="OnCopyFingerprintClick">
+                                                    <FontIcon Glyph="&#xE8C8;" FontSize="13" />
+                                                </Button>
 
-                                        <Button Grid.Column="3"
-                                                Style="{StaticResource IconGhostButtonStyle}"
-                                                ToolTipService.ToolTip="Delete key"
-                                                AutomationProperties.Name="Delete key"
-                                                Tag="{x:Bind Record}"
-                                                Click="OnDeleteMatchClick">
-                                            <FontIcon Glyph="&#xE74D;" FontSize="13" />
-                                        </Button>
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsRepeater.ItemTemplate>
-                        </ItemsRepeater>
+                                                <Button Grid.Column="2"
+                                                        Content=".asc"
+                                                        FontFamily="{StaticResource MonoFont}"
+                                                        FontSize="12"
+                                                        Padding="10,4"
+                                                        Tag="{x:Bind Record}"
+                                                        Click="OnExportMatchClick" />
+
+                                                <Button Grid.Column="3"
+                                                        Style="{StaticResource IconGhostButtonStyle}"
+                                                        ToolTipService.ToolTip="{x:Bind Loc.DeleteKeyTooltip, Mode=OneWay}"
+                                                        AutomationProperties.Name="{x:Bind Loc.DeleteKeyTooltip, Mode=OneWay}"
+                                                        Tag="{x:Bind Record}"
+                                                        Click="OnDeleteMatchClick">
+                                                    <FontIcon Glyph="&#xE74D;" FontSize="13" />
+                                                </Button>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsRepeater.ItemTemplate>
+                                </ItemsRepeater>
+                            </ScrollViewer>
+                        </StackPanel>
                     </Border>
                 </StackPanel>
 
