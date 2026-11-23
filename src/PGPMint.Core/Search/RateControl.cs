@@ -14,22 +14,16 @@ public static class RateControl
     public const long FullSpeedSentinel = 1_000_000_000_000L; // 10^12
 
     // Two-stage UI slider layout:
-    //   0         -> Paused (0%)
-    //   10..990   -> Capped 1%..99% (10 units per 1%)
-    //   991..1074 -> Detent buffer zone (holds at 99%, snaps back to 990 on release)
+    //   10..990    -> Capped 1%..99% (10 units per 1%)
+    //   991..1074  -> Detent buffer zone (holds at 99%, snaps back to 990 on release)
     //   1075..1080 -> Full Speed (uncapped 100%, enables low-frequency dynamic median tracking)
-    public const double UiSliderMin = 0.0;
+    public const double UiSliderMin = 10.0;
     public const double UiSliderCappedMax = 990.0;
     public const double UiSliderFullSpeedThreshold = 1075.0;
     public const double UiSliderFullSpeed = 1080.0;
 
     public static double UiSliderToLogical(double uiValue)
     {
-        if (uiValue <= 0.0)
-        {
-            return 0.0;
-        }
-
         if (uiValue >= UiSliderFullSpeedThreshold)
         {
             return 1.0;
@@ -46,12 +40,7 @@ public static class RateControl
 
     public static double LogicalToUiSlider(double logicalPosition)
     {
-        double p = Math.Clamp(logicalPosition, 0.0, 1.0);
-        if (p <= 0.0)
-        {
-            return 0.0;
-        }
-
+        double p = Math.Clamp(logicalPosition, 0.01, 1.0);
         if (p >= 1.0)
         {
             return UiSliderFullSpeed;

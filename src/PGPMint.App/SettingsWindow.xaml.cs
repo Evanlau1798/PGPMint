@@ -24,6 +24,7 @@ public sealed partial class SettingsWindow : Window
 
     private readonly IntPtr _hwnd;
     private readonly TrayIconService _trayIcon;
+    private readonly WindowMinSizeHelper _minSizeHelper;
     private bool _isClosed;
     private bool _syncingLangCombo;
     private int _currentPrefColumns;
@@ -38,6 +39,7 @@ public sealed partial class SettingsWindow : Window
         InitializeComponent();
 
         _hwnd = WindowNative.GetWindowHandle(this);
+        _minSizeHelper = new WindowMinSizeHelper(_hwnd, LogicalMinWidth, LogicalMinHeight);
         ConfigureWindowChrome();
 
         LanguageComboBox.ItemsSource = ViewModel.LanguageOptions;
@@ -53,8 +55,8 @@ public sealed partial class SettingsWindow : Window
     private void OnSettingsWindowClosed(object sender, WindowEventArgs args)
     {
         _isClosed = true;
+        _minSizeHelper.Dispose();
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
-        AppWindow.Changed -= OnAppWindowChanged;
         Bindings.StopTracking();
     }
 
@@ -82,7 +84,6 @@ public sealed partial class SettingsWindow : Window
         AppWindow.Resize(new SizeInt32(
             (int)Math.Round(LogicalDefaultWidth * scale),
             (int)Math.Round(LogicalDefaultHeight * scale)));
-        AppWindow.Changed += OnAppWindowChanged;
     }
 
     private double GetDpiScale()
@@ -95,24 +96,6 @@ public sealed partial class SettingsWindow : Window
         catch
         {
             return 1.0;
-        }
-    }
-
-    private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
-    {
-        if (!args.DidSizeChange)
-        {
-            return;
-        }
-
-        double scale = GetDpiScale();
-        int minW = (int)Math.Round(LogicalMinWidth * scale);
-        int minH = (int)Math.Round(LogicalMinHeight * scale);
-        int w = Math.Max(minW, sender.Size.Width);
-        int h = Math.Max(minH, sender.Size.Height);
-        if (w != sender.Size.Width || h != sender.Size.Height)
-        {
-            sender.Resize(new SizeInt32(w, h));
         }
     }
 

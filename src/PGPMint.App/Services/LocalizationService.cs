@@ -288,6 +288,11 @@ public sealed class LocalizationService : ObservableObject
     public string FormatClearAllConfirm(int count) =>
         SafeFormat("ClearAllConfirmFormat", count);
 
+    public string FormatSingleHashProbability(string detail) =>
+        SafeFormat("SingleHashProbabilityFormat", detail);
+
+    public string ProbabilityPrefix => Get("ProbabilityPrefix");
+    public string NoResults => Get("NoResults");
     public string SuffixRuleHint => Get("SuffixRuleHint");
     public string TargetPlaceholder => Get("TargetPlaceholder");
     public string SetupTitle => Get("SetupTitle");

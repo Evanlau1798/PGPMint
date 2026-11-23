@@ -50,7 +50,7 @@ public sealed class CoordinatorOptions
     public TimeSpan CalibrationWindow { get; init; } = TimeSpan.FromSeconds(1);
     public TimeSpan DynamicMedianInterval { get; init; } = TimeSpan.FromSeconds(30);
     public int MinDynamicMedianSamples { get; init; } = 3;
-    public TimeSpan TelemetryInterval { get; init; } = TimeSpan.FromSeconds(1);
+    public TimeSpan TelemetryInterval { get; init; } = TimeSpan.FromMilliseconds(250);
     public string? ExpectedKernelVersionOverride { get; init; }
 }
 
@@ -123,8 +123,8 @@ public sealed class MultiGpuCoordinator : IDisposable
             _devices = enumerated;
             _persistedPatternMask = persisted.LastPatternMask ?? string.Empty;
             _persistedTotalChecked = persisted.TotalCheckedCandidates;
-            _sliderPosition = Math.Clamp(persisted.SliderPosition, 0.0, 1.0);
-            _lastPositiveSliderPosition = _sliderPosition > 0.0 ? _sliderPosition : 1.0;
+            _sliderPosition = persisted.SliderPosition <= 0.0 ? 1.0 : Math.Clamp(persisted.SliderPosition, 0.01, 1.0);
+            _lastPositiveSliderPosition = _sliderPosition;
             _autoPauseOnHit = persisted.AutoPauseOnHit;
 
             _calibrations.Clear();
@@ -229,7 +229,7 @@ public sealed class MultiGpuCoordinator : IDisposable
 
     public async Task SetDeviceEnabledAsync(string deviceKey, bool enabled)
     {
-        CoordinatorState current;
+        bool shouldRestart;
         KeyIdPattern? pattern;
 
         lock (_lifecycleLock)
@@ -253,11 +253,13 @@ public sealed class MultiGpuCoordinator : IDisposable
             List<string> enabledKeys = _enabledDevices.Where(kv => kv.Value).Select(kv => kv.Key).ToList();
             _stateStore.Update(s => s.EnabledDeviceKeys = enabledKeys);
 
-            current = _state;
+            shouldRestart = _state is CoordinatorState.Running or CoordinatorState.Paused &&
+                            Volatile.Read(ref _autoPauseTriggered) == 0 &&
+                            (_activeOpCts is null || !_activeOpCts.IsCancellationRequested);
             pattern = _activePattern;
         }
 
-        if (current is CoordinatorState.Running or CoordinatorState.Paused && pattern is not null)
+        if (shouldRestart && pattern is not null)
         {
             bool wasExplicitlyPaused = _pausedExplicitly;
             await StopAsync().ConfigureAwait(false);
@@ -275,7 +277,7 @@ public sealed class MultiGpuCoordinator : IDisposable
 
     public void SetSliderPosition(double position)
     {
-        double clamped = Math.Clamp(position, 0.0, 1.0);
+        double clamped = Math.Clamp(position, 0.01, 1.0);
         lock (_lifecycleLock)
         {
             // Slider is locked at full speed during initial 30s baseline measurement.
@@ -285,34 +287,8 @@ public sealed class MultiGpuCoordinator : IDisposable
             }
 
             Volatile.Write(ref _sliderPosition, clamped);
-
-            if (clamped > 0.0)
-            {
-                _lastPositiveSliderPosition = clamped;
-                if (_pausedByZeroSlider)
-                {
-                    _pausedByZeroSlider = false;
-                    if (!_pausedExplicitly && _state == CoordinatorState.Paused)
-                    {
-                        Interlocked.Exchange(ref _autoPauseTriggered, 0);
-                        bool needsCal = NeedsFullCalibrationLocked();
-                        if (needsCal)
-                        {
-                            Volatile.Write(ref _calibrationRemainingSeconds, _options.FullCalibrationDuration.TotalSeconds);
-                        }
-                        _state = needsCal ? CoordinatorState.Calibrating : CoordinatorState.Running;
-                    }
-                }
-            }
-            else
-            {
-                _pausedByZeroSlider = true;
-                if (_state == CoordinatorState.Running)
-                {
-                    _state = CoordinatorState.Paused;
-                }
-            }
-
+            _lastPositiveSliderPosition = clamped;
+            _pausedByZeroSlider = false;
             Interlocked.Increment(ref _rateEpoch);
         }
 
@@ -411,7 +387,8 @@ public sealed class MultiGpuCoordinator : IDisposable
 
         lock (_lifecycleLock)
         {
-            if (_activeOpTask is not null && !_activeOpTask.IsCompleted)
+            if ((_activeOpTask is not null && !_activeOpTask.IsCompleted) ||
+                _state is not (CoordinatorState.Idle or CoordinatorState.Faulted))
             {
                 throw new InvalidOperationException("An operation is already active.");
             }
@@ -483,7 +460,15 @@ public sealed class MultiGpuCoordinator : IDisposable
 
         try
         {
-            cts?.Cancel();
+            try
+            {
+                cts?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // CTS already disposed by completing session
+            }
+
             await runningTask.ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -497,30 +482,20 @@ public sealed class MultiGpuCoordinator : IDisposable
         finally
         {
             FlushSessionCheckedIntoPersisted();
-            _pausedExplicitly = false;
-            _pausedByZeroSlider = false;
-            Interlocked.Exchange(ref _autoPauseTriggered, 0);
-            Volatile.Write(ref _calibrationRemainingSeconds, 0.0);
             ResetTransientRates();
-            if (_state != CoordinatorState.Faulted)
+            lock (_lifecycleLock)
             {
-                _state = CoordinatorState.Idle;
+                _pausedExplicitly = false;
+                _pausedByZeroSlider = false;
+                Interlocked.Exchange(ref _autoPauseTriggered, 0);
+                Volatile.Write(ref _calibrationRemainingSeconds, 0.0);
+                if (_activeOpTask is null && _state != CoordinatorState.Faulted)
+                {
+                    _state = CoordinatorState.Idle;
+                }
             }
             PublishTelemetry();
         }
-    }
-
-    private void ClearActiveOperation(CancellationTokenSource expectedCts)
-    {
-        lock (_lifecycleLock)
-        {
-            if (ReferenceEquals(_activeOpCts, expectedCts))
-            {
-                _activeOpCts = null;
-                _activeOpTask = null;
-            }
-        }
-        expectedCts.Dispose();
     }
 
     private void SyncPatternProgressScope(KeyIdPattern pattern)
@@ -706,7 +681,32 @@ public sealed class MultiGpuCoordinator : IDisposable
             }
 
             FlushSessionCheckedIntoPersisted();
-            ClearActiveOperation(sessionCts);
+            ResetTransientRates();
+            bool publishIdle = false;
+            lock (_lifecycleLock)
+            {
+                _pausedExplicitly = false;
+                _pausedByZeroSlider = false;
+                Interlocked.Exchange(ref _autoPauseTriggered, 0);
+                Volatile.Write(ref _calibrationRemainingSeconds, 0.0);
+                if (ReferenceEquals(_activeOpCts, sessionCts))
+                {
+                    _activeOpCts = null;
+                    _activeOpTask = null;
+                }
+
+                if (_state is not (CoordinatorState.Faulted or CoordinatorState.Stopping))
+                {
+                    _state = CoordinatorState.Idle;
+                    publishIdle = true;
+                }
+            }
+
+            sessionCts.Dispose();
+            if (publishIdle)
+            {
+                PublishTelemetry();
+            }
         }
     }
 
@@ -1011,13 +1011,20 @@ public sealed class MultiGpuCoordinator : IDisposable
                 {
                     if (Interlocked.Exchange(ref _autoPauseTriggered, 1) != 0)
                     {
-                        // Another worker already recorded the hit and triggered auto-pause.
+                        // Another worker already recorded the hit and triggered auto-stop.
                         return;
                     }
 
                     // Signal all other GPU workers to stop dispatching immediately before disk I/O.
-                    _pausedExplicitly = true;
                     Interlocked.Increment(ref _rateEpoch);
+                    try
+                    {
+                        _activeOpCts?.Cancel();
+                    }
+                    catch
+                    {
+                        // Ignore if CTS is already cancelling/disposed
+                    }
                 }
 
                 MatchedKeyRecord record = _vaultStore.SaveMatch(
@@ -1031,18 +1038,6 @@ public sealed class MultiGpuCoordinator : IDisposable
 
                 Interlocked.Exchange(ref _totalMatchesCount, storedCount);
 
-                if (shouldAutoPause)
-                {
-                    lock (_lifecycleLock)
-                    {
-                        if (_state is CoordinatorState.Running or CoordinatorState.Calibrating)
-                        {
-                            _state = CoordinatorState.Paused;
-                        }
-                    }
-                    PublishTelemetry();
-                }
-
                 MatchFound?.Invoke(this, record);
 
                 // Cap to at most 1 saved match per GPU batch to prevent simple suffixes from flooding storage/UI.
@@ -1051,7 +1046,8 @@ public sealed class MultiGpuCoordinator : IDisposable
         }
     }
 
-    private bool IsCurrentlyPaused() => _pausedExplicitly || _pausedByZeroSlider;
+    private bool IsCurrentlyPaused() =>
+        _pausedExplicitly || _pausedByZeroSlider || Volatile.Read(ref _autoPauseTriggered) != 0;
 
     private void SaveCalibrationRecord(CalibrationRecord record)
     {
@@ -1065,14 +1061,20 @@ public sealed class MultiGpuCoordinator : IDisposable
 
     private void PersistTotalChecked()
     {
-        long sessionDelta = Interlocked.Read(ref _sessionChecked);
-        if (sessionDelta <= 0)
+        ulong total;
+        string mask;
+        lock (_lifecycleLock)
         {
-            return;
+            long sessionDelta = Interlocked.Read(ref _sessionChecked);
+            if (sessionDelta <= 0)
+            {
+                return;
+            }
+
+            total = _persistedTotalChecked + (ulong)sessionDelta;
+            mask = _persistedPatternMask;
         }
 
-        ulong total = _persistedTotalChecked + (ulong)sessionDelta;
-        string mask = _persistedPatternMask;
         _stateStore.Update(s =>
         {
             s.LastPatternMask = mask;
@@ -1085,15 +1087,21 @@ public sealed class MultiGpuCoordinator : IDisposable
 
     private void FlushSessionCheckedIntoPersisted()
     {
-        long delta = Interlocked.Exchange(ref _sessionChecked, 0);
-        if (delta <= 0)
+        ulong total;
+        string mask;
+        lock (_lifecycleLock)
         {
-            return;
+            long delta = Interlocked.Exchange(ref _sessionChecked, 0);
+            if (delta <= 0)
+            {
+                return;
+            }
+
+            _persistedTotalChecked += (ulong)delta;
+            total = _persistedTotalChecked;
+            mask = _persistedPatternMask;
         }
 
-        _persistedTotalChecked += (ulong)delta;
-        ulong total = _persistedTotalChecked;
-        string mask = _persistedPatternMask;
         _stateStore.Update(s =>
         {
             s.LastPatternMask = mask;
@@ -1203,6 +1211,8 @@ public sealed class MultiGpuCoordinator : IDisposable
         bool allFull = true;
         bool anyEnabled = false;
         bool isFullSpeed = (_state == CoordinatorState.Calibrating) || (slider >= 1.0 && !paused);
+        ulong sessionChecked;
+        ulong totalChecked;
 
         var deviceSnaps = new List<GpuTelemetrySnapshot>(_devices.Count);
         lock (_lifecycleLock)
@@ -1246,10 +1256,11 @@ public sealed class MultiGpuCoordinator : IDisposable
                     IsFullCalibrated: fullCal,
                     Error: rt?.Error));
             }
+
+            sessionChecked = (ulong)Math.Max(0L, Interlocked.Read(ref _sessionChecked));
+            totalChecked = _persistedTotalChecked + sessionChecked;
         }
 
-        ulong sessionChecked = (ulong)Math.Max(0L, Interlocked.Read(ref _sessionChecked));
-        ulong totalChecked = _persistedTotalChecked + sessionChecked;
         double probability = _activePattern?.ComputeCumulativeProbability(totalChecked) ?? 0.0;
 
         // Compute ETA strictly from live measured speed while active (no speculative estimates).

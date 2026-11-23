@@ -23,15 +23,16 @@ public sealed partial class MainWindow : Window
 {
     private const uint WmSetIcon = 0x0080;
     private const int SwRestore = 9;
-    private const int LogicalDefaultWidth = 480;
-    private const int LogicalDefaultHeight = 480;
-    private const int LogicalMinWidth = 420;
-    private const int LogicalMinHeight = 380;
+    private const int LogicalDefaultWidth = 460;
+    private const int LogicalDefaultHeight = 420;
+    private const int LogicalMinWidth = 380;
+    private const int LogicalMinHeight = 416;
 
     private readonly TrayIconService _trayIcon;
     private readonly Func<Task> _quitCallback;
     private readonly Action _openSettingsCallback;
     private readonly IntPtr _hwnd;
+    private readonly WindowMinSizeHelper _minSizeHelper;
     private bool _allowClose;
     private bool _isDialogOpen;
     private bool _syncingLangCombo;
@@ -52,6 +53,7 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
 
         _hwnd = WindowNative.GetWindowHandle(this);
+        _minSizeHelper = new WindowMinSizeHelper(_hwnd, LogicalMinWidth, LogicalMinHeight);
         ConfigureWindowChrome();
 
         SetupLanguageComboBox.ItemsSource = ViewModel.LanguageOptions;
@@ -90,8 +92,8 @@ public sealed partial class MainWindow : Window
         AppWindow.Resize(new SizeInt32(
             (int)Math.Round(LogicalDefaultWidth * scale),
             (int)Math.Round(LogicalDefaultHeight * scale)));
-        AppWindow.Changed += OnAppWindowChanged;
         AppWindow.Closing += OnAppWindowClosing;
+        Closed += (_, _) => _minSizeHelper.Dispose();
     }
 
     private double GetDpiScale()
@@ -104,24 +106,6 @@ public sealed partial class MainWindow : Window
         catch
         {
             return 1.0;
-        }
-    }
-
-    private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
-    {
-        if (!args.DidSizeChange)
-        {
-            return;
-        }
-
-        double scale = GetDpiScale();
-        int minW = (int)Math.Round(LogicalMinWidth * scale);
-        int minH = (int)Math.Round(LogicalMinHeight * scale);
-        int w = Math.Max(minW, sender.Size.Width);
-        int h = Math.Max(minH, sender.Size.Height);
-        if (w != sender.Size.Width || h != sender.Size.Height)
-        {
-            sender.Resize(new SizeInt32(w, h));
         }
     }
 
@@ -199,7 +183,8 @@ public sealed partial class MainWindow : Window
         SyncSetupLanguageCombo();
 
         ErrorBanner.Visibility = ViewModel.HasError ? Visibility.Visible : Visibility.Collapsed;
-        MatchesCard.Visibility = ViewModel.HasMatches ? Visibility.Visible : Visibility.Collapsed;
+        NoMatchesEmptyText.Visibility = ViewModel.HasMatches ? Visibility.Collapsed : Visibility.Visible;
+        MatchesContentGrid.Visibility = ViewModel.HasMatches ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void SyncSetupLanguageCombo()
@@ -296,6 +281,14 @@ public sealed partial class MainWindow : Window
                 ViewModel.CommitSliderRelease();
                 e.Handled = true;
             }
+            else if (e.Key == VirtualKey.PageUp &&
+                     ViewModel.SliderValue < RateControl.UiSliderCappedMax &&
+                     ViewModel.SliderValue + RateSlider.LargeChange > RateControl.UiSliderCappedMax)
+            {
+                ViewModel.SliderValue = RateControl.UiSliderCappedMax;
+                ViewModel.CommitSliderRelease();
+                e.Handled = true;
+            }
         }
         else if (e.Key is VirtualKey.Left or VirtualKey.Down or VirtualKey.PageDown)
         {
@@ -322,18 +315,6 @@ public sealed partial class MainWindow : Window
         try
         {
             await ViewModel.PrimaryActionAsync();
-        }
-        catch (Exception ex)
-        {
-            ViewModel.ReportError(ex.Message);
-        }
-    }
-
-    private async void OnStopClick(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            await ViewModel.StopAsync();
         }
         catch (Exception ex)
         {

@@ -26,8 +26,8 @@ public class CoordinatorCalibrationTests
         RateDirective dirFull = RateControl.FromSlider(1.0, 22_000_000_000.0);
         Assert.Equal(RateMode.FullSpeed, dirFull.Mode);
 
-        // Two-stage UI slider (0 = Paused, 10..990 = 1%..99%, 991..1074 = detent buffer holding 99%, 1075..1080 = FullSpeed)
-        Assert.Equal(0.0, RateControl.UiSliderToLogical(0.0));
+        // Two-stage UI slider (10..990 = 1%..99%, 991..1074 = detent buffer holding 99%, 1075..1080 = FullSpeed)
+        Assert.Equal(0.01, RateControl.UiSliderToLogical(0.0), 6);
         Assert.Equal(0.01, RateControl.UiSliderToLogical(10.0), 6);
         Assert.Equal(0.50, RateControl.UiSliderToLogical(500.0), 6);
         Assert.Equal(0.99, RateControl.UiSliderToLogical(990.0), 6);
@@ -36,7 +36,8 @@ public class CoordinatorCalibrationTests
         Assert.Equal(1.0, RateControl.UiSliderToLogical(1080.0), 6);
         Assert.Equal(1080.0, RateControl.LogicalToUiSlider(1.0));
         Assert.Equal(990.0, RateControl.LogicalToUiSlider(0.99));
-        Assert.Equal(0.0, RateControl.LogicalToUiSlider(0.0));
+        Assert.Equal(10.0, RateControl.LogicalToUiSlider(0.01));
+        Assert.Equal(10.0, RateControl.LogicalToUiSlider(0.0));
     }
 
     [Fact]
@@ -106,13 +107,12 @@ public class CoordinatorCalibrationTests
             coordinator.MatchFound += (_, _) => Interlocked.Increment(ref notifiedCount);
 
             await coordinator.StartSearchAsync(KeyIdPattern.Parse("0"));
-            await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Paused, TimeSpan.FromSeconds(5));
-            await Task.Delay(120);
+            await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Idle, TimeSpan.FromSeconds(5));
+            await Task.Delay(80);
 
             Assert.Equal(1, notifiedCount);
             Assert.Single(vault.LoadMatches());
-
-            await coordinator.StopAsync();
+            Assert.True(stateStore.Load().TotalCheckedCandidates > 0);
         }
         finally
         {
@@ -171,23 +171,18 @@ public class CoordinatorCalibrationTests
             Assert.True(coordinator.LatestTelemetry.TotalBaselineHps > 0);
             Assert.True(vault.LoadMatches().Count > 0);
 
-            // Pause via slider = 0
-            coordinator.SetSliderPosition(0.0);
-            await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Paused, TimeSpan.FromSeconds(3));
-            await Task.Delay(120);
-            ulong checkedAtPause = coordinator.LatestTelemetry.TotalChecked;
-            await Task.Delay(160);
-            Assert.Equal(checkedAtPause, coordinator.LatestTelemetry.TotalChecked);
-
+            // Adjust slider to 60% capped mode while running
             coordinator.SetSliderPosition(0.6);
+            Assert.Equal(0.6, coordinator.SliderPosition, 6);
+            ulong checkedBeforeCap = coordinator.LatestTelemetry.TotalChecked;
             await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Running &&
-                                       coordinator.LatestTelemetry.TotalChecked > checkedAtPause, TimeSpan.FromSeconds(3));
+                                       coordinator.LatestTelemetry.TotalChecked > checkedBeforeCap, TimeSpan.FromSeconds(3));
 
             await coordinator.StopAsync();
             Assert.Equal(CoordinatorState.Idle, coordinator.CurrentState);
             Assert.Null(coordinator.LatestTelemetry.EstimatedMeanWait); // Idle shows no speculative ETA
             ulong persistedTotal1 = stateStore.Load().TotalCheckedCandidates;
-            Assert.True(persistedTotal1 > checkedAtPause);
+            Assert.True(persistedTotal1 > checkedBeforeCap);
 
             // Second start/stop cycle with SAME pattern accumulates monotonically
             await coordinator.StartSearchAsync(pattern);
@@ -266,7 +261,7 @@ public class CoordinatorCalibrationTests
     }
 
     [Fact]
-    public async Task AutoPauseOnHitDuringPhase1CalibrationCompletesCalibrationOnResumeAndIgnoresSliderMoveWhilePaused()
+    public async Task AutoStopOnHitDuringPhase1CalibrationStopsCleanlyAndCompletesCalibrationOnNextStart()
     {
         string tempDir = Path.Combine(Path.GetTempPath(), "pm-hitcal-" + Guid.NewGuid().ToString("N")[..8]);
         try
@@ -293,23 +288,24 @@ public class CoordinatorCalibrationTests
             MatchedKeyRecord? notifiedHit = null;
             coordinator.MatchFound += (_, hit) => notifiedHit ??= hit;
 
-            // Starts in Phase 1 calibration; 1-hex suffix hits immediately and triggers AutoPauseOnHit
+            // Starts in Phase 1 calibration; 1-hex suffix hits immediately and triggers auto-stop into Idle
             await coordinator.StartSearchAsync(KeyIdPattern.Parse("0"));
-            await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Paused, TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Idle, TimeSpan.FromSeconds(5));
 
             Assert.NotNull(notifiedHit);
             Assert.Single(vault.LoadMatches());
+            Assert.True(stateStore.Load().TotalCheckedCandidates > 0);
             // Partial interrupted calibration must NOT be saved as complete
             Assert.True(coordinator.NeedsFullCalibration());
 
-            // Moving slider while explicitly paused must NOT accidentally resume
+            // Moving slider while stopped updates preference without starting search
             coordinator.SetSliderPosition(0.6);
-            await Task.Delay(100);
-            Assert.Equal(CoordinatorState.Paused, coordinator.CurrentState);
+            await Task.Delay(60);
+            Assert.Equal(CoordinatorState.Idle, coordinator.CurrentState);
 
-            // Disabling AutoPauseOnHit and explicitly clicking Resume must finish full calibration before entering Running
+            // Disabling AutoPauseOnHit and starting search again must finish full calibration before entering Running
             coordinator.SetAutoPauseOnHit(false);
-            coordinator.Resume();
+            await coordinator.StartSearchAsync(KeyIdPattern.Parse("0"));
             await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Running, TimeSpan.FromSeconds(5));
             Assert.False(coordinator.NeedsFullCalibration());
             Assert.True(stateStore.Load().Calibrations[gpu0.DeviceKey].IsFullCalibration);

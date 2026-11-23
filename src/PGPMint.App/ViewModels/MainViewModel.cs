@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.UI.Dispatching;
@@ -60,6 +61,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private readonly DispatcherQueue _dispatcher;
 
     private readonly Timer _sliderDebounceTimer;
+    private readonly DispatcherQueueTimer _smoothProgressTimer;
     private double _pendingSliderPosition;
     private int _hasPendingSlider;
     private bool _sliderDirty;
@@ -68,7 +70,16 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private bool _suppressLanguageCallback;
     private bool _isInitialized;
     private bool _wasCalibrating;
+    private bool _mainWindowInTray;
     private long _lastHitNotifyTick = -NotificationThrottleMs;
+
+    // Telemetry snapshot anchors for GPU-friendly smooth progress bar interpolation
+    private KeyIdPattern? _activePatternObj;
+    private long _snapTimestamp;
+    private ulong _snapTotalChecked;
+    private double _snapActualHps;
+    private double _snapCalRemainingSec;
+    private double _smoothProgressCurrent;
 
     public LocalizationService Loc { get; }
     public ObservableCollection<GpuItemViewModel> Gpus { get; } = new();
@@ -105,14 +116,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _isSliderEnabled = true;
 
     [ObservableProperty] private double _progressPercent;
-    [ObservableProperty] private string _probabilityText = "0.000%";
+    [ObservableProperty] private string _probabilityText = "0.00%";
+    [ObservableProperty] private string _singleHashProbabilityTooltip = string.Empty;
     [ObservableProperty] private string _checkedCountText = "0 H";
+    [ObservableProperty] private string _checkedCountTooltip = "0 H";
     [ObservableProperty] private string _liveEtaText = "\u2014";
 
     [ObservableProperty] private CoordinatorState _state = CoordinatorState.Idle;
     [ObservableProperty] private string _primaryButtonText = string.Empty;
     [ObservableProperty] private bool _canPrimaryAction;
-    [ObservableProperty] private bool _canStop;
     [ObservableProperty] private bool _canEditTarget = true;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanFinishSetup))]
@@ -149,6 +161,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _dispatcher = dispatcher;
 
         _sliderDebounceTimer = new Timer(OnSliderDebounceTick, null, Timeout.Infinite, Timeout.Infinite);
+        _smoothProgressTimer = _dispatcher.CreateTimer();
+        _smoothProgressTimer.Interval = TimeSpan.FromMilliseconds(33);
+        _smoothProgressTimer.IsRepeating = true;
+        _smoothProgressTimer.Tick += OnSmoothProgressTimerTick;
+
         _coordinator.TelemetryUpdated += OnCoordinatorTelemetryUpdated;
         _coordinator.MatchFound += OnCoordinatorMatchFound;
         Loc.PropertyChanged += (_, _) => RefreshLocalizedDisplays();
@@ -194,6 +211,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         bool hasSavedValidTarget = KeyIdPattern.TryParse(persisted.TargetInput, out KeyIdPattern? savedPattern, out _);
         if (hasSavedValidTarget && savedPattern is not null)
         {
+            _activePatternObj = savedPattern;
             ActiveTargetSuffix = savedPattern.Suffix;
             ActiveFormattedPreview = savedPattern.FormattedDisplay;
             DraftTargetInput = savedPattern.Suffix;
@@ -201,6 +219,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
         else
         {
+            _activePatternObj = null;
             ActiveTargetSuffix = string.Empty;
             ActiveFormattedPreview = "**** **** **** ****";
             DraftTargetInput = persisted.TargetInput ?? string.Empty;
@@ -242,17 +261,19 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public bool CompleteSetup()
     {
-        if (!HasHardwareGpu || !KeyIdPattern.TryParse(DraftTargetInput, out KeyIdPattern? parsed, out _))
+        if (!HasHardwareGpu || !KeyIdPattern.TryParse(DraftTargetInput, out KeyIdPattern? parsed, out _) || parsed is null)
         {
             ValidateDraftTarget();
             return false;
         }
 
-        ActiveTargetSuffix = parsed!.Suffix;
+        _activePatternObj = parsed;
+        ActiveTargetSuffix = parsed.Suffix;
         ActiveFormattedPreview = parsed.FormattedDisplay;
         DraftTargetInput = parsed.Suffix;
         ShowSetupWizard = false;
         _miniHud.SetSetupActive(false);
+        SyncSmoothProgressTimer();
 
         _stateStore.Update(s =>
         {
@@ -274,13 +295,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public bool ApplyDraftTargetFromSettings()
     {
-        if (!CanEditTarget || !KeyIdPattern.TryParse(DraftTargetInput, out KeyIdPattern? parsed, out _))
+        if (!CanEditTarget || !KeyIdPattern.TryParse(DraftTargetInput, out KeyIdPattern? parsed, out _) || parsed is null)
         {
             ValidateDraftTarget();
             return false;
         }
 
-        ActiveTargetSuffix = parsed!.Suffix;
+        _activePatternObj = parsed;
+        ActiveTargetSuffix = parsed.Suffix;
         ActiveFormattedPreview = parsed.FormattedDisplay;
         DraftTargetInput = parsed.Suffix;
 
@@ -389,28 +411,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                     return;
                 }
 
-                if (RateControl.UiSliderToLogical(SliderValue) <= 0.0)
-                {
-                    _suppressSliderCallback = true;
-                    SliderValue = RateControl.UiSliderFullSpeed;
-                    _suppressSliderCallback = false;
-                    _coordinator.SetSliderPosition(1.0);
-                }
-
+                _activePatternObj = pattern;
                 HasError = false;
                 ErrorText = string.Empty;
                 await _coordinator.StartSearchAsync(pattern!);
                 break;
 
             case CoordinatorState.Running:
-                _coordinator.Pause();
-                break;
-
             case CoordinatorState.Paused:
-                _coordinator.Resume();
-                _suppressSliderCallback = true;
-                SliderValue = RateControl.LogicalToUiSlider(_coordinator.SliderPosition);
-                _suppressSliderCallback = false;
+                await _coordinator.StopAsync();
                 break;
         }
     }
@@ -509,7 +518,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             _miniHud.SetEnabledByUser(value);
             _stateStore.Update(s => s.ShowMiniHudInTray = value);
-            UpdateTrayState(_coordinator.LatestTelemetry);
+            UpdateTrayState(_coordinator.LatestTelemetry, ProgressPercent);
         }
     }
 
@@ -520,7 +529,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public void SetMainWindowInTray(bool inTray)
     {
+        _mainWindowInTray = inTray;
         _miniHud.SetMainWindowInTray(inTray);
+        SyncSmoothProgressTimer();
     }
 
     public void SaveMiniHudPosition(int x, int y)
@@ -674,18 +685,41 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             : RateControl.UiSliderToLogical(SliderValue);
         UpdateTargetCapDisplay(logicalSlider, t);
 
+        double rawProgressPercent;
         if (t.State == CoordinatorState.Calibrating)
         {
             double calTotal = _coordinator.FullCalibrationDurationSeconds;
-            ProgressPercent = Math.Clamp((1.0 - (t.CalibrationRemainingSeconds / calTotal)) * 100.0, 0.0, 100.0);
+            rawProgressPercent = Math.Clamp((1.0 - (t.CalibrationRemainingSeconds / calTotal)) * 100.0, 0.0, 100.0);
         }
         else
         {
-            ProgressPercent = t.CumulativeProbability * 100.0;
+            rawProgressPercent = Math.Clamp(t.CumulativeProbability * 100.0, 0.0, 100.0);
         }
 
-        ProbabilityText = FormattingHelpers.FormatProbability(t.CumulativeProbability);
+        _snapTimestamp = Stopwatch.GetTimestamp();
+        _snapTotalChecked = t.TotalChecked;
+        _snapActualHps = t.TotalActualHps;
+        _snapCalRemainingSec = t.CalibrationRemainingSeconds;
+
+        if (!activeCompute || _mainWindowInTray || rawProgressPercent < _smoothProgressCurrent - 0.5)
+        {
+            _smoothProgressCurrent = rawProgressPercent;
+            ProgressPercent = rawProgressPercent;
+        }
+        else if (!_smoothProgressTimer.IsRunning)
+        {
+            _smoothProgressCurrent = rawProgressPercent;
+            ProgressPercent = rawProgressPercent;
+        }
+
+        SyncSmoothProgressTimer();
+
+        ProbabilityText = FormattingHelpers.FormatLabeledProbability(t.CumulativeProbability, Loc.ProbabilityPrefix);
+        SingleHashProbabilityTooltip = _activePatternObj is not null
+            ? Loc.FormatSingleHashProbability(FormattingHelpers.FormatSingleHashProbabilityDetail(_activePatternObj.FixedHexLength))
+            : string.Empty;
         CheckedCountText = FormattingHelpers.FormatCheckedCount(t.TotalChecked);
+        CheckedCountTooltip = FormattingHelpers.FormatCheckedCountExact(t.TotalChecked);
         LiveEtaText = FormattingHelpers.FormatEta(t.EstimatedMeanWait, Loc.IsChinese);
 
         if (!string.IsNullOrWhiteSpace(t.ErrorMessage))
@@ -718,7 +752,73 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         UpdateActionPermissions(t);
         ValidateDraftTarget();
-        UpdateTrayState(t);
+        UpdateTrayState(t, rawProgressPercent);
+    }
+
+    private void SyncSmoothProgressTimer()
+    {
+        bool shouldRun = !_mainWindowInTray && !ShowSetupWizard &&
+                         State is CoordinatorState.Running or CoordinatorState.Calibrating;
+        if (shouldRun && !_smoothProgressTimer.IsRunning)
+        {
+            _smoothProgressTimer.Start();
+        }
+        else if (!shouldRun && _smoothProgressTimer.IsRunning)
+        {
+            _smoothProgressTimer.Stop();
+        }
+    }
+
+    private void OnSmoothProgressTimerTick(DispatcherQueueTimer sender, object args)
+    {
+        if (_mainWindowInTray || ShowSetupWizard ||
+            State is not (CoordinatorState.Running or CoordinatorState.Calibrating))
+        {
+            _smoothProgressTimer.Stop();
+            return;
+        }
+
+        double elapsed = Math.Min(1.0, Stopwatch.GetElapsedTime(_snapTimestamp).TotalSeconds);
+        double targetPct;
+
+        if (State == CoordinatorState.Calibrating)
+        {
+            double calTotal = _coordinator.FullCalibrationDurationSeconds;
+            double rem = Math.Max(0.0, _snapCalRemainingSec - elapsed);
+            targetPct = Math.Clamp((1.0 - (rem / calTotal)) * 100.0, 0.0, 100.0);
+
+            string countdownText = Loc.FormatMeasuringSpeed((int)Math.Ceiling(rem));
+            if (!string.Equals(PrimaryButtonText, countdownText, StringComparison.Ordinal))
+            {
+                PrimaryButtonText = countdownText;
+            }
+        }
+        else if (_activePatternObj is not null)
+        {
+            ulong extra = _snapActualHps > 0.0 ? (ulong)Math.Max(0.0, _snapActualHps * elapsed) : 0UL;
+            double prob = _activePatternObj.ComputeCumulativeProbability(_snapTotalChecked + extra);
+            targetPct = Math.Clamp(prob * 100.0, 0.0, 100.0);
+        }
+        else
+        {
+            return;
+        }
+
+        if (targetPct < _smoothProgressCurrent - 0.5)
+        {
+            _smoothProgressCurrent = targetPct;
+        }
+        else if (targetPct > _smoothProgressCurrent)
+        {
+            _smoothProgressCurrent += (targetPct - _smoothProgressCurrent) * 0.35;
+        }
+
+        // Only notify XAML ProgressBar when the delta is visually perceptible (>= 0.04%),
+        // avoiding unnecessary WinUI D3D11 UI composition passes on slow-moving long suffixes.
+        if (Math.Abs(_smoothProgressCurrent - ProgressPercent) >= 0.04)
+        {
+            ProgressPercent = _smoothProgressCurrent;
+        }
     }
 
     private void UpdateTargetCapDisplay(double logicalSlider, CoordinatorTelemetry t)
@@ -732,12 +832,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (t.State == CoordinatorState.Stopping)
         {
             TargetCapText = Loc.Stopping;
-            return;
-        }
-
-        if (logicalSlider <= 0.0)
-        {
-            TargetCapText = "0%";
             return;
         }
 
@@ -767,7 +861,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         bool busyCal = t.State is CoordinatorState.Calibrating or CoordinatorState.Stopping;
         CanEditTarget = t.State is CoordinatorState.Idle or CoordinatorState.Faulted;
-        CanStop = t.State is CoordinatorState.Running or CoordinatorState.Paused or CoordinatorState.Calibrating;
         IsSliderEnabled = HasHardwareGpu && !busyCal;
 
         bool hasValidActiveTarget = KeyIdPattern.TryParse(ActiveTargetSuffix, out _, out _);
@@ -775,11 +868,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         switch (t.State)
         {
             case CoordinatorState.Running:
-                PrimaryButtonText = Loc.Pause;
-                CanPrimaryAction = true;
-                break;
             case CoordinatorState.Paused:
-                PrimaryButtonText = Loc.Resume;
+                PrimaryButtonText = Loc.Stop;
                 CanPrimaryAction = true;
                 break;
             case CoordinatorState.Calibrating:
@@ -797,16 +887,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void UpdateTrayState(CoordinatorTelemetry t)
+    private void UpdateTrayState(CoordinatorTelemetry t, double rawProgressPercent)
     {
-        string toggleLabel = t.State switch
-        {
-            CoordinatorState.Running => Loc.Pause,
-            CoordinatorState.Paused => Loc.Resume,
-            _ => Loc.Start
-        };
+        string toggleLabel = t.State is CoordinatorState.Running or CoordinatorState.Paused
+            ? Loc.Stop
+            : Loc.Start;
 
         string rateCompact = FormattingHelpers.FormatHashRateCompact(t.TotalActualHps);
+        string probCompact = FormattingHelpers.FormatProbability(t.CumulativeProbability);
         bool hasRate = t.TotalActualHps > 0.0;
         int remainSec = (int)Math.Ceiling(t.CalibrationRemainingSeconds);
         string hudMeasuring = Loc.FormatHudMeasuring(remainSec);
@@ -817,12 +905,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             CoordinatorState.Calibrating => hasRate
                 ? $"{hudMeasuring}  |  {rateCompact}"
                 : hudMeasuring,
-            CoordinatorState.Paused => t.TotalChecked > 0
-                ? $"{Loc.Paused}  |  {ProbabilityText}"
-                : Loc.Paused,
             CoordinatorState.Stopping => Loc.Stopping,
             CoordinatorState.Faulted => Loc.Error,
-            _ => Loc.Idle
+            _ => t.TotalChecked > 0
+                ? $"{Loc.Idle}  |  {ProbabilityText}"
+                : Loc.Idle
         };
 
         string summaryLine2 = string.Empty;
@@ -852,13 +939,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             CoordinatorState.Calibrating => hasRate
                 ? $"PGPMint  {hudMeasuring}\n{rateCompact}"
                 : $"PGPMint  {hudMeasuring}",
-            CoordinatorState.Paused => t.TotalChecked > 0
-                ? $"PGPMint  {Loc.Paused}\n{ProbabilityText} | {CheckedCountText}"
-                : $"PGPMint - {Loc.Paused}",
             CoordinatorState.Faulted => $"PGPMint - {Loc.Error}",
-            _ => string.IsNullOrEmpty(ActiveTargetSuffix)
-                ? $"PGPMint - {Loc.Idle}"
-                : $"PGPMint - {Loc.Idle}\n{ActiveFormattedPreview}"
+            _ => t.TotalChecked > 0
+                ? $"PGPMint - {Loc.Idle}\n{ProbabilityText} | {CheckedCountText}"
+                : (string.IsNullOrEmpty(ActiveTargetSuffix)
+                    ? $"PGPMint - {Loc.Idle}"
+                    : $"PGPMint - {Loc.Idle}\n{ActiveFormattedPreview}")
         };
 
         _trayIcon.UpdateTooltip(tip);
@@ -867,15 +953,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             CoordinatorState.Running => rateCompact,
             CoordinatorState.Calibrating => hasRate ? rateCompact : hudMeasuring,
-            CoordinatorState.Paused => Loc.Paused,
             CoordinatorState.Stopping => Loc.Stopping,
             CoordinatorState.Faulted => Loc.Error,
             _ => Loc.Idle
         };
 
         string hudProb = t.State == CoordinatorState.Calibrating
-            ? $"{Math.Round(ProgressPercent):F0}%"
-            : ProbabilityText;
+            ? $"{Math.Round(rawProgressPercent):F0}%"
+            : probCompact;
 
         string hudEta = t.State switch
         {
@@ -889,7 +974,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             hudPrimary,
             hudProb,
             hudEta,
-            Math.Clamp(ProgressPercent / 100.0, 0.0, 1.0)));
+            Math.Clamp(rawProgressPercent / 100.0, 0.0, 1.0)));
     }
 
     private void SyncGpuToggleStates()
@@ -930,6 +1015,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        _smoothProgressTimer.Stop();
         _coordinator.TelemetryUpdated -= OnCoordinatorTelemetryUpdated;
         _coordinator.MatchFound -= OnCoordinatorMatchFound;
         _sliderDebounceTimer.Dispose();
