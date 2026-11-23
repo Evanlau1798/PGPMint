@@ -78,7 +78,11 @@ public class DirectComputeGpuTests
                 boundaryKeyId[^12..], boundaryKeyId, zeroHitSuffix];
             foreach (string suffix in suffixes)
             {
-                var gpuHits = device.ScanGroup(boundaryKeys, start, count, KeyIdPattern.Parse(suffix), capacity);
+                SearchBatchResult batch = device.ScanBatch(boundaryKeys, start, count, KeyIdPattern.Parse(suffix), capacity);
+                Assert.Equal(4_124L, batch.UniqueCandidatesCompleted);
+                Assert.Equal(suffix.Length == 1 ? 26_408L : 4_124L, batch.HashEvaluations);
+                Assert.Equal(suffix.Length == 1 ? 22_284L : 0L, batch.RescanEvaluations);
+                Assert.Equal(suffix.Length == 1 ? 261L : suffix == zeroHitSuffix ? 0L : 1L, batch.ReturnedHits);
                 for (int lane = 0; lane < boundaryKeys.Length; lane++)
                 {
                     var expected = new List<uint>();
@@ -103,7 +107,7 @@ public class DirectComputeGpuTests
                     {
                         Assert.Empty(expected);
                     }
-                    Assert.Equal(expected, gpuHits[lane].Order());
+                    Assert.Equal(expected, batch.Hits[lane].Order());
                 }
             }
         }

@@ -47,7 +47,18 @@ public sealed class DpapiVaultStore
         string fingerprint,
         string matchedPattern,
         string deviceName,
-        out int totalStoredCount)
+        out int totalStoredCount) =>
+        SaveMatch(privateSeed, publicKey, creationTimestamp, fingerprint, matchedPattern, deviceName, out totalStoredCount, out _);
+
+    internal MatchedKeyRecord SaveMatch(
+        ReadOnlySpan<byte> privateSeed,
+        ReadOnlySpan<byte> publicKey,
+        uint creationTimestamp,
+        string fingerprint,
+        string matchedPattern,
+        string deviceName,
+        out int totalStoredCount,
+        out bool wasAdded)
     {
         if (privateSeed.Length != Ed25519KeyGenerator.KeyByteLength)
         {
@@ -87,6 +98,7 @@ public sealed class DpapiVaultStore
             if (duplicate is not null)
             {
                 totalStoredCount = existing.Count;
+                wasAdded = false;
                 return duplicate;
             }
 
@@ -109,6 +121,7 @@ public sealed class DpapiVaultStore
             string json = JsonSerializer.Serialize(existing, StorageJsonContext.Default.ListMatchedKeyRecord);
             AtomicFileStore.WriteTextAtomic(VaultFilePath, json);
             totalStoredCount = existing.Count;
+            wasAdded = true;
             return record;
         }
     }

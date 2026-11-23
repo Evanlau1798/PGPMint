@@ -35,6 +35,25 @@ public sealed record MatchedKeyRecord(
     string PublicKeyHex,
     string ProtectedPrivateSeedBase64);
 
+public readonly record struct SearchBatchResult(
+    IReadOnlyList<uint>[] Hits,
+    long UniqueCandidatesCompleted,
+    long? HashEvaluations)
+{
+    public long? RescanEvaluations => HashEvaluations - UniqueCandidatesCompleted;
+    public long ReturnedHits => Hits.Sum(lane => (long)lane.Count);
+}
+
+public readonly record struct SearchWorkMetrics(
+    long UniqueCandidatesCompleted,
+    long? HashEvaluations,
+    long ReturnedHits,
+    long VerifiedHits,
+    long SavedKeys)
+{
+    public long? RescanEvaluations => HashEvaluations - UniqueCandidatesCompleted;
+}
+
 public interface IGpuSearchDevice : IDisposable
 {
     GpuDeviceInfo Info { get; }
@@ -48,6 +67,16 @@ public interface IGpuSearchDevice : IDisposable
         uint timestampCount,
         KeyIdPattern pattern,
         int capacity = 1024);
+
+    // Legacy implementations can return hits without tracking evaluations for recursive rescans.
+    SearchBatchResult ScanBatch(
+        IReadOnlyList<byte[]> publicKeys,
+        uint startTimestamp,
+        uint timestampCount,
+        KeyIdPattern pattern,
+        int capacity = 1024) =>
+        new(ScanGroup(publicKeys, startTimestamp, timestampCount, pattern, capacity),
+            (long)timestampCount * KeysPerBatch, HashEvaluations: null);
 }
 
 public interface IGpuBackend

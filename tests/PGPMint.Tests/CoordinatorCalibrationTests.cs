@@ -1,3 +1,4 @@
+using System.Reflection;
 using PGPMint.Core.Crypto;
 using PGPMint.Core.Search;
 using PGPMint.Core.Storage;
@@ -5,7 +6,7 @@ using Xunit;
 
 namespace PGPMint.Tests;
 
-public class CoordinatorCalibrationTests
+public partial class CoordinatorCalibrationTests
 {
     [Fact]
     public void TwoStageSliderMappingAndRateMathMatchSpecification()
@@ -109,12 +110,50 @@ public class CoordinatorCalibrationTests
             coordinator.MatchFound += (_, _) => Interlocked.Increment(ref notifiedCount);
 
             await coordinator.StartSearchAsync(KeyIdPattern.Parse("0"));
-            await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Idle, TimeSpan.FromSeconds(5));
-            await Task.Delay(80);
+            await WaitUntilAsync(
+                () => coordinator.LatestTelemetry is { State: CoordinatorState.Idle, TotalMatchesCount: 1 },
+                TimeSpan.FromSeconds(5));
 
             Assert.Equal(1, notifiedCount);
             Assert.Single(vault.LoadMatches());
             Assert.True(stateStore.Load().TotalCheckedCandidates > 0);
+            SearchWorkMetrics metrics = coordinator.LatestTelemetry.SessionWork;
+            Assert.Equal(1L, metrics.SavedKeys);
+            Assert.InRange(metrics.VerifiedHits, 1L, metrics.ReturnedHits);
+            Assert.Equal(stateStore.Load().TotalCheckedCandidates, (ulong)metrics.UniqueCandidatesCompleted);
+            Assert.Null(metrics.HashEvaluations);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void RepeatedVerifiedCandidateDoesNotIncreaseSavedKeys()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), "pm-repeat-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var gpu = new GpuDeviceInfo("GPU-0", 101, "Mock GPU", 0x10DE, 1, 0, 1, 0, "1.0", true);
+            var vault = new DpapiVaultStore(tempDir);
+            var backend = new FakeGpuBackend(new[] { gpu }, batchDelayMs: 0, maxCandidatesPerBatch: 4);
+            using var coordinator = new MultiGpuCoordinator(backend, new AppStateStore(tempDir), vault);
+            Ed25519KeyPair key = Ed25519KeyGenerator.Generate();
+            const uint timestamp = 1700000000u;
+            var pattern = KeyIdPattern.Parse(OpenPgpV4Packet.ComputeKeyId(key.PublicKey, timestamp));
+            IReadOnlyList<uint>[] hits = [new[] { timestamp }];
+            MethodInfo? submit = typeof(MultiGpuCoordinator).GetMethod("HandleVerifiedHits", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(submit);
+
+            object[] candidate = [gpu, new[] { key }, hits, pattern, false];
+            submit.Invoke(coordinator, candidate);
+            submit.Invoke(coordinator, candidate);
+            coordinator.NotifyVaultCountChanged(vault.LoadMatches().Count);
+
+            Assert.Single(vault.LoadMatches());
+            Assert.Equal(2L, coordinator.LatestTelemetry.SessionWork.VerifiedHits);
+            Assert.Equal(1L, coordinator.LatestTelemetry.SessionWork.SavedKeys);
         }
         finally
         {
@@ -399,115 +438,5 @@ public class CoordinatorCalibrationTests
         {
             try { Directory.Delete(tempDir, recursive: true); } catch { }
         }
-    }
-
-    private sealed class PerDeviceFakeBackend : IGpuBackend
-    {
-        private readonly IReadOnlyList<GpuDeviceInfo> _devices;
-        public PerDeviceFakeBackend(IReadOnlyList<GpuDeviceInfo> devices) => _devices = devices;
-        public IReadOnlyList<GpuDeviceInfo> EnumerateHardwareGpus() => _devices;
-        public IGpuSearchDevice CreateDevice(GpuDeviceInfo info) => new FakeGpuDevice(info, 5, 4000, info.KernelVersion);
-    }
-
-    private sealed class FallbackFakeBackend : IGpuBackend
-    {
-        private readonly GpuDeviceInfo _enumerated;
-        public FallbackFakeBackend(GpuDeviceInfo enumerated) => _enumerated = enumerated;
-        public IReadOnlyList<GpuDeviceInfo> EnumerateHardwareGpus() => new[] { _enumerated };
-        public IGpuSearchDevice CreateDevice(GpuDeviceInfo info)
-        {
-            var actual = info with { BackendName = "DirectCompute", KernelVersion = "d3d11-sha1-four-v1" };
-            return new FakeGpuDevice(actual, 5, 4000, actual.KernelVersion);
-        }
-    }
-
-    private static async Task WaitUntilAsync(Func<bool> predicate, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (predicate())
-            {
-                return;
-            }
-            await Task.Delay(25);
-        }
-        Assert.True(predicate(), "Timed out waiting for coordinator state transition.");
-    }
-
-    private sealed class FakeGpuBackend : IGpuBackend
-    {
-        private readonly IReadOnlyList<GpuDeviceInfo> _devices;
-        private readonly int _batchDelayMs;
-        private readonly long _maxCandidatesPerBatch;
-        private readonly string _kernelVersion;
-
-        public FakeGpuBackend(IReadOnlyList<GpuDeviceInfo> devices, int batchDelayMs, long maxCandidatesPerBatch, string kernelVersion = "fake-kernel-v1")
-        {
-            _devices = devices;
-            _batchDelayMs = batchDelayMs;
-            _maxCandidatesPerBatch = maxCandidatesPerBatch;
-            _kernelVersion = kernelVersion;
-        }
-
-        public IReadOnlyList<GpuDeviceInfo> EnumerateHardwareGpus() => _devices;
-
-        public IGpuSearchDevice CreateDevice(GpuDeviceInfo deviceInfo) =>
-            new FakeGpuDevice(deviceInfo, _batchDelayMs, _maxCandidatesPerBatch, _kernelVersion);
-    }
-
-    private sealed class FakeGpuDevice : IGpuSearchDevice
-    {
-        private readonly int _batchDelayMs;
-        public GpuDeviceInfo Info { get; }
-        public int KeysPerBatch => 4;
-        public long MaxCandidatesPerBatch { get; }
-        public string KernelVersion { get; }
-
-        public FakeGpuDevice(GpuDeviceInfo info, int batchDelayMs, long maxCandidatesPerBatch, string kernelVersion)
-        {
-            Info = info;
-            _batchDelayMs = batchDelayMs;
-            MaxCandidatesPerBatch = maxCandidatesPerBatch;
-            KernelVersion = kernelVersion;
-        }
-
-        public IReadOnlyList<uint>[] ScanGroup(
-            IReadOnlyList<byte[]> publicKeys,
-            uint startTimestamp,
-            uint timestampCount,
-            KeyIdPattern pattern,
-            int capacity = 1024)
-        {
-            if (_batchDelayMs > 0)
-            {
-                Thread.Sleep(_batchDelayMs);
-            }
-
-            var results = new IReadOnlyList<uint>[4];
-            if (pattern.FixedHexLength >= 10)
-            {
-                for (int i = 0; i < 4; i++) results[i] = Array.Empty<uint>();
-                return results;
-            }
-
-            uint scanLimit = Math.Min(timestampCount, 64u);
-            for (int lane = 0; lane < 4; lane++)
-            {
-                var hits = new List<uint>();
-                for (uint offset = 0; offset < scanLimit; offset++)
-                {
-                    uint ts = startTimestamp + offset;
-                    if (pattern.Matches(OpenPgpV4Packet.ComputeKeyIdUInt64(publicKeys[lane], ts)))
-                    {
-                        hits.Add(ts);
-                    }
-                }
-                results[lane] = hits;
-            }
-            return results;
-        }
-
-        public void Dispose() { }
     }
 }
