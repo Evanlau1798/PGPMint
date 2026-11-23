@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Verify no emojis in tracked files
+        shell: pwsh
+        run: |
+          $hits = @()
+          foreach ($file in (git ls-files)) {
+            $text = Get-Content -Raw -Encoding UTF8 $file
+            if ($text -match '[\uD83C-\uDBFF][\uDC00-\uDFFF]|[\u2600-\u27BF]') {
+              $hits += $file
+            }
+          }
+          if ($hits.Count -gt 0) {
+            Write-Error ("Emoji detected in tracked files: " + ($hits -join ', '))
+            exit 1
+          }
+
+      - name: Restore
+        run: dotnet restore PGPMint.sln -p:Platform=x64
+
+      - name: Build Solution (Release x64)
+        run: dotnet build PGPMint.sln -p:Platform=x64 -c Release --no-restore
+
+      - name: Run Automated Tests (Crypto, Real GPG & Git Signing, Coordinator, Vault)
+        run: dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64 -c Release --no-build --filter "Category!=HardwareGpu" --verbosity normal

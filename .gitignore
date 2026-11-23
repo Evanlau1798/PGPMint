@@ -1,0 +1,28 @@
+# Build outputs
+bin/
+obj/
+out/
+publish/
+*.user
+*.suo
+*.cache
+.vs/
+.vscode/
+TestResults/
+*.trx
+*.coverage
+
+# Runtime / local user data
+.runtime/
+*.local.json
+*.vault.json
+*.asc
+*.gpg
+
+# Internal planning docs (not published)
+docs/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store

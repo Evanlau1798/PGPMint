@@ -1,0 +1,360 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="PGPMint.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:PGPMint.App.ViewModels"
+    Title="PGPMint">
+
+    <Grid RowDefinitions="38,*">
+        <!-- Compact Custom Title Bar -->
+        <Grid x:Name="TitleBarRoot" Grid.Row="0" ColumnDefinitions="*,Auto" Padding="16,0,144,0">
+            <StackPanel x:Name="TitleBarDragArea"
+                        Grid.Column="0"
+                        Orientation="Horizontal"
+                        Spacing="8"
+                        VerticalAlignment="Center"
+                        Background="Transparent">
+                <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="#808080" VerticalAlignment="Center" />
+                <TextBlock Text="PGPMint"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+                <TextBlock Text="{x:Bind ViewModel.TransientNotice, Mode=OneWay}"
+                           FontSize="12"
+                           Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                           VerticalAlignment="Center"
+                           Margin="8,0,0,0" />
+            </StackPanel>
+
+            <Button x:Name="SettingsButton"
+                    Grid.Column="1"
+                    Style="{StaticResource IconGhostButtonStyle}"
+                    ToolTipService.ToolTip="{x:Bind ViewModel.Loc.Settings, Mode=OneWay}"
+                    AutomationProperties.Name="{x:Bind ViewModel.Loc.Settings, Mode=OneWay}"
+                    Click="OnOpenSettingsClick">
+                <FontIcon Glyph="&#xE713;" FontSize="14" />
+            </Button>
+        </Grid>
+
+        <!-- Main Viewport -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Padding="16,6,16,16" Spacing="12">
+
+                <!-- Hardware / Runtime Error Strip -->
+                <Border x:Name="ErrorBanner"
+                        Visibility="Collapsed"
+                        Background="#28EF4444"
+                        BorderBrush="#88EF4444"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="12,8">
+                    <TextBlock Text="{x:Bind ViewModel.ErrorText, Mode=OneWay}"
+                               FontSize="12"
+                               TextWrapping="Wrap" />
+                </Border>
+
+                <!-- ==================== SETUP WIZARD (First Launch) ==================== -->
+                <StackPanel x:Name="SetupWizardPanel" Spacing="12" Visibility="Collapsed">
+                    <!-- Step 1: GPU Detection & 5-Second Quick Benchmark -->
+                    <Border x:Name="SetupStep1Card" Style="{StaticResource SurfaceCardStyle}">
+                        <StackPanel Spacing="12">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="{x:Bind ViewModel.Loc.SetupStep1Title, Mode=OneWay}"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <Border Grid.Column="1"
+                                        CornerRadius="6"
+                                        Padding="8,3"
+                                        Background="{ThemeResource ControlFillColorSecondaryBrush}">
+                                    <TextBlock Text="{x:Bind ViewModel.TargetCapText, Mode=OneWay}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="12"
+                                               FontWeight="SemiBold" />
+                                </Border>
+                            </Grid>
+
+                            <ProgressBar Minimum="0"
+                                         Maximum="100"
+                                         Value="{x:Bind ViewModel.ProgressPercent, Mode=OneWay}"
+                                         Height="4" />
+
+                            <ItemsRepeater ItemsSource="{x:Bind ViewModel.Gpus}">
+                                <ItemsRepeater.Layout>
+                                    <StackLayout Spacing="6" />
+                                </ItemsRepeater.Layout>
+                                <ItemsRepeater.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:GpuItemViewModel">
+                                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8" MinHeight="28">
+                                            <CheckBox Grid.Column="0"
+                                                      IsChecked="{x:Bind IsEnabled, Mode=OneWay}"
+                                                      IsEnabled="{x:Bind CanToggle, Mode=OneWay}"
+                                                      MinWidth="0"
+                                                      Padding="0"
+                                                      Tag="{x:Bind DeviceKey}"
+                                                      Click="OnGpuToggleClick" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{x:Bind Name}"
+                                                       FontSize="13"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+                                            <Border Grid.Column="2"
+                                                    CornerRadius="4"
+                                                    Padding="6,2"
+                                                    VerticalAlignment="Center"
+                                                    Background="{ThemeResource ControlFillColorSecondaryBrush}">
+                                                <TextBlock Text="{x:Bind BackendName, Mode=OneWay}"
+                                                           FontFamily="{StaticResource MonoFont}"
+                                                           FontSize="11"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </Border>
+                                            <TextBlock Grid.Column="3"
+                                                       Text="{x:Bind RateText, Mode=OneWay}"
+                                                       FontFamily="{StaticResource MonoFont}"
+                                                       FontSize="13"
+                                                       VerticalAlignment="Center" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsRepeater.ItemTemplate>
+                            </ItemsRepeater>
+
+                            <Button Content="{x:Bind ViewModel.Loc.Next, Mode=OneWay}"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    HorizontalAlignment="Stretch"
+                                    Height="38"
+                                    IsEnabled="{x:Bind ViewModel.CanAdvanceFromStep1, Mode=OneWay}"
+                                    Click="OnSetupNextClick" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Step 2: Set Target Key ID Suffix -->
+                    <Border x:Name="SetupStep2Card" Style="{StaticResource SurfaceCardStyle}" Visibility="Collapsed">
+                        <StackPanel Spacing="12">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="{x:Bind ViewModel.Loc.SetupStep2Title, Mode=OneWay}"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <Border x:Name="SetupEtaPill"
+                                        Grid.Column="1"
+                                        Style="{StaticResource EtaPillStyle}">
+                                    <TextBlock Text="{x:Bind ViewModel.DraftEtaText, Mode=OneWay}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="13"
+                                               FontWeight="SemiBold" />
+                                </Border>
+                            </Grid>
+
+                            <TextBlock Text="{x:Bind ViewModel.DraftFormattedPreview, Mode=OneWay}"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="22"
+                                       FontWeight="SemiBold"
+                                       CharacterSpacing="40"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,4,0,0" />
+
+                            <StackPanel Spacing="6">
+                                <Border x:Name="SetupInputFrame" CornerRadius="6" BorderThickness="1.5" BorderBrush="Transparent">
+                                    <TextBox x:Name="SetupTargetInputBox"
+                                             Text="{x:Bind ViewModel.DraftTargetInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             PlaceholderText="{x:Bind ViewModel.Loc.TargetPlaceholder, Mode=OneWay}"
+                                             FontFamily="{StaticResource MonoFont}"
+                                             FontSize="15"
+                                             MaxLength="24"
+                                             TextAlignment="Center" />
+                                </Border>
+
+                                <TextBlock x:Name="SetupValidationErrorText"
+                                           Text="{x:Bind ViewModel.DraftErrorText, Mode=OneWay}"
+                                           Foreground="#EF4444"
+                                           FontSize="12"
+                                           Visibility="Collapsed" />
+
+                                <TextBlock Text="{x:Bind ViewModel.Loc.SuffixRuleHint, Mode=OneWay}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           FontSize="12"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <TextBlock Text="{x:Bind ViewModel.GpuSummaryText, Mode=OneWay}"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       HorizontalAlignment="Center" />
+
+                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                                <Button Grid.Column="0"
+                                        Content="{x:Bind ViewModel.Loc.Back, Mode=OneWay}"
+                                        MinWidth="84"
+                                        Height="38"
+                                        Click="OnSetupBackClick" />
+                                <Button Grid.Column="1"
+                                        Content="{x:Bind ViewModel.Loc.Finish, Mode=OneWay}"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        HorizontalAlignment="Stretch"
+                                        Height="38"
+                                        IsEnabled="{x:Bind ViewModel.IsDraftValid, Mode=OneWay}"
+                                        Click="OnSetupFinishClick" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- ==================== MINIMALIST MAIN DASHBOARD ==================== -->
+                <StackPanel x:Name="DashboardPanel" Spacing="12" Visibility="Collapsed">
+
+                    <!-- 1. Speed, Current Target & Stepless Throttle Card -->
+                    <Border Style="{StaticResource SurfaceCardStyle}">
+                        <StackPanel Spacing="12">
+                            <!-- Read-only current target Key ID -->
+                            <TextBlock Text="{x:Bind ViewModel.ActiveFormattedPreview, Mode=OneWay}"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       CharacterSpacing="40"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       HorizontalAlignment="Center" />
+
+                            <Grid ColumnDefinitions="*,Auto">
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Bottom">
+                                    <TextBlock Text="{x:Bind ViewModel.ActualRateNumber, Mode=OneWay}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="44"
+                                               FontWeight="SemiBold"
+                                               LineHeight="46" />
+                                    <TextBlock Text="{x:Bind ViewModel.ActualRateUnit, Mode=OneWay}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="14"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               VerticalAlignment="Bottom"
+                                               Margin="0,0,0,6" />
+                                </StackPanel>
+
+                                <Border Grid.Column="1"
+                                        VerticalAlignment="Bottom"
+                                        Margin="0,0,0,6"
+                                        CornerRadius="6"
+                                        Padding="10,4"
+                                        Background="{ThemeResource ControlFillColorSecondaryBrush}">
+                                    <TextBlock Text="{x:Bind ViewModel.TargetCapText, Mode=OneWay}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="13"
+                                               FontWeight="SemiBold" />
+                                </Border>
+                            </Grid>
+
+                            <Slider x:Name="RateSlider"
+                                    Minimum="0"
+                                    Maximum="1000"
+                                    StepFrequency="1"
+                                    SmallChange="10"
+                                    LargeChange="50"
+                                    IsThumbToolTipEnabled="False"
+                                    Value="{x:Bind ViewModel.SliderValue, Mode=TwoWay}"
+                                    IsEnabled="{x:Bind ViewModel.IsSliderEnabled, Mode=OneWay}" />
+
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <Button Grid.Column="0"
+                                        Content="{x:Bind ViewModel.PrimaryButtonText, Mode=OneWay}"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        HorizontalAlignment="Stretch"
+                                        Height="38"
+                                        IsEnabled="{x:Bind ViewModel.CanPrimaryAction, Mode=OneWay}"
+                                        Click="OnPrimaryActionClick" />
+
+                                <Button Grid.Column="1"
+                                        Content="{x:Bind ViewModel.Loc.Stop, Mode=OneWay}"
+                                        MinWidth="84"
+                                        Height="38"
+                                        IsEnabled="{x:Bind ViewModel.CanStop, Mode=OneWay}"
+                                        Click="OnStopClick" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 2. Progress & Telemetry Strip -->
+                    <Border Style="{StaticResource SurfaceCardStyle}" Padding="16,12">
+                        <StackPanel Spacing="8">
+                            <ProgressBar Minimum="0"
+                                         Maximum="100"
+                                         Value="{x:Bind ViewModel.ProgressPercent, Mode=OneWay}"
+                                         Height="4" />
+
+                            <Grid ColumnDefinitions="*,*,*">
+                                <TextBlock Grid.Column="0"
+                                           Text="{x:Bind ViewModel.ProbabilityText, Mode=OneWay}"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="13"
+                                           HorizontalAlignment="Left" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{x:Bind ViewModel.CheckedCountText, Mode=OneWay}"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="13"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           HorizontalAlignment="Center" />
+                                <TextBlock Grid.Column="2"
+                                           Text="{x:Bind ViewModel.LiveEtaText, Mode=OneWay}"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="13"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           HorizontalAlignment="Right" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 3. Matched Keys List (Visible only when matches exist) -->
+                    <Border x:Name="MatchesCard"
+                            Style="{StaticResource SurfaceCardStyle}"
+                            Padding="14,10"
+                            Visibility="Collapsed">
+                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.Matches}">
+                            <ItemsRepeater.Layout>
+                                <StackLayout Spacing="8" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate x:DataType="vm:MatchedKeyItemViewModel">
+                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="6">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{x:Bind FormattedKeyId}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="14"
+                                                   FontWeight="SemiBold"
+                                                   VerticalAlignment="Center" />
+
+                                        <Button Grid.Column="1"
+                                                Style="{StaticResource IconGhostButtonStyle}"
+                                                ToolTipService.ToolTip="Copy fingerprint"
+                                                AutomationProperties.Name="Copy fingerprint"
+                                                Tag="{x:Bind Fingerprint}"
+                                                Click="OnCopyFingerprintClick">
+                                            <FontIcon Glyph="&#xE8C8;" FontSize="13" />
+                                        </Button>
+
+                                        <Button Grid.Column="2"
+                                                Content=".asc"
+                                                FontFamily="{StaticResource MonoFont}"
+                                                FontSize="12"
+                                                Padding="10,4"
+                                                Tag="{x:Bind Record}"
+                                                Click="OnExportMatchClick" />
+
+                                        <Button Grid.Column="3"
+                                                Style="{StaticResource IconGhostButtonStyle}"
+                                                ToolTipService.ToolTip="Delete key"
+                                                AutomationProperties.Name="Delete key"
+                                                Tag="{x:Bind Record}"
+                                                Click="OnDeleteMatchClick">
+                                            <FontIcon Glyph="&#xE74D;" FontSize="13" />
+                                        </Button>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                    </Border>
+                </StackPanel>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>

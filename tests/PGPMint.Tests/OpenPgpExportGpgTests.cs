@@ -1,0 +1,260 @@
+using System.Diagnostics;
+using PGPMint.Core.Crypto;
+using Xunit;
+
+namespace PGPMint.Tests;
+
+public class OpenPgpExportGpgTests
+{
+    private const string Rfc8032SeedHex = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+    private const uint Rfc8032Timestamp = 1700000000u;
+    private const string ExpectedFingerprint = "7629413EDCE0D2380410F05599933B470FD7C498";
+
+    private static string? FindGpgExecutable()
+    {
+        string[] candidates =
+        {
+            @"C:\Program Files\Git\usr\bin\gpg.exe",
+            @"C:\Program Files (x86)\GnuPG\bin\gpg.exe",
+            @"C:\Program Files\GnuPG\bin\gpg.exe"
+        };
+        return candidates.FirstOrDefault(File.Exists);
+    }
+
+    private static string? FindGitExecutable()
+    {
+        string[] candidates = { @"C:\Program Files\Git\cmd\git.exe" };
+        return candidates.FirstOrDefault(File.Exists);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("PGPMint-Test-Passphrase!2026")]
+    public void ExportedArmoredKeyImportsIntoRealGpgAndSignsGitCommit(string? passphrase)
+    {
+        string? gpgPath = FindGpgExecutable();
+        string? gitPath = FindGitExecutable();
+        Assert.NotNull(gpgPath);
+        Assert.NotNull(gitPath);
+
+        byte[] seed = Convert.FromHexString(Rfc8032SeedHex);
+        byte[] publicKey = Ed25519KeyGenerator.DerivePublicKey(seed);
+
+        OpenPgpExportResult exported = OpenPgpArmorExporter.ExportKeyPair(
+            new OpenPgpExportRequest(
+                PrivateSeed: seed,
+                PublicKey: publicKey,
+                CreationTimestamp: Rfc8032Timestamp,
+                UserName: "PGPMint Tester",
+                UserEmail: "tester@pgpmint.example",
+                Passphrase: passphrase));
+
+        Assert.Contains("-----BEGIN PGP PRIVATE KEY BLOCK-----", exported.PrivateKeyArmor);
+        Assert.Contains("-----END PGP PRIVATE KEY BLOCK-----", exported.PrivateKeyArmor);
+        Assert.Contains("-----BEGIN PGP PUBLIC KEY BLOCK-----", exported.PublicKeyArmor);
+        Assert.Equal(ExpectedFingerprint, exported.Fingerprint);
+        Assert.Equal(ExpectedFingerprint[^16..], exported.KeyId);
+
+        string tempRoot = Path.Combine(Path.GetTempPath(), "pm-" + Guid.NewGuid().ToString("N")[..6]);
+        string gpgHome = Path.Combine(tempRoot, "g");
+        string repoDir = Path.Combine(tempRoot, "r");
+        Directory.CreateDirectory(gpgHome);
+        Directory.CreateDirectory(repoDir);
+        File.WriteAllText(Path.Combine(gpgHome, "gpg-agent.conf"), "allow-loopback-pinentry\n");
+
+        try
+        {
+            string keyFile = Path.Combine(tempRoot, "secret.asc");
+            File.WriteAllText(keyFile, exported.PrivateKeyArmor);
+
+            string gpgHomeEnv = gpgPath!.Contains(@"\Git\usr\bin\", StringComparison.OrdinalIgnoreCase)
+                ? ToMsysPath(gpgHome)
+                : gpgHome;
+            var env = new Dictionary<string, string> { ["GNUPGHOME"] = gpgHomeEnv };
+
+            // 1. Import secret key into isolated GNUPGHOME
+            var importArgs = new List<string> { "--batch", "--yes", "--pinentry-mode", "loopback" };
+            if (!string.IsNullOrEmpty(passphrase))
+            {
+                importArgs.Add("--passphrase");
+                importArgs.Add(passphrase);
+            }
+            importArgs.Add("--import");
+            importArgs.Add(keyFile);
+
+            var importResult = RunProcess(gpgPath!, importArgs, tempRoot, env);
+            Assert.True(importResult.ExitCode == 0, $"gpg --import failed: {importResult.StdErr}\n{importResult.StdOut}");
+
+            // 2. Verify fingerprint & signing capability via --list-secret-keys --with-colons
+            var listResult = RunProcess(gpgPath!, new[] { "--batch", "--list-secret-keys", "--with-colons" }, tempRoot, env);
+            Assert.Equal(0, listResult.ExitCode);
+            Assert.Contains(ExpectedFingerprint, listResult.StdOut);
+            // Primary key capability field must include 's' (sign) and 'c' (certify)
+            string? secLine = listResult.StdOut.Split('\n').FirstOrDefault(l => l.StartsWith("sec:"));
+            Assert.NotNull(secLine);
+            string[] fields = secLine!.Split(':');
+            Assert.True(fields.Length > 11);
+            Assert.Contains("s", fields[11], StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("c", fields[11], StringComparison.OrdinalIgnoreCase);
+
+            // 3. Real detached sign + verify
+            string payloadPath = Path.Combine(tempRoot, "hello.txt");
+            string sigPath = Path.Combine(tempRoot, "hello.txt.asc");
+            File.WriteAllText(payloadPath, "PGPMint signing verification payload\n");
+
+            var signArgs = new List<string>
+            {
+                "--batch", "--yes", "--pinentry-mode", "loopback",
+                "--armor", "--detach-sign", "--local-user", ExpectedFingerprint,
+                "--output", sigPath
+            };
+            if (!string.IsNullOrEmpty(passphrase))
+            {
+                signArgs.Add("--passphrase");
+                signArgs.Add(passphrase);
+            }
+            signArgs.Add(payloadPath);
+
+            var signResult = RunProcess(gpgPath!, signArgs, tempRoot, env);
+            Assert.True(signResult.ExitCode == 0, $"gpg --detach-sign failed: {signResult.StdErr}");
+
+            var verifyResult = RunProcess(gpgPath!, new[] { "--batch", "--verify", sigPath, payloadPath }, tempRoot, env);
+            Assert.True(verifyResult.ExitCode == 0, $"gpg --verify failed: {verifyResult.StdErr}");
+            Assert.Contains(ExpectedFingerprint, verifyResult.StdErr + verifyResult.StdOut);
+
+            // 4. Real git commit -S + git verify-commit HEAD (for unencrypted key; passphrase-protected keys are verified via gpg above)
+            if (string.IsNullOrEmpty(passphrase))
+            {
+                Assert.Equal(0, RunProcess(gitPath!, new[] { "init", "-b", "main" }, repoDir, env).ExitCode);
+                Assert.Equal(0, RunProcess(gitPath!, new[] { "config", "user.name", "PGPMint Tester" }, repoDir, env).ExitCode);
+                Assert.Equal(0, RunProcess(gitPath!, new[] { "config", "user.email", "tester@pgpmint.example" }, repoDir, env).ExitCode);
+                Assert.Equal(0, RunProcess(gitPath!, new[] { "config", "user.signingkey", ExpectedFingerprint }, repoDir, env).ExitCode);
+                Assert.Equal(0, RunProcess(gitPath!, new[] { "config", "gpg.program", gpgPath! }, repoDir, env).ExitCode);
+
+                File.WriteAllText(Path.Combine(repoDir, "README.md"), "signed commit test\n");
+                Assert.Equal(0, RunProcess(gitPath!, new[] { "add", "README.md" }, repoDir, env).ExitCode);
+
+                var commitResult = RunProcess(gitPath!, new[] { "commit", "-S", "-m", "Signed by PGPMint" }, repoDir, env);
+                Assert.True(commitResult.ExitCode == 0, $"git commit -S failed: {commitResult.StdErr}\n{commitResult.StdOut}");
+
+                var verifyCommitResult = RunProcess(gitPath!, new[] { "verify-commit", "HEAD" }, repoDir, env);
+                Assert.True(verifyCommitResult.ExitCode == 0, $"git verify-commit failed: {verifyCommitResult.StdErr}");
+                Assert.Contains(ExpectedFingerprint, verifyCommitResult.StdErr + verifyCommitResult.StdOut);
+            }
+        }
+        finally
+        {
+            // Kill gpg-agent holding files inside temp GNUPGHOME before cleanup
+            TryKillGpgAgent(gpgPath!, tempRoot, gpgHome);
+            try { Directory.Delete(tempRoot, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void LeadingZeroBytePrivateSeedImportsAndSignsInRealGpg()
+    {
+        string? gpgPath = FindGpgExecutable();
+        Assert.NotNull(gpgPath);
+
+        // Seed starting with two 0x00 bytes exercises RFC 4880 MPI leading-zero stripping
+        byte[] seed = Convert.FromHexString("0000112233445566778899aabbccddeeff00112233445566778899aabbccddee");
+        byte[] pub = Ed25519KeyGenerator.DerivePublicKey(seed);
+        uint ts = 1700000123u;
+
+        OpenPgpExportResult exported = OpenPgpArmorExporter.ExportKeyPair(
+            new OpenPgpExportRequest(seed, pub, ts, "ZeroSeed", "<zero@pgpmint.example>", null));
+
+        string tempRoot = Path.Combine(Path.GetTempPath(), "pmz-" + Guid.NewGuid().ToString("N")[..6]);
+        string gpgHome = Path.Combine(tempRoot, "g");
+        Directory.CreateDirectory(gpgHome);
+        File.WriteAllText(Path.Combine(gpgHome, "gpg-agent.conf"), "allow-loopback-pinentry\n");
+
+        try
+        {
+            string keyFile = Path.Combine(tempRoot, "zero.asc");
+            File.WriteAllText(keyFile, exported.PrivateKeyArmor);
+            string gpgHomeEnv = gpgPath!.Contains(@"\Git\usr\bin\", StringComparison.OrdinalIgnoreCase)
+                ? ToMsysPath(gpgHome)
+                : gpgHome;
+            var env = new Dictionary<string, string> { ["GNUPGHOME"] = gpgHomeEnv };
+
+            var importResult = RunProcess(gpgPath!, new[] { "--batch", "--yes", "--import", keyFile }, tempRoot, env);
+            Assert.True(importResult.ExitCode == 0, $"gpg --import failed: {importResult.StdErr}");
+
+            string payload = Path.Combine(tempRoot, "m.txt");
+            string sig = Path.Combine(tempRoot, "m.txt.asc");
+            File.WriteAllText(payload, "leading zero seed payload\n");
+
+            var signRes = RunProcess(gpgPath!, new[]
+            {
+                "--batch", "--yes", "--pinentry-mode", "loopback",
+                "--armor", "--detach-sign", "--local-user", exported.Fingerprint,
+                "--output", sig, payload
+            }, tempRoot, env);
+            Assert.True(signRes.ExitCode == 0, $"gpg --detach-sign failed: {signRes.StdErr}");
+
+            var verifyRes = RunProcess(gpgPath!, new[] { "--batch", "--verify", sig, payload }, tempRoot, env);
+            Assert.True(verifyRes.ExitCode == 0, $"gpg --verify failed: {verifyRes.StdErr}");
+            Assert.Contains(exported.Fingerprint, verifyRes.StdErr + verifyRes.StdOut);
+        }
+        finally
+        {
+            TryKillGpgAgent(gpgPath!, tempRoot, gpgHome);
+            try { Directory.Delete(tempRoot, recursive: true); } catch { }
+        }
+    }
+
+    private static string ToMsysPath(string windowsPath)
+    {
+        string full = Path.GetFullPath(windowsPath);
+        if (full.Length >= 2 && full[1] == ':')
+        {
+            return "/" + char.ToLowerInvariant(full[0]) + full[2..].Replace('\\', '/');
+        }
+        return full.Replace('\\', '/');
+    }
+
+    private static void TryKillGpgAgent(string gpgPath, string workDir, string gpgHome)
+    {
+        string gpgconf = Path.Combine(Path.GetDirectoryName(gpgPath)!, "gpgconf.exe");
+        string gpgHomeEnv = gpgPath.Contains(@"\Git\usr\bin\", StringComparison.OrdinalIgnoreCase)
+            ? ToMsysPath(gpgHome)
+            : gpgHome;
+        if (File.Exists(gpgconf))
+        {
+            try
+            {
+                RunProcess(gpgconf, new[] { "--kill", "gpg-agent" }, workDir,
+                    new Dictionary<string, string> { ["GNUPGHOME"] = gpgHomeEnv });
+            }
+            catch { }
+        }
+    }
+
+    private static (int ExitCode, string StdOut, string StdErr) RunProcess(
+        string fileName, IEnumerable<string> args, string workingDir, IDictionary<string, string> extraEnv)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            WorkingDirectory = workingDir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        foreach (string arg in args)
+        {
+            psi.ArgumentList.Add(arg);
+        }
+        foreach (var kv in extraEnv)
+        {
+            psi.Environment[kv.Key] = kv.Value;
+        }
+        using var proc = Process.Start(psi)!;
+        string stdOut = proc.StandardOutput.ReadToEnd();
+        string stdErr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit(30_000);
+        return (proc.ExitCode, stdOut, stdErr);
+    }
+}
