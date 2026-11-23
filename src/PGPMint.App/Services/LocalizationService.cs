@@ -291,6 +291,10 @@ public sealed class LocalizationService : ObservableObject
     public string FormatSingleHashProbability(string detail) =>
         SafeFormat("SingleHashProbabilityFormat", detail);
 
+    public string FormatTraySpeedupMeasured(int percent) =>
+        SafeFormat("TraySpeedupMeasuredFormat", Math.Max(1, percent));
+
+    public string TraySpeedupGenericHint => Get("TraySpeedupGenericHint");
     public string ProbabilityPrefix => Get("ProbabilityPrefix");
     public string NoResults => Get("NoResults");
     public string SuffixRuleHint => Get("SuffixRuleHint");

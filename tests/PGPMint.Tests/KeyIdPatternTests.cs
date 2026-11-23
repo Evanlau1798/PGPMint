@@ -81,9 +81,9 @@ public class KeyIdPatternTests
         Assert.Equal("0 H", FormattingHelpers.FormatCheckedCount(0));
         Assert.Equal("8,192 H", FormattingHelpers.FormatCheckedCount(8192));
 
-        // 10,000 and above uses Unicode superscript scientific notation
-        Assert.Equal("1.00 \u00D7 10\u2074 H", FormattingHelpers.FormatCheckedCount(10_000));
-        Assert.Equal("1.23 \u00D7 10\u00B9\u00B9 H", FormattingHelpers.FormatCheckedCount(123_456_789_012UL));
+        // 10,000 and above uses ^ scientific notation for crisp monospace rendering on Main Dashboard
+        Assert.Equal("1.00 \u00D7 10^4 H", FormattingHelpers.FormatCheckedCount(10_000));
+        Assert.Equal("1.23 \u00D7 10^11 H", FormattingHelpers.FormatCheckedCount(123_456_789_012UL));
         Assert.Equal("123,456,789,012 H", FormattingHelpers.FormatCheckedCountExact(123_456_789_012UL));
 
         // Probability formatting across scales + labeled prefix
@@ -93,11 +93,11 @@ public class KeyIdPatternTests
         Assert.Equal("機率 63.21%", FormattingHelpers.FormatLabeledProbability(0.63212, "機率"));
         Assert.Equal("Prob 63.21%", FormattingHelpers.FormatLabeledProbability(0.63212, "Prob"));
 
-        // Very small non-zero probability uses scientific notation instead of sticking at 0.000%
+        // Very small non-zero probability uses ^ scientific notation instead of sticking at 0.000%
         string tiny = FormattingHelpers.FormatProbability(2.328e-10);
-        Assert.Contains("\u00D710\u207B\u2078%", tiny);
+        Assert.Contains("\u00D710^-8%", tiny);
 
-        // Single-hash probability hover detail
+        // Single-hash probability hover detail keeps Unicode superscripts for UI tooltip font
         string single8 = FormattingHelpers.FormatSingleHashProbabilityDetail(8);
         Assert.Equal("1 / 16\u2078 (\u2248 2.33 \u00D7 10\u207B\u00B9\u2070)", single8);
     }

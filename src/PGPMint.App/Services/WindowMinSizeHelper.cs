@@ -1,15 +1,19 @@
 using System.Runtime.InteropServices;
+using Microsoft.UI.Windowing;
+using Windows.Graphics;
 
 namespace PGPMint.App.Services;
 
 /// <summary>
-/// Enforces native Win32 minimum track size via WM_GETMINMAXINFO using comctl32 SetWindowSubclass.
-/// Prevents top/left border drag from pushing the window across the screen.
+/// Enforces native Win32 minimum track size via WM_GETMINMAXINFO using comctl32 SetWindowSubclass,
+/// and provides monitor work-area centering and clamped auto-sizing.
 /// </summary>
 public sealed class WindowMinSizeHelper : IDisposable
 {
     private const uint WmGetMinMaxInfo = 0x0024;
     private const uint WmNcDestroy = 0x0082;
+    private const uint MonitorDefaultToPrimary = 1;
+    private const uint MonitorDefaultToNearest = 2;
     private static readonly UIntPtr SubclassId = new(0x5047504Du);
 
     private readonly IntPtr _hwnd;
@@ -67,7 +71,7 @@ public sealed class WindowMinSizeHelper : IDisposable
         return DefSubclassProc(hWnd, uMsg, wParam, lParam);
     }
 
-    private static double GetDpiScale(IntPtr hwnd)
+    public static double GetDpiScale(IntPtr hwnd)
     {
         try
         {
@@ -78,6 +82,85 @@ public sealed class WindowMinSizeHelper : IDisposable
         {
             return 1.0;
         }
+    }
+
+    public static void CenterAndResizeOnScreen(AppWindow appWindow, IntPtr hwnd, int logicalWidth, int logicalHeight)
+    {
+        double scale = GetDpiScale(hwnd);
+        int widthPx = (int)Math.Round(logicalWidth * scale);
+        int heightPx = (int)Math.Round(logicalHeight * scale);
+
+        if (TryGetMonitorWorkArea(hwnd, MonitorDefaultToPrimary, out RECT wa))
+        {
+            int workW = Math.Max(320, wa.Right - wa.Left);
+            int workH = Math.Max(320, wa.Bottom - wa.Top);
+            widthPx = Math.Min(workW - 16, widthPx);
+            heightPx = Math.Min(workH - 16, heightPx);
+            int x = wa.Left + Math.Max(0, (workW - widthPx) / 2);
+            int y = wa.Top + Math.Max(0, (workH - heightPx) / 2);
+            appWindow.MoveAndResize(new RectInt32(x, y, widthPx, heightPx));
+        }
+        else
+        {
+            appWindow.Resize(new SizeInt32(widthPx, heightPx));
+        }
+    }
+
+    public static void ResizeHeightClampedToWorkArea(
+        AppWindow appWindow,
+        IntPtr hwnd,
+        int targetLogicalHeight,
+        int minLogicalHeight,
+        bool centerOnMonitor = false)
+    {
+        double scale = GetDpiScale(hwnd);
+        int minHeightPx = (int)Math.Round(minLogicalHeight * scale);
+        int targetHeightPx = Math.Max(minHeightPx, (int)Math.Round(targetLogicalHeight * scale));
+        int curWidthPx = appWindow.Size.Width;
+        int curX = appWindow.Position.X;
+        int curY = appWindow.Position.Y;
+
+        if (TryGetMonitorWorkArea(hwnd, MonitorDefaultToNearest, out RECT wa))
+        {
+            int workW = Math.Max(320, wa.Right - wa.Left);
+            int workH = Math.Max(320, wa.Bottom - wa.Top);
+            int maxAllowedH = Math.Max(minHeightPx, workH - 20);
+            targetHeightPx = Math.Min(targetHeightPx, maxAllowedH);
+
+            if (centerOnMonitor)
+            {
+                curX = wa.Left + Math.Max(0, (workW - curWidthPx) / 2);
+                curY = wa.Top + Math.Max(0, (workH - targetHeightPx) / 2);
+            }
+            else if (curY + targetHeightPx > wa.Bottom - 8)
+            {
+                curY = Math.Max(wa.Top + 8, wa.Bottom - targetHeightPx - 8);
+            }
+        }
+
+        if (targetHeightPx != appWindow.Size.Height || curX != appWindow.Position.X || curY != appWindow.Position.Y)
+        {
+            appWindow.MoveAndResize(new RectInt32(curX, curY, curWidthPx, targetHeightPx));
+        }
+    }
+
+    private static bool TryGetMonitorWorkArea(IntPtr hwnd, uint flags, out RECT workArea)
+    {
+        workArea = default;
+        IntPtr hMon = MonitorFromWindow(hwnd, flags);
+        if (hMon == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        var info = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
+        if (!GetMonitorInfoW(hMon, ref info))
+        {
+            return false;
+        }
+
+        workArea = info.rcWork;
+        return true;
     }
 
     private void Uninstall()
@@ -123,6 +206,31 @@ public sealed class WindowMinSizeHelper : IDisposable
         public POINT ptMinTrackSize;
         public POINT ptMaxTrackSize;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MONITORINFO
+    {
+        public uint cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfoW(IntPtr hMonitor, ref MONITORINFO lpmi);
 
     [DllImport("comctl32.dll", ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

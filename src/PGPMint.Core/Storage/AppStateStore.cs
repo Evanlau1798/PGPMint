@@ -18,6 +18,7 @@ public sealed class AppPersistedState
     public bool ShowMiniHudInTray { get; set; } = true;
     public int? MiniHudX { get; set; }
     public int? MiniHudY { get; set; }
+    public double TrayFullSpeedHps { get; set; }
     public bool StartWithWindows { get; set; }
     public bool WasRunningOnExit { get; set; }
 }

@@ -15,7 +15,10 @@
         </Grid>
 
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-            <StackPanel Padding="16,6,16,16" Spacing="12">
+            <StackPanel x:Name="SettingsContentPanel"
+                        Padding="16,6,16,16"
+                        Spacing="12"
+                        SizeChanged="OnSettingsContentSizeChanged">
 
                 <!-- 1. Language (Top Row, Extensible Dropdown) -->
                 <Border Style="{StaticResource SurfaceCardStyle}">

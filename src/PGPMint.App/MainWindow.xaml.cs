@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using PGPMint.App.Services;
@@ -24,9 +25,11 @@ public sealed partial class MainWindow : Window
     private const uint WmSetIcon = 0x0080;
     private const int SwRestore = 9;
     private const int LogicalDefaultWidth = 460;
-    private const int LogicalDefaultHeight = 420;
+    private const int LogicalBaseDashboardHeight = 442;
+    private const int LogicalSetupHeight = 500;
     private const int LogicalMinWidth = 380;
-    private const int LogicalMinHeight = 416;
+    private const int LogicalMinHeight = 420;
+    private const int MaxAutoStretchMatches = 5;
 
     private readonly TrayIconService _trayIcon;
     private readonly Func<Task> _quitCallback;
@@ -36,6 +39,9 @@ public sealed partial class MainWindow : Window
     private bool _allowClose;
     private bool _isDialogOpen;
     private bool _syncingLangCombo;
+    private bool _coercingSlider;
+    private bool? _lastSizedSetupMode;
+    private int _lastSizedVisibleMatchRows = -1;
 
     public MainViewModel ViewModel { get; }
 
@@ -59,6 +65,7 @@ public sealed partial class MainWindow : Window
         SetupLanguageComboBox.ItemsSource = ViewModel.LanguageOptions;
         SetupLanguageComboBox.Loaded += (_, _) => SyncSetupLanguageCombo();
 
+        RateSlider.Loaded += (_, _) => DisableSliderThumbHitTest(RateSlider);
         RateSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnSliderReleased), handledEventsToo: true);
         RateSlider.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(OnSliderReleased), handledEventsToo: true);
         RateSlider.PreviewKeyDown += OnSliderPreviewKeyDown;
@@ -88,10 +95,11 @@ public sealed partial class MainWindow : Window
             SendMessageW(_hwnd, WmSetIcon, (IntPtr)1, _trayIcon.AppIconHandle);
         }
 
-        double scale = GetDpiScale();
-        AppWindow.Resize(new SizeInt32(
-            (int)Math.Round(LogicalDefaultWidth * scale),
-            (int)Math.Round(LogicalDefaultHeight * scale)));
+        WindowMinSizeHelper.CenterAndResizeOnScreen(
+            AppWindow,
+            _hwnd,
+            LogicalDefaultWidth,
+            LogicalBaseDashboardHeight);
         AppWindow.Closing += OnAppWindowClosing;
         Closed += (_, _) => _minSizeHelper.Dispose();
     }
@@ -156,6 +164,8 @@ public sealed partial class MainWindow : Window
             or nameof(MainViewModel.HasDraftError)
             or nameof(MainViewModel.HasError)
             or nameof(MainViewModel.HasMatches)
+            or nameof(MainViewModel.MatchesCount)
+            or nameof(MainViewModel.ShowTraySpeedupHint)
             or nameof(MainViewModel.SelectedLanguageCode)
             or "")
         {
@@ -176,6 +186,7 @@ public sealed partial class MainWindow : Window
         SetupWizardPanel.Visibility = ViewModel.ShowSetupWizard ? Visibility.Visible : Visibility.Collapsed;
         DashboardPanel.Visibility = ViewModel.ShowDashboard ? Visibility.Visible : Visibility.Collapsed;
         SettingsButton.Visibility = ViewModel.ShowDashboard ? Visibility.Visible : Visibility.Collapsed;
+        TraySpeedupHintTextBlock.Visibility = ViewModel.ShowTraySpeedupHint ? Visibility.Visible : Visibility.Collapsed;
 
         SetupValidationErrorText.Visibility = ViewModel.HasDraftError ? Visibility.Visible : Visibility.Collapsed;
         ApplyTextBoxValidationVisual(SetupInputFrame, SetupTargetInputBox, ViewModel.HasDraftError);
@@ -185,6 +196,50 @@ public sealed partial class MainWindow : Window
         ErrorBanner.Visibility = ViewModel.HasError ? Visibility.Visible : Visibility.Collapsed;
         NoMatchesEmptyText.Visibility = ViewModel.HasMatches ? Visibility.Collapsed : Visibility.Visible;
         MatchesContentGrid.Visibility = ViewModel.HasMatches ? Visibility.Visible : Visibility.Collapsed;
+
+        AdjustWindowHeightForMatchesAndMode();
+    }
+
+    private void AdjustWindowHeightForMatchesAndMode()
+    {
+        if (!ViewModel.IsInitialized)
+        {
+            return;
+        }
+
+        bool isSetup = ViewModel.ShowSetupWizard;
+        int visibleRows = isSetup ? 0 : Math.Clamp(ViewModel.MatchesCount, 0, MaxAutoStretchMatches);
+
+        if (_lastSizedSetupMode == isSetup && _lastSizedVisibleMatchRows == visibleRows)
+        {
+            return;
+        }
+
+        bool initialCenter = _lastSizedSetupMode is null;
+        _lastSizedSetupMode = isSetup;
+        _lastSizedVisibleMatchRows = visibleRows;
+
+        int targetLogicalHeight;
+        if (isSetup)
+        {
+            targetLogicalHeight = LogicalSetupHeight;
+        }
+        else if (visibleRows == 0)
+        {
+            targetLogicalHeight = LogicalBaseDashboardHeight;
+        }
+        else
+        {
+            // Expand dynamically for 1..5 matched keys; cap at 5 items so 6+ items scroll inside MatchesCard
+            targetLogicalHeight = LogicalBaseDashboardHeight + 22 + (visibleRows * 38);
+        }
+
+        WindowMinSizeHelper.ResizeHeightClampedToWorkArea(
+            AppWindow,
+            _hwnd,
+            targetLogicalHeight,
+            LogicalMinHeight,
+            centerOnMonitor: initialCenter);
     }
 
     private void SyncSetupLanguageCombo()
@@ -250,6 +305,23 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private static void DisableSliderThumbHitTest(DependencyObject root)
+    {
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(root, i);
+            if (child is Thumb thumb)
+            {
+                // Route pointer dragging through Slider's stateless track coordinate mapping
+                // so magnetic detent coercion at 99% never accumulates relative Thumb delta offset.
+                thumb.IsHitTestVisible = false;
+                return;
+            }
+            DisableSliderThumbHitTest(child);
+        }
+    }
+
     private void OnOpenSettingsClick(object sender, RoutedEventArgs e)
     {
         _openSettingsCallback();
@@ -259,6 +331,29 @@ public sealed partial class MainWindow : Window
     {
         ViewModel.CompleteSetup();
         UpdateVisualStates();
+    }
+
+    private void OnRateSliderValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (_coercingSlider)
+        {
+            return;
+        }
+
+        double snapped = RateControl.SnapUiSliderOnRelease(e.NewValue);
+        if (Math.Abs(snapped - e.NewValue) > 0.5)
+        {
+            _coercingSlider = true;
+            try
+            {
+                RateSlider.Value = snapped;
+                ViewModel.SliderValue = snapped;
+            }
+            finally
+            {
+                _coercingSlider = false;
+            }
+        }
     }
 
     private void OnSliderReleased(object sender, PointerRoutedEventArgs e)

@@ -73,6 +73,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private bool _mainWindowInTray;
     private long _lastHitNotifyTick = -NotificationThrottleMs;
 
+    private double _persistedTrayFullSpeedHps;
+    private double _trayFullSpeedEmaHps;
+    private double _fgFullSpeedEmaHps;
+    private long _lastTraySpeedPersistTick;
+
+    public bool IsInitialized => _isInitialized;
+
     // Telemetry snapshot anchors for GPU-friendly smooth progress bar interpolation
     private KeyIdPattern? _activePatternObj;
     private long _snapTimestamp;
@@ -108,12 +115,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _canApplyDraftTarget;
     public bool CanFinishSetup => HasHardwareGpu && IsDraftValid;
 
-    // Live telemetry & two-stage throttle state (UI slider 0..1080)
+    // Live telemetry & two-stage throttle state (UI slider 10..1120)
     [ObservableProperty] private string _actualRateNumber = "0.00";
     [ObservableProperty] private string _actualRateUnit = "GH/s";
-    [ObservableProperty] private string _targetCapText = "100%";
+    [ObservableProperty] private string _targetCapText = string.Empty;
     [ObservableProperty] private double _sliderValue = RateControl.UiSliderFullSpeed;
-    [ObservableProperty] private bool _isSliderEnabled = true;
+    [ObservableProperty] private bool _isSliderEnabled;
+    [ObservableProperty] private string _traySpeedupHintText = string.Empty;
 
     [ObservableProperty] private double _progressPercent;
     [ObservableProperty] private string _probabilityText = "0.00%";
@@ -135,11 +143,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private int _matchesCount;
 
     [ObservableProperty] private bool _autoPauseOnHit = true;
-    [ObservableProperty] private bool _minimizeToTrayOnClose = true;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowTraySpeedupHint))]
+    private bool _minimizeToTrayOnClose = true;
     [ObservableProperty] private bool _showMiniHudInTray = true;
     [ObservableProperty] private bool _startWithWindows;
     [ObservableProperty] private string _selectedLanguageCode = LocalizationService.AutoLanguageCode;
     [ObservableProperty] private string _transientNotice = string.Empty;
+
+    public bool ShowTraySpeedupHint => MinimizeToTrayOnClose;
 
     public MainViewModel(
         MultiGpuCoordinator coordinator,
@@ -190,6 +202,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         AutoPauseOnHit = persisted.AutoPauseOnHit;
         MinimizeToTrayOnClose = persisted.MinimizeToTrayOnClose;
         ShowMiniHudInTray = persisted.ShowMiniHudInTray;
+        _persistedTrayFullSpeedHps = Math.Max(0.0, persisted.TrayFullSpeedHps);
         StartWithWindows = StartupRegistryService.IsEnabled();
 
         _coordinator.Initialize();
@@ -343,10 +356,21 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnSliderValueChanged(double value)
     {
+        double snappedUi = RateControl.SnapUiSliderOnRelease(value);
+        if (!_suppressSliderCallback && Math.Abs(snappedUi - value) > 0.5)
+        {
+            _suppressSliderCallback = true;
+            SliderValue = snappedUi;
+            _suppressSliderCallback = false;
+            value = snappedUi;
+        }
+
         double logical = RateControl.UiSliderToLogical(value);
         UpdateTargetCapDisplay(logical, _coordinator.LatestTelemetry);
 
-        if (_suppressSliderCallback || _coordinator.CurrentState == CoordinatorState.Calibrating)
+        if (_suppressSliderCallback ||
+            _coordinator.CurrentState == CoordinatorState.Calibrating ||
+            !_coordinator.LatestTelemetry.AllEnabledFullyCalibrated)
         {
             return;
         }
@@ -361,7 +385,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public void CommitSliderRelease()
     {
-        if (_coordinator.CurrentState == CoordinatorState.Calibrating)
+        if (_coordinator.CurrentState == CoordinatorState.Calibrating ||
+            !_coordinator.LatestTelemetry.AllEnabledFullyCalibrated)
         {
             return;
         }
@@ -435,6 +460,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             return _coordinator.IsDeviceEnabled(deviceKey);
         }
+
+        _fgFullSpeedEmaHps = 0.0;
+        _trayFullSpeedEmaHps = 0.0;
+        _persistedTrayFullSpeedHps = 0.0;
 
         await _coordinator.SetDeviceEnabledAsync(deviceKey, isEnabled);
         SyncGpuToggleStates();
@@ -656,9 +685,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         bool busyCal = t.State is CoordinatorState.Calibrating or CoordinatorState.Stopping;
         _powerKeepAlive.SetActive(activeCompute);
 
-        // During initial 30s measurement, hold slider visually at 100% (locked).
+        bool hasMeasuredBaseline = t.AllEnabledFullyCalibrated && t.TotalBaselineHps > 0.0;
+
+        // Before or during the initial 30s measurement, hold slider visually at Full Speed (locked).
         // Once measurement finishes, restore the persisted/coordinator logical slider position.
-        if (t.State == CoordinatorState.Calibrating)
+        if (t.State == CoordinatorState.Calibrating || !hasMeasuredBaseline)
         {
             _wasCalibrating = true;
             if (Math.Abs(SliderValue - RateControl.UiSliderFullSpeed) > 0.5)
@@ -680,10 +711,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ActualRateNumber = FormattingHelpers.FormatHashRateValue(t.TotalActualHps);
         ActualRateUnit = FormattingHelpers.FormatHashRateUnit(t.TotalActualHps);
 
-        double logicalSlider = t.State == CoordinatorState.Calibrating
+        double logicalSlider = (t.State == CoordinatorState.Calibrating || !hasMeasuredBaseline)
             ? 1.0
             : RateControl.UiSliderToLogical(SliderValue);
         UpdateTargetCapDisplay(logicalSlider, t);
+        UpdateTraySpeedupHint(t);
 
         double rawProgressPercent;
         if (t.State == CoordinatorState.Calibrating)
@@ -823,12 +855,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private void UpdateTargetCapDisplay(double logicalSlider, CoordinatorTelemetry t)
     {
-        if (t.State == CoordinatorState.Calibrating)
-        {
-            TargetCapText = "100%";
-            return;
-        }
-
         if (t.State == CoordinatorState.Stopping)
         {
             TargetCapText = Loc.Stopping;
@@ -836,32 +862,80 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
 
         bool hasMeasuredBaseline = t.AllEnabledFullyCalibrated && t.TotalBaselineHps > 0.0;
-
-        if (logicalSlider >= 1.0)
+        if (t.State == CoordinatorState.Calibrating || !hasMeasuredBaseline || logicalSlider >= 1.0)
         {
-            TargetCapText = hasMeasuredBaseline
-                ? $"{Loc.FullSpeed} · {FormattingHelpers.FormatHashRateCompact(t.TotalBaselineHps)}"
-                : "100%";
+            TargetCapText = Loc.FullSpeed;
             return;
         }
 
         int pct = (int)Math.Clamp(Math.Round(logicalSlider * 100.0, MidpointRounding.AwayFromZero), 1.0, 99.0);
-        if (hasMeasuredBaseline)
+        TargetCapText = $"{pct}%";
+    }
+
+    private void UpdateTraySpeedupHint(CoordinatorTelemetry t)
+    {
+        bool activeFullSpeed = t.IsFullSpeed &&
+                               t.State is CoordinatorState.Running or CoordinatorState.Calibrating &&
+                               t.TotalActualHps > 0.0;
+
+        if (activeFullSpeed)
         {
-            RateDirective dir = RateControl.FromSlider(logicalSlider, t.TotalBaselineHps);
-            TargetCapText = $"{pct}% · {FormattingHelpers.FormatHashRateCompact(dir.TargetHashesPerSecond)}";
+            if (_mainWindowInTray)
+            {
+                _trayFullSpeedEmaHps = _trayFullSpeedEmaHps <= 0.0
+                    ? t.TotalActualHps
+                    : (_trayFullSpeedEmaHps * 0.6) + (t.TotalActualHps * 0.4);
+                _persistedTrayFullSpeedHps = _trayFullSpeedEmaHps;
+
+                long nowTick = Environment.TickCount64;
+                if (nowTick - _lastTraySpeedPersistTick >= 15_000)
+                {
+                    _lastTraySpeedPersistTick = nowTick;
+                    double toSave = _persistedTrayFullSpeedHps;
+                    _stateStore.Update(s => s.TrayFullSpeedHps = toSave);
+                }
+            }
+            else
+            {
+                _fgFullSpeedEmaHps = _fgFullSpeedEmaHps <= 0.0
+                    ? t.TotalActualHps
+                    : (_fgFullSpeedEmaHps * 0.6) + (t.TotalActualHps * 0.4);
+            }
         }
-        else
+        else if (t.State == CoordinatorState.Idle)
         {
-            TargetCapText = $"{pct}%";
+            _fgFullSpeedEmaHps = 0.0;
         }
+
+        if (t.TotalBaselineHps > 0.0 && _persistedTrayFullSpeedHps > t.TotalBaselineHps * 1.35)
+        {
+            // Reset stale tray sample if GPU selection changed significantly
+            _persistedTrayFullSpeedHps = 0.0;
+            _trayFullSpeedEmaHps = 0.0;
+        }
+
+        double refTrayHps = Math.Max(_persistedTrayFullSpeedHps, t.TotalBaselineHps);
+        double fgHps = _fgFullSpeedEmaHps > 0.0 ? _fgFullSpeedEmaHps : (activeFullSpeed && !_mainWindowInTray ? t.TotalActualHps : 0.0);
+
+        if (fgHps > 0.0 && refTrayHps > fgHps)
+        {
+            int gainPct = (int)Math.Round(((refTrayHps - fgHps) / fgHps) * 100.0, MidpointRounding.AwayFromZero);
+            if (gainPct is >= 1 and <= 40)
+            {
+                TraySpeedupHintText = Loc.FormatTraySpeedupMeasured(gainPct);
+                return;
+            }
+        }
+
+        TraySpeedupHintText = Loc.TraySpeedupGenericHint;
     }
 
     private void UpdateActionPermissions(CoordinatorTelemetry t)
     {
         bool busyCal = t.State is CoordinatorState.Calibrating or CoordinatorState.Stopping;
+        bool hasMeasuredBaseline = t.AllEnabledFullyCalibrated && t.TotalBaselineHps > 0.0;
         CanEditTarget = t.State is CoordinatorState.Idle or CoordinatorState.Faulted;
-        IsSliderEnabled = HasHardwareGpu && !busyCal;
+        IsSliderEnabled = HasHardwareGpu && !busyCal && hasMeasuredBaseline;
 
         bool hasValidActiveTarget = KeyIdPattern.TryParse(ActiveTargetSuffix, out _, out _);
 

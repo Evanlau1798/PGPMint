@@ -54,6 +54,8 @@
     "TrayMiniHud": "Floating HUD",
     "ProbabilityPrefix": "Prob",
     "SingleHashProbabilityFormat": "Single-hash hit probability: {0}",
+    "TraySpeedupMeasuredFormat": "Close window to tray for ~{0}% faster speed",
+    "TraySpeedupGenericHint": "Close window to tray to free UI GPU resources for higher speed",
     "NoResults": "No results",
     "NoGpuError": "No hardware GPU detected",
     "HitNotificationTitle": "PGPMint Key Matched",

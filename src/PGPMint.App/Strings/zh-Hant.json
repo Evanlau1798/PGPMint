@@ -54,6 +54,8 @@
     "TrayMiniHud": "浮動微窗",
     "ProbabilityPrefix": "機率",
     "SingleHashProbabilityFormat": "單次命中機率：{0}",
+    "TraySpeedupMeasuredFormat": "關閉此視窗至系統匣可再加速 ~{0}% 速度",
+    "TraySpeedupGenericHint": "關閉此視窗至系統匣可釋放介面顯卡資源以提升速度",
     "NoResults": "尚無結果",
     "NoGpuError": "未偵測到實體顯示卡",
     "HitNotificationTitle": "PGPMint 命中金鑰",

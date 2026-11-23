@@ -95,7 +95,7 @@ public static class FormattingHelpers
             mantissa = 1.0;
         }
 
-        return string.Format(CultureInfo.InvariantCulture, "{0:F2} \u00D7 10{1} H", mantissa, ToSuperscript(exp));
+        return string.Format(CultureInfo.InvariantCulture, "{0:F2} \u00D7 10^{1} H", mantissa, exp);
     }
 
     public static string FormatCheckedCountExact(ulong count) =>
@@ -139,7 +139,7 @@ public static class FormattingHelpers
             mantissa = 1.0;
         }
 
-        return string.Format(CultureInfo.InvariantCulture, "{0:F2}\u00D710{1}%", mantissa, ToSuperscript(exp));
+        return string.Format(CultureInfo.InvariantCulture, "{0:F2}\u00D710^{1}%", mantissa, exp);
     }
 
     public static string FormatLabeledProbability(double probability, string labelPrefix)

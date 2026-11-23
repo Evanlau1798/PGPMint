@@ -19,7 +19,7 @@ public sealed partial class SettingsWindow : Window
     private const int LogicalDefaultWidth = 520;
     private const int LogicalDefaultHeight = 560;
     private const int LogicalMinWidth = 380;
-    private const int LogicalMinHeight = 460;
+    private const int LogicalMinHeight = 420;
     private const double TwoColumnBreakpointDip = 460.0;
 
     private readonly IntPtr _hwnd;
@@ -27,6 +27,8 @@ public sealed partial class SettingsWindow : Window
     private readonly WindowMinSizeHelper _minSizeHelper;
     private bool _isClosed;
     private bool _syncingLangCombo;
+    private bool _centeredOnce;
+    private int _lastDesiredLogicalHeight;
     private int _currentPrefColumns;
 
     public MainViewModel ViewModel { get; }
@@ -80,10 +82,37 @@ public sealed partial class SettingsWindow : Window
             SendMessageW(_hwnd, WmSetIcon, (IntPtr)1, _trayIcon.AppIconHandle);
         }
 
-        double scale = GetDpiScale();
-        AppWindow.Resize(new SizeInt32(
-            (int)Math.Round(LogicalDefaultWidth * scale),
-            (int)Math.Round(LogicalDefaultHeight * scale)));
+        WindowMinSizeHelper.CenterAndResizeOnScreen(
+            AppWindow,
+            _hwnd,
+            LogicalDefaultWidth,
+            LogicalDefaultHeight);
+    }
+
+    private void OnSettingsContentSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (_isClosed || e.NewSize.Height <= 0)
+        {
+            return;
+        }
+
+        // Expand vertically to fit all settings content without scrolling, clamped to monitor work area.
+        int desiredLogicalHeight = (int)Math.Ceiling(e.NewSize.Height) + 38 + 16;
+        if (_centeredOnce && desiredLogicalHeight == _lastDesiredLogicalHeight)
+        {
+            return;
+        }
+
+        bool centerNow = !_centeredOnce;
+        _centeredOnce = true;
+        _lastDesiredLogicalHeight = desiredLogicalHeight;
+
+        WindowMinSizeHelper.ResizeHeightClampedToWorkArea(
+            AppWindow,
+            _hwnd,
+            desiredLogicalHeight,
+            LogicalMinHeight,
+            centerOnMonitor: centerNow);
     }
 
     private double GetDpiScale()

@@ -14,13 +14,13 @@ public static class RateControl
     public const long FullSpeedSentinel = 1_000_000_000_000L; // 10^12
 
     // Two-stage UI slider layout:
-    //   10..990    -> Capped 1%..99% (10 units per 1%)
-    //   991..1074  -> Detent buffer zone (holds at 99%, snaps back to 990 on release)
-    //   1075..1080 -> Full Speed (uncapped 100%, enables low-frequency dynamic median tracking)
+    //   10..990     -> Capped 1%..99% (10 units per 1%)
+    //   991..1099   -> Resistance detent zone (thumb & value stay pinned at 990 / 99%)
+    //   1100..1120  -> Full Speed (snaps thumb to 1120 / Full Speed, enables dynamic median tracking)
     public const double UiSliderMin = 10.0;
     public const double UiSliderCappedMax = 990.0;
-    public const double UiSliderFullSpeedThreshold = 1075.0;
-    public const double UiSliderFullSpeed = 1080.0;
+    public const double UiSliderFullSpeedThreshold = 1100.0;
+    public const double UiSliderFullSpeed = 1120.0;
 
     public static double UiSliderToLogical(double uiValue)
     {

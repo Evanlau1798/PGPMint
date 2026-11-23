@@ -26,15 +26,17 @@ public class CoordinatorCalibrationTests
         RateDirective dirFull = RateControl.FromSlider(1.0, 22_000_000_000.0);
         Assert.Equal(RateMode.FullSpeed, dirFull.Mode);
 
-        // Two-stage UI slider (10..990 = 1%..99%, 991..1074 = detent buffer holding 99%, 1075..1080 = FullSpeed)
+        // Two-stage UI slider (10..990 = 1%..99%, 991..1099 = resistance detent holding 990/99%, 1100..1120 = FullSpeed 1120)
         Assert.Equal(0.01, RateControl.UiSliderToLogical(0.0), 6);
         Assert.Equal(0.01, RateControl.UiSliderToLogical(10.0), 6);
         Assert.Equal(0.50, RateControl.UiSliderToLogical(500.0), 6);
         Assert.Equal(0.99, RateControl.UiSliderToLogical(990.0), 6);
-        Assert.Equal(0.99, RateControl.UiSliderToLogical(1040.0), 6); // inside detent buffer
-        Assert.Equal(990.0, RateControl.SnapUiSliderOnRelease(1040.0)); // snaps back to 99%
-        Assert.Equal(1.0, RateControl.UiSliderToLogical(1080.0), 6);
-        Assert.Equal(1080.0, RateControl.LogicalToUiSlider(1.0));
+        Assert.Equal(0.99, RateControl.UiSliderToLogical(1060.0), 6); // inside resistance detent buffer
+        Assert.Equal(990.0, RateControl.SnapUiSliderOnRelease(1060.0)); // stays pinned at 99% (990)
+        Assert.Equal(1.0, RateControl.UiSliderToLogical(1100.0), 6);
+        Assert.Equal(1120.0, RateControl.SnapUiSliderOnRelease(1105.0)); // snaps to FullSpeed (1120)
+        Assert.Equal(1.0, RateControl.UiSliderToLogical(1120.0), 6);
+        Assert.Equal(1120.0, RateControl.LogicalToUiSlider(1.0));
         Assert.Equal(990.0, RateControl.LogicalToUiSlider(0.99));
         Assert.Equal(10.0, RateControl.LogicalToUiSlider(0.01));
         Assert.Equal(10.0, RateControl.LogicalToUiSlider(0.0));
@@ -298,8 +300,9 @@ public class CoordinatorCalibrationTests
             // Partial interrupted calibration must NOT be saved as complete
             Assert.True(coordinator.NeedsFullCalibration());
 
-            // Moving slider while stopped updates preference without starting search
+            // Slider cannot be adjusted before 30s full calibration completes
             coordinator.SetSliderPosition(0.6);
+            Assert.Equal(1.0, coordinator.SliderPosition, 6);
             await Task.Delay(60);
             Assert.Equal(CoordinatorState.Idle, coordinator.CurrentState);
 

@@ -151,6 +151,12 @@ public sealed class MultiGpuCoordinator : IDisposable
             {
                 _enabledDevices[_devices[0].DeviceKey] = true;
             }
+
+            if (NeedsFullCalibrationLocked())
+            {
+                _sliderPosition = 1.0;
+                _lastPositiveSliderPosition = 1.0;
+            }
         }
 
         try
@@ -280,8 +286,8 @@ public sealed class MultiGpuCoordinator : IDisposable
         double clamped = Math.Clamp(position, 0.01, 1.0);
         lock (_lifecycleLock)
         {
-            // Slider is locked at full speed during initial 30s baseline measurement.
-            if (_state is CoordinatorState.Calibrating or CoordinatorState.Stopping)
+            // Slider cannot be adjusted before or during the initial 30s baseline measurement.
+            if (_state is CoordinatorState.Calibrating or CoordinatorState.Stopping || NeedsFullCalibrationLocked())
             {
                 return;
             }
