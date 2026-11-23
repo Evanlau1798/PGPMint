@@ -10,21 +10,72 @@ public class OpenPgpExportGpgTests
     private const uint Rfc8032Timestamp = 1700000000u;
     private const string ExpectedFingerprint = "7629413EDCE0D2380410F05599933B470FD7C498";
 
-    private static string? FindGpgExecutable()
+    private static string? FindExecutableOnPath(string fileName)
     {
-        string[] candidates =
+        string? pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(pathEnv))
         {
-            @"C:\Program Files\Git\usr\bin\gpg.exe",
-            @"C:\Program Files (x86)\GnuPG\bin\gpg.exe",
-            @"C:\Program Files\GnuPG\bin\gpg.exe"
-        };
-        return candidates.FirstOrDefault(File.Exists);
+            return null;
+        }
+
+        foreach (string dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            try
+            {
+                string cleaned = dir.Trim().Trim('"');
+                if (cleaned.Length == 0)
+                {
+                    continue;
+                }
+
+                string full = Path.Combine(cleaned, fileName);
+                if (File.Exists(full))
+                {
+                    return Path.GetFullPath(full);
+                }
+            }
+            catch
+            {
+                // Ignore malformed PATH segments
+            }
+        }
+
+        return null;
     }
 
     private static string? FindGitExecutable()
     {
-        string[] candidates = { @"C:\Program Files\Git\cmd\git.exe" };
-        return candidates.FirstOrDefault(File.Exists);
+        string[] candidates =
+        {
+            @"C:\Program Files\Git\cmd\git.exe",
+            @"C:\Program Files (Arm)\Git\cmd\git.exe",
+            @"C:\Program Files (x86)\Git\cmd\git.exe"
+        };
+        return candidates.FirstOrDefault(File.Exists) ?? FindExecutableOnPath("git.exe");
+    }
+
+    private static string? FindGpgExecutable()
+    {
+        var candidates = new List<string>
+        {
+            @"C:\Program Files\Git\usr\bin\gpg.exe",
+            @"C:\Program Files (Arm)\Git\usr\bin\gpg.exe",
+            @"C:\Program Files (x86)\Git\usr\bin\gpg.exe",
+            @"C:\Program Files (x86)\GnuPG\bin\gpg.exe",
+            @"C:\Program Files\GnuPG\bin\gpg.exe"
+        };
+
+        string? gitPath = FindGitExecutable();
+        if (!string.IsNullOrWhiteSpace(gitPath))
+        {
+            string? gitRoot = Directory.GetParent(Path.GetDirectoryName(gitPath) ?? string.Empty)?.FullName;
+            if (!string.IsNullOrWhiteSpace(gitRoot))
+            {
+                candidates.Insert(0, Path.Combine(gitRoot, "usr", "bin", "gpg.exe"));
+            }
+        }
+
+        return candidates.FirstOrDefault(File.Exists) ?? FindExecutableOnPath("gpg.exe");
     }
 
     [Theory]
@@ -67,9 +118,7 @@ public class OpenPgpExportGpgTests
             string keyFile = Path.Combine(tempRoot, "secret.asc");
             File.WriteAllText(keyFile, exported.PrivateKeyArmor);
 
-            string gpgHomeEnv = gpgPath!.Contains(@"\Git\usr\bin\", StringComparison.OrdinalIgnoreCase)
-                ? ToMsysPath(gpgHome)
-                : gpgHome;
+            string gpgHomeEnv = FormatGpgHomeEnv(gpgPath!, gpgHome);
             var env = new Dictionary<string, string> { ["GNUPGHOME"] = gpgHomeEnv };
 
             // 1. Import secret key into isolated GNUPGHOME
@@ -173,9 +222,7 @@ public class OpenPgpExportGpgTests
         {
             string keyFile = Path.Combine(tempRoot, "zero.asc");
             File.WriteAllText(keyFile, exported.PrivateKeyArmor);
-            string gpgHomeEnv = gpgPath!.Contains(@"\Git\usr\bin\", StringComparison.OrdinalIgnoreCase)
-                ? ToMsysPath(gpgHome)
-                : gpgHome;
+            string gpgHomeEnv = FormatGpgHomeEnv(gpgPath!, gpgHome);
             var env = new Dictionary<string, string> { ["GNUPGHOME"] = gpgHomeEnv };
 
             var importResult = RunProcess(gpgPath!, new[] { "--batch", "--yes", "--import", keyFile }, tempRoot, env);
@@ -214,12 +261,18 @@ public class OpenPgpExportGpgTests
         return full.Replace('\\', '/');
     }
 
+    private static string FormatGpgHomeEnv(string gpgPath, string gpgHome)
+    {
+        string normalized = Path.GetFullPath(gpgPath);
+        return normalized.Contains(@"\usr\bin\", StringComparison.OrdinalIgnoreCase)
+            ? ToMsysPath(gpgHome)
+            : gpgHome;
+    }
+
     private static void TryKillGpgAgent(string gpgPath, string workDir, string gpgHome)
     {
         string gpgconf = Path.Combine(Path.GetDirectoryName(gpgPath)!, "gpgconf.exe");
-        string gpgHomeEnv = gpgPath.Contains(@"\Git\usr\bin\", StringComparison.OrdinalIgnoreCase)
-            ? ToMsysPath(gpgHome)
-            : gpgHome;
+        string gpgHomeEnv = FormatGpgHomeEnv(gpgPath, gpgHome);
         if (File.Exists(gpgconf))
         {
             try
