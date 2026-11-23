@@ -157,6 +157,10 @@
                                       IsOn="{x:Bind ViewModel.MinimizeToTrayOnClose, Mode=TwoWay}"
                                       OnContent="" OffContent="" MinWidth="0" />
 
+                        <ToggleSwitch Header="{x:Bind ViewModel.Loc.SettingShowMiniHud, Mode=OneWay}"
+                                      IsOn="{x:Bind ViewModel.ShowMiniHudInTray, Mode=TwoWay}"
+                                      OnContent="" OffContent="" MinWidth="0" />
+
                         <ToggleSwitch Header="{x:Bind ViewModel.Loc.SettingStartWithWindows, Mode=OneWay}"
                                       IsOn="{x:Bind ViewModel.StartWithWindows, Mode=TwoWay}"
                                       OnContent="" OffContent="" MinWidth="0" />

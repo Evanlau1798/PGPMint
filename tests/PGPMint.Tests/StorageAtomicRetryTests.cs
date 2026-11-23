@@ -86,6 +86,10 @@ public class StorageAtomicRetryTests
             state.TargetInput = "1145141919810";
             state.HasCompletedSetup = true;
             state.SliderPosition = 0.37;
+            Assert.True(state.ShowMiniHudInTray);
+            state.ShowMiniHudInTray = false;
+            state.MiniHudX = 1420;
+            state.MiniHudY = 980;
             state.Calibrations["GPU-0"] = new CalibrationRecord(
                 "GPU-0", "RTX 3080", "32.0.16.1088", "d3d11-sha1-four-v1",
                 22_351_000_000.0, 21_100_000_000.0, true, DateTimeOffset.UtcNow);
@@ -95,6 +99,9 @@ public class StorageAtomicRetryTests
             Assert.Equal(42_000_000_000UL, reloaded.TotalCheckedCandidates);
             Assert.Equal("1145141919810", reloaded.TargetInput);
             Assert.Equal(0.37, reloaded.SliderPosition, 6);
+            Assert.False(reloaded.ShowMiniHudInTray);
+            Assert.Equal(1420, reloaded.MiniHudX);
+            Assert.Equal(980, reloaded.MiniHudY);
             Assert.True(reloaded.Calibrations.ContainsKey("GPU-0"));
             Assert.Equal(22_351_000_000.0, reloaded.Calibrations["GPU-0"].PeakHashesPerSecond);
         }

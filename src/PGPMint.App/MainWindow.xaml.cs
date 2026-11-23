@@ -123,10 +123,12 @@ public sealed partial class MainWindow : Window
     public void HideToTray()
     {
         AppWindow.Hide();
+        ViewModel.SetMainWindowInTray(true);
     }
 
     public void ShowAndActivate()
     {
+        ViewModel.SetMainWindowInTray(false);
         AppWindow.Show();
         ShowWindow(_hwnd, SwRestore);
         SetForegroundWindow(_hwnd);
@@ -149,7 +151,7 @@ public sealed partial class MainWindow : Window
         if (ViewModel.MinimizeToTrayOnClose && !ViewModel.ShowSetupWizard)
         {
             args.Cancel = true;
-            AppWindow.Hide();
+            HideToTray();
         }
         else
         {

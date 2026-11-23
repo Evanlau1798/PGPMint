@@ -18,6 +18,7 @@ public partial class App : Application
     private MultiGpuCoordinator? _coordinator;
     private PowerKeepAliveService? _powerKeepAlive;
     private TrayIconService? _trayIcon;
+    private MiniHudService? _miniHud;
     private MainViewModel? _viewModel;
     private MainWindow? _mainWindow;
     private SettingsWindow? _settingsWindow;
@@ -52,6 +53,7 @@ public partial class App : Application
         _coordinator = new MultiGpuCoordinator(new HybridGpuBackend(), _stateStore, _vaultStore);
         _powerKeepAlive = new PowerKeepAliveService();
         _trayIcon = new TrayIconService();
+        _miniHud = new MiniHudService();
         var localization = new LocalizationService();
 
         _viewModel = new MainViewModel(
@@ -61,6 +63,7 @@ public partial class App : Application
             localization,
             _powerKeepAlive,
             _trayIcon,
+            _miniHud,
             dispatcher);
 
         _mainWindow = new MainWindow(_viewModel, _trayIcon, RequestQuitAsync, OpenOrFocusSettingsWindow);
@@ -80,7 +83,12 @@ public partial class App : Application
                 _viewModel?.ReportError(ex.Message);
             }
         });
+        _trayIcon.ToggleMiniHudRequested += (_, _) => dispatcher.TryEnqueue(() => _viewModel?.ToggleMiniHudInTray());
         _trayIcon.QuitRequested += (_, _) => dispatcher.TryEnqueue(async () => await RequestQuitAsync());
+
+        _miniHud.OpenRequested += (_, _) => dispatcher.TryEnqueue(() => _mainWindow?.ShowAndActivate());
+        _miniHud.ContextMenuRequested += (_, _) => dispatcher.TryEnqueue(() => _trayIcon?.ShowContextMenuAtCursor());
+        _miniHud.PositionCommitted += (_, pos) => dispatcher.TryEnqueue(() => _viewModel?.SaveMiniHudPosition(pos.X, pos.Y));
 
         _singleInstance.ActivationRequested += (_, _) => dispatcher.TryEnqueue(() => _mainWindow?.ShowAndActivate());
         _singleInstance.StartListeningForActivations();
@@ -172,6 +180,7 @@ public partial class App : Application
             try { _settingsWindow?.Close(); } catch { }
             _settingsWindow = null;
             _mainWindow?.ForceClose();
+            _miniHud?.Dispose();
             _trayIcon?.Dispose();
             Exit();
         }

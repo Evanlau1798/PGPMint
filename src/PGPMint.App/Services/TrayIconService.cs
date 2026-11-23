@@ -23,16 +23,21 @@ public sealed class TrayIconService : IDisposable
     private const uint NifIcon = 0x00000002;
     private const uint NifTip = 0x00000004;
     private const uint NifInfo = 0x00000010;
+    private const uint NifShowTip = 0x00000080;
     private const uint NiifInfo = 0x00000001;
 
     private const uint MfString = 0x00000000;
+    private const uint MfGrayed = 0x00000001;
+    private const uint MfDisabled = 0x00000002;
+    private const uint MfChecked = 0x00000008;
     private const uint MfSeparator = 0x00000800;
     private const uint TpmRightButton = 0x0002;
     private const uint TpmBottomAlign = 0x0020;
 
     private const uint CmdOpen = 1001;
     private const uint CmdToggle = 1002;
-    private const uint CmdQuit = 1003;
+    private const uint CmdToggleMiniHud = 1003;
+    private const uint CmdQuit = 1004;
 
     private readonly string _className = "PGPMintTrayHost_" + Guid.NewGuid().ToString("N")[..8];
     private readonly WndProcDelegate _wndProc;
@@ -40,15 +45,22 @@ public sealed class TrayIconService : IDisposable
     private IntPtr _hwnd;
     private IntPtr _hIcon;
     private bool _iconAdded;
+    private bool _isMenuOpen;
     private bool _disposed;
 
     private string _tooltip = "PGPMint";
+    private string _summaryLine1 = string.Empty;
+    private string _summaryLine2 = string.Empty;
     private string _openLabel = "Open";
     private string _toggleLabel = "Start";
+    private bool _canToggleSearch = true;
+    private string _miniHudLabel = "Floating HUD";
+    private bool _miniHudChecked = true;
     private string _quitLabel = "Quit";
 
     public event EventHandler? OpenRequested;
     public event EventHandler? ToggleSearchRequested;
+    public event EventHandler? ToggleMiniHudRequested;
     public event EventHandler? QuitRequested;
 
     public IntPtr AppIconHandle => _hIcon;
@@ -62,11 +74,24 @@ public sealed class TrayIconService : IDisposable
         AddTrayIcon();
     }
 
-    public void UpdateMenuLabels(string openLabel, string toggleLabel, string quitLabel)
+    public void UpdateMenuState(
+        string openLabel,
+        string toggleLabel,
+        bool canToggleSearch,
+        string miniHudLabel,
+        bool miniHudChecked,
+        string quitLabel,
+        string summaryLine1,
+        string summaryLine2)
     {
         _openLabel = openLabel;
         _toggleLabel = toggleLabel;
+        _canToggleSearch = canToggleSearch;
+        _miniHudLabel = miniHudLabel;
+        _miniHudChecked = miniHudChecked;
         _quitLabel = quitLabel;
+        _summaryLine1 = summaryLine1;
+        _summaryLine2 = summaryLine2;
     }
 
     public void UpdateTooltip(string tooltip)
@@ -89,7 +114,7 @@ public sealed class TrayIconService : IDisposable
 
         _tooltip = safe;
         var data = CreateBaseNotifyData();
-        data.uFlags = NifTip;
+        data.uFlags = NifTip | NifShowTip;
         data.szTip = _tooltip;
         Shell_NotifyIconW(NimModify, ref data);
     }
@@ -102,11 +127,22 @@ public sealed class TrayIconService : IDisposable
         }
 
         var data = CreateBaseNotifyData();
-        data.uFlags = NifInfo;
+        data.uFlags = NifInfo | NifTip | NifShowTip;
         data.dwInfoFlags = NiifInfo;
+        data.szTip = _tooltip;
         data.szInfoTitle = title.Length > 63 ? title[..63] : title;
         data.szInfo = message.Length > 255 ? message[..255] : message;
         Shell_NotifyIconW(NimModify, ref data);
+    }
+
+    public void ShowContextMenuAtCursor()
+    {
+        if (_disposed || _hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        ShowContextMenu();
     }
 
     private void CreateMessageWindow()
@@ -141,7 +177,7 @@ public sealed class TrayIconService : IDisposable
         }
 
         var data = CreateBaseNotifyData();
-        data.uFlags = NifMessage | NifIcon | NifTip;
+        data.uFlags = NifMessage | NifIcon | NifTip | NifShowTip;
         data.uCallbackMessage = WmTrayIcon;
         data.hIcon = _hIcon;
         data.szTip = _tooltip;
@@ -181,8 +217,6 @@ public sealed class TrayIconService : IDisposable
                 return IntPtr.Zero;
             }
 
-            // NOTIFYICON_VERSION_4 emits WM_CONTEXTMENU for right-click and keyboard Shift+F10.
-            // Listening to WM_RBUTTONUP in addition would open the popup menu twice.
             if (mouseMsg == WmContextMenu)
             {
                 ShowContextMenu();
@@ -200,6 +234,9 @@ public sealed class TrayIconService : IDisposable
                 case CmdToggle:
                     ToggleSearchRequested?.Invoke(this, EventArgs.Empty);
                     break;
+                case CmdToggleMiniHud:
+                    ToggleMiniHudRequested?.Invoke(this, EventArgs.Empty);
+                    break;
                 case CmdQuit:
                     QuitRequested?.Invoke(this, EventArgs.Empty);
                     break;
@@ -212,16 +249,39 @@ public sealed class TrayIconService : IDisposable
 
     private void ShowContextMenu()
     {
+        if (_disposed || _hwnd == IntPtr.Zero || _isMenuOpen)
+        {
+            return;
+        }
+
         IntPtr menu = CreatePopupMenu();
         if (menu == IntPtr.Zero)
         {
             return;
         }
 
+        _isMenuOpen = true;
         try
         {
+            bool hasHeader = false;
+            if (!string.IsNullOrWhiteSpace(_summaryLine1))
+            {
+                AppendMenuW(menu, MfString | MfGrayed | MfDisabled, 0, _summaryLine1);
+                hasHeader = true;
+            }
+            if (!string.IsNullOrWhiteSpace(_summaryLine2))
+            {
+                AppendMenuW(menu, MfString | MfGrayed | MfDisabled, 0, _summaryLine2);
+                hasHeader = true;
+            }
+            if (hasHeader)
+            {
+                AppendMenuW(menu, MfSeparator, 0, null);
+            }
+
             AppendMenuW(menu, MfString, CmdOpen, _openLabel);
-            AppendMenuW(menu, MfString, CmdToggle, _toggleLabel);
+            AppendMenuW(menu, MfString | (_canToggleSearch ? 0u : (MfGrayed | MfDisabled)), CmdToggle, _toggleLabel);
+            AppendMenuW(menu, MfString | (_miniHudChecked ? MfChecked : 0u), CmdToggleMiniHud, _miniHudLabel);
             AppendMenuW(menu, MfSeparator, 0, null);
             AppendMenuW(menu, MfString, CmdQuit, _quitLabel);
             SetMenuDefaultItem(menu, CmdOpen, 0);
@@ -229,10 +289,14 @@ public sealed class TrayIconService : IDisposable
             GetCursorPos(out POINT pt);
             SetForegroundWindow(_hwnd);
             TrackPopupMenuEx(menu, TpmRightButton | TpmBottomAlign, pt.X, pt.Y, _hwnd, IntPtr.Zero);
-            PostMessageW(_hwnd, WmNull, IntPtr.Zero, IntPtr.Zero);
+            if (_hwnd != IntPtr.Zero)
+            {
+                PostMessageW(_hwnd, WmNull, IntPtr.Zero, IntPtr.Zero);
+            }
         }
         finally
         {
+            _isMenuOpen = false;
             DestroyMenu(menu);
         }
     }
@@ -242,7 +306,6 @@ public sealed class TrayIconService : IDisposable
         const int size = 32;
         uint[] pixels = new uint[size * size];
 
-        // Crisp geometric emerald-mint rounded hex badge with key-diamond cutout (BGRA premultiplied)
         const double center = (size - 1) / 2.0;
         for (int y = 0; y < size; y++)
         {
@@ -250,7 +313,6 @@ public sealed class TrayIconService : IDisposable
             {
                 double dx = Math.Abs(x - center);
                 double dy = Math.Abs(y - center);
-                // Rounded octagon / coin shape
                 double d = Math.Max(Math.Max(dx, dy), (dx + dy) * 0.72);
                 double inner = dx + dy;
 
@@ -261,19 +323,19 @@ public sealed class TrayIconService : IDisposable
                 }
                 else if (d > 12.6)
                 {
-                    argb = 0xFF0E9F6Eu; // outer mint rim
+                    argb = 0xFF0E9F6Eu;
                 }
                 else if (inner < 5.2 && !(dx < 2.2 && dy < 2.2))
                 {
-                    argb = 0xFF34D399u; // bright mint diamond
+                    argb = 0xFF34D399u;
                 }
                 else if (dx < 2.2 && dy < 2.2)
                 {
-                    argb = 0xFF0B1F1Au; // deep core
+                    argb = 0xFF0B1F1Au;
                 }
                 else
                 {
-                    argb = 0xFF102A23u; // dark slate-mint fill
+                    argb = 0xFF102A23u;
                 }
 
                 pixels[y * size + x] = argb;
@@ -284,16 +346,16 @@ public sealed class TrayIconService : IDisposable
         {
             biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>(),
             biWidth = size,
-            biHeight = -size, // top-down DIB
+            biHeight = -size,
             biPlanes = 1,
             biBitCount = 32,
-            biCompression = 0 // BI_RGB
+            biCompression = 0
         };
 
         IntPtr hColor = CreateDIBSection(IntPtr.Zero, ref bmi, 0, out IntPtr bitsPtr, IntPtr.Zero, 0);
         if (hColor == IntPtr.Zero)
         {
-            return LoadIconW(IntPtr.Zero, (IntPtr)32512); // IDI_APPLICATION fallback
+            return LoadIconW(IntPtr.Zero, (IntPtr)32512);
         }
 
         IntPtr hMask = CreateBitmap(size, size, 1, 1, IntPtr.Zero);

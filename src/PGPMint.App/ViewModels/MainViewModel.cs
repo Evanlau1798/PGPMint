@@ -54,6 +54,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private readonly DpapiVaultStore _vaultStore;
     private readonly PowerKeepAliveService _powerKeepAlive;
     private readonly TrayIconService _trayIcon;
+    private readonly MiniHudService _miniHud;
     private readonly DispatcherQueue _dispatcher;
 
     private readonly Timer _sliderDebounceTimer;
@@ -126,6 +127,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     [ObservableProperty] private bool _autoPauseOnHit = true;
     [ObservableProperty] private bool _minimizeToTrayOnClose = true;
+    [ObservableProperty] private bool _showMiniHudInTray = true;
     [ObservableProperty] private bool _startWithWindows;
     [ObservableProperty] private string _selectedLanguage = "auto";
     [ObservableProperty] private string _transientNotice = string.Empty;
@@ -137,6 +139,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         LocalizationService localization,
         PowerKeepAliveService powerKeepAlive,
         TrayIconService trayIcon,
+        MiniHudService miniHud,
         DispatcherQueue dispatcher)
     {
         _coordinator = coordinator;
@@ -145,6 +148,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         Loc = localization;
         _powerKeepAlive = powerKeepAlive;
         _trayIcon = trayIcon;
+        _miniHud = miniHud;
         _dispatcher = dispatcher;
 
         _sliderDebounceTimer = new Timer(OnSliderDebounceTick, null, Timeout.Infinite, Timeout.Infinite);
@@ -165,6 +169,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         SelectedLanguage = persisted.Language;
         AutoPauseOnHit = persisted.AutoPauseOnHit;
         MinimizeToTrayOnClose = persisted.MinimizeToTrayOnClose;
+        ShowMiniHudInTray = persisted.ShowMiniHudInTray;
         StartWithWindows = StartupRegistryService.IsEnabled();
 
         _coordinator.Initialize();
@@ -201,10 +206,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ShowSetupWizard = !(persisted.HasCompletedSetup && hasSavedValidTarget);
         SetupStep = 1;
 
+        _miniHud.SetSetupActive(ShowSetupWizard);
         _isInitialized = true;
 
         ValidateDraftTarget();
         ApplyTelemetry(_coordinator.LatestTelemetry);
+        _miniHud.Configure(persisted.ShowMiniHudInTray, persisted.MiniHudX, persisted.MiniHudY);
 
         if (!HasHardwareGpu)
         {
@@ -282,6 +289,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ActiveFormattedPreview = parsed.FormattedDisplay;
         DraftTargetInput = parsed.Suffix;
         ShowSetupWizard = false;
+        _miniHud.SetSetupActive(false);
 
         _stateStore.Update(s =>
         {
@@ -316,7 +324,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _stateStore.Update(s => s.TargetInput = parsed.Suffix);
         _coordinator.SetTargetPattern(parsed);
         ValidateDraftTarget();
-        UpdateActionPermissions();
+        ApplyTelemetry(_coordinator.LatestTelemetry);
         FlashNotice(Loc.Applied);
         return true;
     }
@@ -495,6 +503,35 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             _stateStore.Update(s => s.MinimizeToTrayOnClose = value);
         }
+    }
+
+    partial void OnShowMiniHudInTrayChanged(bool value)
+    {
+        if (_isInitialized)
+        {
+            _miniHud.SetEnabledByUser(value);
+            _stateStore.Update(s => s.ShowMiniHudInTray = value);
+            UpdateTrayState(_coordinator.LatestTelemetry);
+        }
+    }
+
+    public void ToggleMiniHudInTray()
+    {
+        ShowMiniHudInTray = !ShowMiniHudInTray;
+    }
+
+    public void SetMainWindowInTray(bool inTray)
+    {
+        _miniHud.SetMainWindowInTray(inTray);
+    }
+
+    public void SaveMiniHudPosition(int x, int y)
+    {
+        _stateStore.Update(s =>
+        {
+            s.MiniHudX = x;
+            s.MiniHudY = y;
+        });
     }
 
     partial void OnStartWithWindowsChanged(bool value)
@@ -781,18 +818,96 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             _ => Loc.Start
         };
 
-        _trayIcon.UpdateMenuLabels(Loc.Open, toggleLabel, Loc.Quit);
+        string rateCompact = FormattingHelpers.FormatHashRateCompact(t.TotalActualHps);
+        bool hasRate = t.TotalActualHps > 0.0;
+
+        string summaryLine1 = t.State switch
+        {
+            CoordinatorState.Running => $"{rateCompact}  |  {ProbabilityText}  |  {LiveEtaText}",
+            CoordinatorState.Calibrating => hasRate
+                ? $"{Loc.Calibrating} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s  |  {rateCompact}"
+                : $"{Loc.Calibrating} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s",
+            CoordinatorState.QuickProbing => hasRate
+                ? $"{Loc.Probing} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s  |  {rateCompact}"
+                : $"{Loc.Probing} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s",
+            CoordinatorState.Paused => t.TotalChecked > 0
+                ? $"{Loc.Paused}  |  {ProbabilityText}"
+                : Loc.Paused,
+            CoordinatorState.Stopping => Loc.Stopping,
+            CoordinatorState.Faulted => Loc.Error,
+            _ => Loc.Idle
+        };
+
+        string summaryLine2 = string.Empty;
+        if (!string.IsNullOrEmpty(ActiveTargetSuffix))
+        {
+            summaryLine2 = t.TotalChecked > 0
+                ? $"{ActiveFormattedPreview}  |  {CheckedCountText}"
+                : ActiveFormattedPreview;
+        }
+
+        bool canToggle = !ShowSetupWizard && CanPrimaryAction;
+        _trayIcon.UpdateMenuState(
+            Loc.Open,
+            toggleLabel,
+            canToggle,
+            Loc.TrayMiniHud,
+            ShowMiniHudInTray,
+            Loc.Quit,
+            summaryLine1,
+            summaryLine2);
 
         string tip = t.State switch
         {
-            CoordinatorState.Running => $"PGPMint - {FormattingHelpers.FormatHashRateCompact(t.TotalActualHps)}",
-            CoordinatorState.Calibrating => $"PGPMint - {Loc.Calibrating} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s",
-            CoordinatorState.QuickProbing => $"PGPMint - {Loc.Probing} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s",
-            CoordinatorState.Paused => $"PGPMint - {Loc.Paused}",
-            _ => $"PGPMint - {Loc.Idle}"
+            CoordinatorState.Running => string.IsNullOrEmpty(ActiveTargetSuffix)
+                ? $"PGPMint  {rateCompact}\n{ProbabilityText} | {LiveEtaText} | {CheckedCountText}"
+                : $"PGPMint  {rateCompact}\n{ProbabilityText} | {LiveEtaText} | {CheckedCountText}\n{ActiveFormattedPreview}",
+            CoordinatorState.Calibrating => hasRate
+                ? $"PGPMint  {Loc.Calibrating} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s\n{rateCompact}"
+                : $"PGPMint  {Loc.Calibrating} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s",
+            CoordinatorState.QuickProbing => hasRate
+                ? $"PGPMint  {Loc.Probing} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s\n{rateCompact}"
+                : $"PGPMint  {Loc.Probing} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s",
+            CoordinatorState.Paused => t.TotalChecked > 0
+                ? $"PGPMint  {Loc.Paused}\n{ProbabilityText} | {CheckedCountText}"
+                : $"PGPMint - {Loc.Paused}",
+            CoordinatorState.Faulted => $"PGPMint - {Loc.Error}",
+            _ => string.IsNullOrEmpty(ActiveTargetSuffix)
+                ? $"PGPMint - {Loc.Idle}"
+                : $"PGPMint - {Loc.Idle}\n{ActiveFormattedPreview}"
         };
 
         _trayIcon.UpdateTooltip(tip);
+
+        string hudPrimary = t.State switch
+        {
+            CoordinatorState.Running => rateCompact,
+            CoordinatorState.Calibrating => hasRate ? rateCompact : Loc.Calibrating,
+            CoordinatorState.QuickProbing => hasRate ? rateCompact : Loc.Probing,
+            CoordinatorState.Paused => Loc.Paused,
+            CoordinatorState.Stopping => Loc.Stopping,
+            CoordinatorState.Faulted => Loc.Error,
+            _ => Loc.Idle
+        };
+
+        string hudProb = t.State is CoordinatorState.QuickProbing or CoordinatorState.Calibrating
+            ? $"{Math.Round(ProgressPercent):F0}%"
+            : ProbabilityText;
+
+        string hudEta = t.State switch
+        {
+            CoordinatorState.QuickProbing => $"{Loc.Probing} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s",
+            CoordinatorState.Calibrating => $"{Loc.Calibrating} {Math.Ceiling(t.CalibrationRemainingSeconds):F0}s",
+            CoordinatorState.Running => LiveEtaText,
+            _ => "\u2014"
+        };
+
+        _miniHud.UpdateSnapshot(new MiniHudSnapshot(
+            t.State,
+            hudPrimary,
+            hudProb,
+            hudEta,
+            Math.Clamp(ProgressPercent / 100.0, 0.0, 1.0)));
     }
 
     private void SyncGpuToggleStates()

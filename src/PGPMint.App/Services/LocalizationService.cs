@@ -78,6 +78,7 @@ public sealed class LocalizationService : ObservableObject
     public string Probing => T("估速", "PROBE");
     public string Calibrating => T("校準", "CAL");
     public string Stopping => T("停止中", "STOPPING");
+    public string Error => T("錯誤", "ERROR");
 
     public string Copy => T("複製", "Copy");
     public string Copied => T("已複製", "Copied");
@@ -96,8 +97,10 @@ public sealed class LocalizationService : ObservableObject
     public string SettingLanguage => T("語言", "Language");
     public string SettingAutoPauseOnHit => T("命中後自動暫停", "Pause on match");
     public string SettingMinimizeToTray => T("關閉時常駐系統匣", "Keep in tray on close");
+    public string SettingShowMiniHud => T("背景顯示浮動微窗", "Floating HUD in tray");
     public string SettingStartWithWindows => T("開機自動啟動", "Launch at startup");
     public string SettingRecalibrate30s => T("重新執行 30 秒校準", "Recalibrate (30s)");
+    public string TrayMiniHud => T("浮動微窗", "Floating HUD");
 
     public string NoGpuError => T("未偵測到實體顯示卡", "No hardware GPU detected");
     public string HitNotificationTitle => T("PGPMint 命中金鑰", "PGPMint Key Matched");

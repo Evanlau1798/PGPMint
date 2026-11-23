@@ -54,10 +54,11 @@ Most existing OpenPGP vanity key generators are command-line utilities bound to 
 - **Minimalist Dashboard and Separate Settings Window**
   - Main window stays focused on current target preview, live aggregate hash rate, stepless rate slider, cumulative hit probability, checked candidate count, ETA, and matched keys.
   - Independent Settings window consolidates Key ID suffix editing (with live validation and ETA), multi-GPU device selection, 30-second recalibration, bilingual UI toggle (Traditional Chinese / English), and system preferences.
-- **System Tray Keep-Alive**
-  - Closing the main window minimizes PGPMint to the Windows notification area while continuing background search.
-  - Prevents system sleep during active search while still allowing the display to power off.
-  - Sends native Windows notifications on match, defaults to auto-pause on match, enforces single-instance activation, and supports optional launch at Windows startup (`--minimized`).
+- **System Tray Keep-Alive & Zero-GPU-Overhead Mini HUD**
+  - Closing the main window minimizes PGPMint to the Windows notification area so WinUI 3 stops consuming GPU rendering cycles while search runs at full throughput.
+  - Optional pure-CPU Win32 layered floating Mini HUD (rendered via built-in `gdiplus.dll`, auto dark/light theme, draggable with saved position, auto-hides during fullscreen games/presentations) displays live hash rate, cumulative probability, ETA, and progress bar while minimized to tray.
+  - Right-click context menu and multi-line tray tooltip show live rate, progress, ETA, active target suffix, and checked count; double-click restores the main window.
+  - Prevents system sleep during active search while still allowing the display to power off, sends native Windows notifications on match, enforces single-instance activation, and supports optional launch at Windows startup (`--minimized`).
 - **Signing-Ready OpenPGP Export**
   - Matched Ed25519 private seeds and creation timestamps are double-verified on CPU and encrypted locally using Windows DPAPI (`CurrentUser`).
   - Exports RFC 9580 / GnuPG-compatible OpenPGP v4 ASCII-armored secret (`.secret.asc`) and public (`.public.asc`) keys with User ID positive certification self-signature, `Certify | Sign` key flags (`0x03`), and optional AES-256-CFB passphrase protection (Iterated & Salted SHA-256 S2K).
@@ -70,7 +71,7 @@ Measured on an **NVIDIA GeForce RTX 3080** (Windows 11 x64, Driver `32.0.16.1088
 
 | Backend | Kernel | Measured Throughput | Notes |
 |---|---|---:|---|
-| Native OpenCL (`OpenCL.dll`) | `opencl-sha1-four-v1` (4-key, unroll 2) | **21.06 GH/s** (tray) / **20.00 GH/s** (foreground) | Default when OpenCL GPU ICD is present |
+| Native OpenCL (`OpenCL.dll`) | `opencl-sha1-four-v1` (4-key, unroll 2) | **21.06 GH/s** (tray / Mini HUD) / **20.00 GH/s** (foreground) | Default when OpenCL GPU ICD is present |
 | DirectCompute (`D3D11 cs_5_0`) | `d3d11-sha1-four-v1` (4-key) | **13.51 GH/s** | Automatic fallback on non-OpenCL GPUs |
 
 ### Expected Mean Wait Time by Suffix Length (at 20 GH/s)
