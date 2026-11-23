@@ -1,121 +1,59 @@
+<div align="center">
+
 # PGPMint
 
+**Native Windows GPU generator for custom OpenPGP v4 (`Ed25519`) vanity Key IDs.**
+
 [![CI](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Evanlau1798/PGPMint?label=Release&color=0078D6)](https://github.com/Evanlau1798/PGPMint/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20(x64%20%7C%20ARM64)-0078D6.svg)](#requirements)
-[![.NET](https://img.shields.io/badge/.NET-8.0%20WinUI%203-512BD4.svg)](#building-from-source)
+[![Platform](https://img.shields.io/badge/Windows-10%2F11%20(x64%20%7C%20ARM64)-0078D6.svg)](#system-requirements)
+[![.NET 8 WinUI 3](https://img.shields.io/badge/.NET%208-WinUI%203-512BD4.svg)](#building-from-source)
 
-Native Windows WinUI 3 desktop application for minting custom **OpenPGP v4 (Ed25519Legacy)** vanity Key IDs on Windows hardware GPUs.
+[Download](#download--quick-start) · [Features](#features) · [Git Signing](#using-exported-keys-with-git) · [Benchmarks](#benchmarks) · [Build from Source](#building-from-source)
 
-PGPMint combines a four-key interleaved SHA-1 GPU engine, stepless background throttling, system tray keep-alive, and signing-ready OpenPGP `.asc` export in a single self-contained native Windows binary with zero Python or CUDA Toolkit dependencies.
+<br />
 
----
+<img src="assets/screenshot-dashboard.png" alt="PGPMint main window on Windows 11 running at 23.08 GH/s" width="446" />
 
-## Table of Contents
+*PGPMint running on Windows 11 (Dark Mica) searching for a 12-hex Key ID suffix at full speed.*
 
-- [Why PGPMint](#why-pgpmint)
-- [Features](#features)
-- [Performance](#performance)
-- [How It Works](#how-it-works)
-- [Quick Start](#quick-start)
-- [Using Exported Keys with Git](#using-exported-keys-with-git)
-- [Requirements](#requirements)
-- [Building from Source](#building-from-source)
-- [Security and Privacy](#security-and-privacy)
-- [Contributing](#contributing)
-- [License](#license)
+</div>
 
 ---
 
-## Why PGPMint
+## What is PGPMint?
 
-Most existing OpenPGP vanity key generators are command-line utilities bound to NVIDIA CUDA or browser WebGL tabs that stall in the background and run all-or-nothing at 100% GPU load.
+PGPMint lets you mint custom **OpenPGP v4 (`Ed25519Legacy`)** keys whose 16-character Key ID ends with any hexadecimal pattern you choose (for example `6767 6767 6767` or `0123 4567 89AB`).
 
-| Capability | PGPMint | CLI CUDA Tools | CLI OpenCL Tools | Browser WebGL/WebGPU |
-|---|---|---|---|---|
-| Native Windows GUI + System Tray | Yes (WinUI 3 + Mica) | No | No | Tab only (throttled in background) |
-| Zero Python / CUDA Toolkit Install | Yes | Requires CUDA | Requires runtime setup | Yes |
-| Universal Windows GPU Fallback | OpenCL + DirectCompute D3D11 | NVIDIA only | Needs OpenCL ICD | Browser dependent |
-| Multi-GPU Parallel Search | Yes | Manual | Manual | Single GPU |
-| Per-GPU Calibration + Stepless Rate Cap | Yes (1% to MAX) | Full speed only | Full speed only | Limited |
-| Local Encrypted Vault + Git-Ready `.asc` | Yes (DPAPI + Ed25519 self-sig) | Raw export | Raw export | Manual download |
+Unlike command-line tools that require installing Python or the NVIDIA CUDA Toolkit—or browser tabs that stall in the background—PGPMint ships as a **single portable Windows `.exe`** (~34 MB) with native Fluent / Mica UI, stepless GPU throttling, system tray keep-alive, and ready-to-sign `.asc` export.
 
 ---
 
 ## Features
 
-- **Hybrid Zero-Dependency GPU Engine (GPU-Only)**
-  - Uses DXGI + WDDM `D3DKMTQueryAdapterInfo` to enumerate real physical hardware GPUs while strictly excluding CPU software renderers (WARP), remote adapters, and virtual indirect display drivers (such as Virtual Desktop, SuperDisplay, and Parsec).
-  - Automatically accelerates via native `OpenCL.dll` P/Invoke (four-key interleaved kernel with hardware `rotate` and `bitselect`) on NVIDIA, AMD, and Intel drivers, and transparently falls back to DirectCompute (`D3D11 cs_5_0`) on any Windows GPU lacking an OpenCL ICD (including Windows on ARM).
-- **Multi-GPU Parallelism and Real-Time Median Speed Control**
-  - First-launch Setup puts target Key ID input, hardware GPU selection, language selector, and Start in a single unified card with zero speculative speed estimates; clicking **Start** immediately enters the dashboard and begins the 30-second actual speed measurement on your real target pattern (zero wasted candidates; auto-stops immediately on the first match if enabled).
-  - Before the 30-second baseline finishes, the throttle slider stays locked at `MAX`. Once measured, the two-stage slider offers `1%-99%` capped precision (`%` indicator only) and a magnetic resistance detent separating `99%` from uncapped `MAX` (with dynamic median tracking that stops sampling the moment you drag back into `1%-99%`).
-- **Minimalist Dashboard, Extensible i18n, and Separate Settings Window**
-  - Main window stays focused on current target preview, live measured hash rate, two-stage rate slider, unified Start/Stop action (always persisting progress on stop), GPU-friendly smooth progress bar, cumulative hit probability with single-hash probability tooltip (switching cleanly to `Found` with locked 100% bar once a matching key exists for the active target), scientific-notation checked candidate count (`^`), live ETA, and an always-visible adaptive results panel (showing a subtle tray speedup hint while running before the first match, and auto-stretching to display up to 5 saved results).
-  - Independent Settings window puts an extensible JSON-backed language selector (`Strings/*.json`, loaded from embedded defaults or a side-by-side `Strings` folder) at the top, followed by Key ID suffix editing, responsive preferences layout, and hardware GPU selection, automatically sized to fit content within the monitor work area.
-- **System Tray Keep-Alive & Zero-GPU-Overhead Mini HUD**
-  - Closing the main window minimizes PGPMint to the Windows notification area so WinUI 3 stops consuming GPU rendering cycles while search runs at full throughput.
-  - Optional pure-CPU Win32 layered floating Mini HUD (rendered via Direct2D Software RenderTarget + DirectWrite grayscale antialiasing, auto dark/light theme, draggable with saved position, auto-hides during fullscreen games/presentations) displays live hash rate, cumulative probability, ETA, and progress bar while minimized to tray.
-  - Right-click context menu and multi-line tray tooltip show live rate, progress, ETA, active target suffix, and checked count; double-click restores the main window.
-  - Prevents system sleep during active search while still allowing the display to power off, throttles notifications on rapid matches, defaults to single-hit auto-stop, enforces single-instance activation, and supports optional launch at Windows startup (`--minimized`).
-- **Signing-Ready OpenPGP Export**
-  - Matched Ed25519 private seeds and creation timestamps are double-verified on CPU and encrypted locally using Windows DPAPI (`CurrentUser`).
-  - Exports RFC 9580 / GnuPG-compatible OpenPGP v4 ASCII-armored secret (`.secret.asc`) and public (`.public.asc`) keys with User ID positive certification self-signature, `Certify | Sign` key flags (`0x03`), and optional AES-256-CFB passphrase protection (Iterated & Salted SHA-256 S2K).
+- **Single-File Portable Executable** — Self-contained compressed `.exe` for `win-x64` and `win-arm64`. No Python, CUDA Toolkit, .NET Runtime, or Windows App Runtime installation required.
+- **Universal Windows Hardware GPU Engine** — Automatically accelerates via native `OpenCL.dll` (four-key interleaved SHA-1 kernel) on NVIDIA, AMD, and Intel GPUs, and transparently falls back to DirectCompute (`D3D11 cs_5_0`) on GPUs without an OpenCL ICD (including Windows on ARM). Supports multi-GPU parallel search while excluding CPU software renderers and virtual display adapters.
+- **Measured-Only Speed & Two-Stage Throttle** — No guesswork estimates. The first run measures your GPU's real median throughput over 30 seconds on your actual target pattern (zero wasted candidates). Once calibrated, drag smoothly across `1%-99%` to keep your PC responsive, or push past the magnetic detent to uncapped `MAX` full speed.
+- **Zero-Overhead System Tray & Pure-CPU Floating HUD** — Closing the main window minimizes PGPMint to the notification area so WinUI 3 stops consuming GPU rendering cycles. An optional pure-CPU Direct2D/DirectWrite floating Mini HUD tracks live speed, probability, ETA, and progress (auto-hides during fullscreen apps/games).
+- **Minimalist Dashboard & Separate Settings** — Live hash rate, smooth progress bar, cumulative hit probability (hover for single-hash odds; switches cleanly to `Found` once a matching key is stored), scientific-notation checked count, live ETA, and an adaptive results card that expands for up to 5 saved keys.
+- **DPAPI Encrypted Vault & Signing-Ready `.asc` Export** — Every GPU match is double-verified on CPU, encrypted locally using Windows DPAPI (`CurrentUser`), and exported as RFC 9580 / GnuPG-compatible `.secret.asc` and `.public.asc` files with `Certify | Sign` key flags and optional AES-256-CFB passphrase protection.
+- **Extensible Localization** — Built-in English and Traditional Chinese, plus automatic loading of custom `Strings/*.json` locale files placed next to `PGPMint.exe`.
 
 ---
 
-## Performance
+## Download & Quick Start
 
-Measured on an **NVIDIA GeForce RTX 3080** (Windows 11 x64, Driver `32.0.16.1088`) searching 13-hex OpenPGP v4 Ed25519Legacy suffixes including host Ed25519 key generation, SHA-1 schedule precomputation, GPU dispatch, and readback:
-
-| Backend | Kernel | Measured Throughput | Notes |
-|---|---|---:|---|
-| Native OpenCL (`OpenCL.dll`) | `opencl-sha1-four-v1` (4-key, unroll 2) | **21.06 GH/s** (tray / Mini HUD) / **20.00 GH/s** (foreground) | Default when OpenCL GPU ICD is present |
-| DirectCompute (`D3D11 cs_5_0`) | `d3d11-sha1-four-v1` (4-key) | **13.51 GH/s** | Automatic fallback on non-OpenCL GPUs |
-
-### Expected Mean Wait Time by Suffix Length (at 20 GH/s)
-
-| Suffix Length | Search Space ($16^k$) | Expected Average Time |
-|---:|---:|---:|
-| 8 hex chars | $4.29 \times 10^{9}$ | ~0.2 s |
-| 10 hex chars | $1.10 \times 10^{12}$ | ~55 s |
-| 12 hex chars | $2.81 \times 10^{14}$ | ~3.9 hours |
-| 13 hex chars | $4.50 \times 10^{15}$ | ~2.6 days |
-| 14 hex chars | $7.21 \times 10^{16}$ | ~41.7 days |
-
----
-
-## How It Works
-
-An OpenPGP v4 Ed25519Legacy primary key fingerprint is `SHA-1` over a single 54-byte packet (`0x99 || len(51) || 0x04 || uint32_be(timestamp) || Ed25519 OID + MPI header || 32-byte pubkey`), which fits inside one 64-byte SHA-1 block.
-
-```text
-CPU: Generate 4 Ed25519 keypairs -> Precompute timestamp-independent SHA-1 schedule
-  |
-  v
-GPU: Share rounds 0..4 across all 4 keys for each Unix timestamp (1 .. now)
-  |  Interleave rounds 5..75 across 4 lanes
-  |  Round 76: early reject on low 32 bits of Key ID
-  |  Round 77 (survivors only): check high 32 bits -> atomic append hit timestamp
-  v
-CPU: Recompute full SHA-1 fingerprint -> Verify suffix -> Encrypt seed via DPAPI -> Notify
-```
-
----
-
-## Quick Start
-
-1. Launch `PGPMint.exe`.
-2. **Initial Setup**: Enter your desired 1-16 hex Key ID suffix (`0-9`, `A-F`, e.g. `01 2345 6789`), select hardware GPU(s), pick your language, and click **Start**.
-3. On the first run, PGPMint automatically runs at full speed for 30 seconds to measure your GPU's real median throughput while searching your target.
-4. Once measured, use the two-stage slider anytime (`1%-99%` capped, or push past the magnetic resistance detent to uncapped `MAX` with dynamic median tracking), press **Stop** anytime to halt and persist all checked progress, or close the window to keep searching quietly in the system tray with the pure-CPU floating Mini HUD.
-5. Click the gear icon to open **Settings** whenever you want to switch language (or place additional `Strings/*.json` locale files next to `PGPMint.exe`), edit the target Key ID suffix, adjust preferences, or toggle GPUs.
+1. Download the latest single-file executable from [GitHub Releases](https://github.com/Evanlau1798/PGPMint/releases) (`PGPMint-*-win-x64.exe` or `win-arm64.exe`) and run it directly.
+2. **Initial Setup**: Enter your desired 1-16 hex Key ID suffix (`0-9`, `A-F`, e.g. `01 2345 6789`), choose hardware GPU(s), select your language, and click **Start**.
+3. **Automatic Calibration & Search**: On first run, PGPMint runs at full speed for 30 seconds to measure your real GPU speed while actively searching your target. Afterward, adjust the throttle slider (`1%-99%` or `MAX`), press **Stop** anytime (progress is always saved), or close the window to keep running at peak speed in the system tray.
+4. **Export Your Key**: When a match appears in the results panel, click `.asc` to export `<KEYID>.secret.asc` and `<KEYID>.public.asc`.
 
 ---
 
 ## Using Exported Keys with Git
 
-When PGPMint finds a match, click `.asc` next to the Key ID to export `<KEYID>.secret.asc` and `<KEYID>.public.asc`.
+Exported keys include a self-signed User ID with `Certify | Sign` (`0x03`) flags and work directly with GnuPG, Git, and GitHub Verified commits:
 
 ```powershell
 # 1. Import your minted secret key into GnuPG
@@ -125,16 +63,87 @@ gpg --import <KEYID>.secret.asc
 git config --global user.signingkey <KEYID>
 git config --global commit.gpgsign true
 
-# 3. Upload <KEYID>.public.asc to GitHub -> Settings -> SSH and GPG keys
+# 3. Paste <KEYID>.public.asc into GitHub -> Settings -> SSH and GPG keys
 ```
 
 ---
 
-## Requirements
+## Benchmarks
 
-- Windows 10 (build 19041 or later) or Windows 11 (`x64` or `ARM64`)
-- One or more hardware GPUs supporting Direct3D 11 Feature Level 11.0+ (OpenCL ICD optional for maximum throughput)
-- CPU-only / software rendering is intentionally not supported
+Measured on an **NVIDIA GeForce RTX 3080** (Windows 11 x64) searching OpenPGP v4 `Ed25519Legacy` suffixes end-to-end (host Ed25519 keygen, SHA-1 schedule precomputation, GPU dispatch, and readback):
+
+| Backend | Kernel | Measured Throughput | Notes |
+|---|---|---:|---|
+| Native OpenCL (`OpenCL.dll`) | `opencl-sha1-four-v1` (4-key, unroll 2) | **21.06 GH/s** (tray / Mini HUD) / **20.00 GH/s** (foreground) | Default when OpenCL GPU ICD is available |
+| DirectCompute (`D3D11 cs_5_0`) | `d3d11-sha1-four-v1` (4-key) | **13.51 GH/s** | Automatic fallback on non-OpenCL GPUs |
+
+### Expected Average Wait Time (at 20 GH/s)
+
+| Suffix Length | Search Space ($16^k$) | Expected Average Time |
+|---:|---:|---:|
+| 8 hex chars | $4.29 \times 10^{9}$ | ~0.2 s |
+| 10 hex chars | $1.10 \times 10^{12}$ | ~55 s |
+| 12 hex chars | $2.81 \times 10^{14}$ | ~3.9 hours |
+| 13 hex chars | $4.50 \times 10^{15}$ | ~2.6 days |
+| 14 hex chars | $7.21 \times 10^{16}$ | ~41.7 days |
+
+### Comparison with Alternatives
+
+| Capability | PGPMint | CLI CUDA Tools | CLI OpenCL Tools | Browser WebGL/WebGPU |
+|---|---|---|---|---|
+| Native Windows 11 UI + System Tray | Yes (WinUI 3 + Mica) | No | No | Browser tab (throttled in background) |
+| Zero Python / CUDA Toolkit Setup | Yes (single `.exe`) | Requires CUDA | Requires runtime | Yes |
+| Universal Windows GPU Fallback | OpenCL + DirectCompute | NVIDIA only | Needs OpenCL ICD | Browser dependent |
+| Multi-GPU + Stepless Rate Cap | Yes (`1%-99%` + `MAX`) | Full speed only | Full speed only | Limited |
+| Encrypted Local Vault + Git-Ready `.asc` | Yes (DPAPI + self-sig) | Raw export | Raw export | Manual download |
+
+---
+
+## System Requirements
+
+- **OS**: Windows 10 (build 19041 / 2004 or later) or Windows 11 (`x64` or `ARM64`)
+- **GPU**: One or more hardware GPUs supporting Direct3D 11 Feature Level 11.0+ (OpenCL ICD optional for maximum throughput; CPU-only / software rendering is intentionally excluded)
+
+---
+
+## Technical Details
+
+<details>
+<summary><strong>How It Works (OpenPGP v4 SHA-1 GPU Pipeline)</strong></summary>
+
+An OpenPGP v4 `Ed25519Legacy` primary key fingerprint is `SHA-1` over a single 54-byte packet (`0x99 || len(51) || 0x04 || uint32_be(timestamp) || Ed25519 OID + MPI header || 32-byte pubkey`), which fits inside one 64-byte SHA-1 block.
+
+```text
+CPU: Generate 4 Ed25519 keypairs -> Precompute timestamp-independent SHA-1 schedule
+  |
+  v
+GPU: Share rounds 0..4 across all 4 keys for each Unix timestamp (1 .. now)
+  |  Interleave rounds 5..75 across 4 lanes
+  |  After round 75: early reject on low 32 bits of Key ID
+  |  Round 76 (survivors only): check high 32 bits -> atomic append hit timestamp
+  v
+CPU: Recompute full SHA-1 fingerprint -> Verify suffix -> Encrypt seed via DPAPI -> Notify
+```
+
+</details>
+
+<details>
+<summary><strong>Security, Privacy &amp; Local Data Storage</strong></summary>
+
+- **Fully Offline / Zero Telemetry**: PGPMint makes no network requests.
+- **Local Data Path**: Settings (`state.json`) and encrypted matches (`hits.vault.json`) are stored strictly in `%LOCALAPPDATA%\PGPMint\`.
+- **Local Key Protection**: Matched Ed25519 private seeds are encrypted on disk with Windows DPAPI (`DataProtectionScope.CurrentUser`) and zeroed in memory after key rotation or export.
+- **Corrupt Vault Safeguard**: If `hits.vault.json` cannot be parsed, PGPMint creates a `.corrupt.<timestamp>.bak` backup and refuses to overwrite stored keys.
+- **CPU Verification Gate**: Every timestamp returned by a GPU is re-hashed on CPU with `System.Security.Cryptography.SHA1` before persistence.
+
+</details>
+
+<details>
+<summary><strong>Adding a Custom Translation</strong></summary>
+
+PGPMint loads built-in locales from embedded resources and automatically merges any JSON file placed in a `Strings/` folder next to `PGPMint.exe` (for example `Strings/ja-JP.json`). Copy [src/PGPMint.App/Strings/en-US.json](src/PGPMint.App/Strings/en-US.json), update `_meta.code` and `_meta.nativeName`, translate the `strings` entries, and restart PGPMint to select it from Settings.
+
+</details>
 
 ---
 
@@ -145,7 +154,7 @@ Prerequisites:
 - Windows 10/11 SDK (`10.0.26100.0`)
 
 ```powershell
-# Run all tests (including live GPU tests and real GnuPG / git commit -S verification)
+# Run full test suite (includes live GPU and real GnuPG / git commit -S tests)
 dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64
 
 # Run headless CI-safe test suite (excludes HardwareGpu category)
@@ -154,27 +163,18 @@ dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64 --filter "C
 # Build Release solution
 dotnet build PGPMint.sln -p:Platform=x64 -c Release
 
-# Publish standalone compressed single-file executable (x64)
+# Publish trimmed standalone compressed single-file executable (x64)
 dotnet publish src\PGPMint.App\PGPMint.App.csproj -p:Platform=x64 -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
 
-# Publish standalone compressed single-file executable (ARM64)
+# Publish trimmed standalone compressed single-file executable (ARM64)
 dotnet publish src\PGPMint.App\PGPMint.App.csproj -p:Platform=ARM64 -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true
 ```
 
 ---
 
-## Security and Privacy
-
-- **Zero Telemetry / Fully Offline**: PGPMint makes no network requests.
-- **Local Key Protection**: Matched Ed25519 private seeds are encrypted on disk with Windows DPAPI (`DataProtectionScope.CurrentUser`) and zeroed in memory after rotation or export.
-- **Corrupt Vault Safeguard**: If `hits.vault.json` cannot be parsed, PGPMint creates a `.corrupt.<timestamp>.bak` backup and refuses to overwrite stored keys.
-- **CPU Verification Gate**: Every timestamp returned by a GPU is re-hashed on CPU with `System.Security.Cryptography.SHA1` before persistence.
-
----
-
 ## Contributing
 
-Issues and pull requests are welcome. Please run `dotnet test` and `dotnet build -p:Platform=x64 -c Release` before submitting changes, and avoid introducing emojis in source code or documentation.
+Issues, translations, and pull requests are welcome. Before opening a PR, please run `dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64` and `dotnet build PGPMint.sln -p:Platform=x64 -c Release`, and keep source code and documentation free of emojis (enforced by CI).
 
 ## License
 

@@ -25,8 +25,6 @@ public sealed class AppPersistedState
 
 public sealed class AppStateStore
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-
     private readonly object _gate = new();
     public string StateFilePath { get; }
 
@@ -50,7 +48,7 @@ public sealed class AppStateStore
 
             try
             {
-                AppPersistedState? parsed = JsonSerializer.Deserialize<AppPersistedState>(raw, JsonOptions);
+                AppPersistedState? parsed = JsonSerializer.Deserialize(raw, StorageJsonContext.Default.AppPersistedState);
                 if (parsed is null)
                 {
                     return new AppPersistedState();
@@ -74,7 +72,7 @@ public sealed class AppStateStore
         ArgumentNullException.ThrowIfNull(state);
         lock (_gate)
         {
-            string json = JsonSerializer.Serialize(state, JsonOptions);
+            string json = JsonSerializer.Serialize(state, StorageJsonContext.Default.AppPersistedState);
             AtomicFileStore.WriteTextAtomic(StateFilePath, json);
         }
     }
@@ -86,7 +84,7 @@ public sealed class AppStateStore
         {
             AppPersistedState current = Load();
             mutator(current);
-            string json = JsonSerializer.Serialize(current, JsonOptions);
+            string json = JsonSerializer.Serialize(current, StorageJsonContext.Default.AppPersistedState);
             AtomicFileStore.WriteTextAtomic(StateFilePath, json);
         }
     }

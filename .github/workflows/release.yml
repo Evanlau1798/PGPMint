@@ -36,8 +36,10 @@ jobs:
         shell: pwsh
         run: |
           $hits = @()
+          $binaryExts = @('.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp', '.exe', '.dll')
           foreach ($file in (git ls-files)) {
-            $text = Get-Content -Raw -Encoding UTF8 $file
+            if ([System.IO.Path]::GetExtension($file).ToLowerInvariant() -in $binaryExts) { continue }
+            $text = Get-Content -LiteralPath $file -Raw -Encoding UTF8
             if ($text -match '[\uD83C-\uDBFF][\uDC00-\uDFFF]|[\u2600-\u27BF]') {
               $hits += $file
             }
@@ -115,6 +117,8 @@ jobs:
             -r $env:BUILD_RID `
             --self-contained true `
             -p:PublishSingleFile=true `
+            -p:PublishTrimmed=true `
+            -p:TrimMode=partial `
             -p:EnableCompressionInSingleFile=true `
             -p:IncludeAllContentForSelfExtract=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `

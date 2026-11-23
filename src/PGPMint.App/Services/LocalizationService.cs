@@ -1,11 +1,14 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using PGPMint.Core.Search;
 
 namespace PGPMint.App.Services;
 
+[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
 public sealed partial class LanguageOption : ObservableObject
 {
     public string Code { get; }
@@ -20,6 +23,23 @@ public sealed partial class LanguageOption : ObservableObject
     }
 }
 
+internal sealed class LocaleJsonSchema
+{
+    public LocaleMetaSchema? _meta { get; set; }
+    public Dictionary<string, string>? strings { get; set; }
+}
+
+internal sealed class LocaleMetaSchema
+{
+    public string? code { get; set; }
+    public string? nativeName { get; set; }
+}
+
+[JsonSerializable(typeof(LocaleJsonSchema))]
+internal sealed partial class LocaleJsonContext : JsonSerializerContext
+{
+}
+
 public sealed class LocalizationService : ObservableObject
 {
     public const string AutoLanguageCode = "auto";
@@ -30,18 +50,6 @@ public sealed class LocalizationService : ObservableObject
         public string Code { get; init; } = string.Empty;
         public string NativeName { get; set; } = string.Empty;
         public Dictionary<string, string> Strings { get; init; } = new(StringComparer.Ordinal);
-    }
-
-    private sealed class LocaleJsonSchema
-    {
-        public LocaleMetaSchema? _meta { get; set; }
-        public Dictionary<string, string>? strings { get; set; }
-    }
-
-    private sealed class LocaleMetaSchema
-    {
-        public string? code { get; set; }
-        public string? nativeName { get; set; }
     }
 
     private readonly Dictionary<string, LocaleBundle> _bundles = new(StringComparer.OrdinalIgnoreCase);
@@ -203,7 +211,7 @@ public sealed class LocalizationService : ObservableObject
 
     private void RegisterBundleFromJson(string json)
     {
-        LocaleJsonSchema? parsed = JsonSerializer.Deserialize<LocaleJsonSchema>(json);
+        LocaleJsonSchema? parsed = JsonSerializer.Deserialize(json, LocaleJsonContext.Default.LocaleJsonSchema);
         if (parsed?._meta is null ||
             string.IsNullOrWhiteSpace(parsed._meta.code) ||
             parsed.strings is null)

@@ -11,7 +11,6 @@ public sealed class DpapiVaultStore
     public const int MaxStoredMatches = 50;
 
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("PGPMint.Ed25519.Vault.v1");
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     private readonly object _gate = new();
     public string VaultFilePath { get; }
@@ -107,7 +106,7 @@ public sealed class DpapiVaultStore
             {
                 existing.RemoveRange(MaxStoredMatches, existing.Count - MaxStoredMatches);
             }
-            string json = JsonSerializer.Serialize(existing, JsonOptions);
+            string json = JsonSerializer.Serialize(existing, StorageJsonContext.Default.ListMatchedKeyRecord);
             AtomicFileStore.WriteTextAtomic(VaultFilePath, json);
             totalStoredCount = existing.Count;
             return record;
@@ -129,7 +128,7 @@ public sealed class DpapiVaultStore
             int removed = existing.RemoveAll(r => string.Equals(r.Id, recordId, StringComparison.Ordinal));
             if (removed > 0)
             {
-                string json = JsonSerializer.Serialize(existing, JsonOptions);
+                string json = JsonSerializer.Serialize(existing, StorageJsonContext.Default.ListMatchedKeyRecord);
                 AtomicFileStore.WriteTextAtomic(VaultFilePath, json);
                 return true;
             }
@@ -167,7 +166,7 @@ public sealed class DpapiVaultStore
 
         try
         {
-            List<MatchedKeyRecord>? parsed = JsonSerializer.Deserialize<List<MatchedKeyRecord>>(raw, JsonOptions);
+            List<MatchedKeyRecord>? parsed = JsonSerializer.Deserialize(raw, StorageJsonContext.Default.ListMatchedKeyRecord);
             if (parsed is null)
             {
                 throw new JsonException("Vault JSON deserialized to null.");
