@@ -443,4 +443,34 @@ public class DirectComputeGpuTests
             Assert.Contains(Rfc8032Timestamp, dev3.ScanGroup(keys, Rfc8032Timestamp, 1, pattern)[0]);
         }
     }
+
+    [Theory]
+    [InlineData("Hybrid")]
+    [InlineData("Vulkan")]
+    [InlineData("DirectCompute")]
+    public void KeyScheduleCacheRemainsConsistentAfterInvalidKeyFailure(string backendKind)
+    {
+        IGpuBackend backend = backendKind switch
+        {
+            "Hybrid" => new HybridGpuBackend(),
+            "Vulkan" => new VulkanBackend(),
+            "DirectCompute" => new DirectComputeBackend(),
+            _ => throw new ArgumentOutOfRangeException(nameof(backendKind))
+        };
+        GpuDeviceInfo gpuInfo = Assert.Single(backend.EnumerateHardwareGpus().Take(1));
+        using IGpuSearchDevice device = backend.CreateDevice(gpuInfo);
+
+        byte[] rfcKey = Convert.FromHexString(Rfc8032PublicHex);
+        byte[] otherKey = Enumerable.Repeat((byte)0x55, Ed25519KeyGenerator.KeyByteLength).ToArray();
+        var pattern = KeyIdPattern.Parse("99933B470FD7C498");
+
+        SearchBatchResult warm = device.ScanBatch([otherKey, otherKey, otherKey, otherKey], Rfc8032Timestamp, 1, pattern);
+        Assert.Empty(warm.Hits[0]);
+
+        Assert.Throws<ArgumentException>(() =>
+            device.ScanBatch([rfcKey, new byte[Ed25519KeyGenerator.KeyByteLength - 1], otherKey, otherKey], Rfc8032Timestamp, 1, pattern));
+
+        SearchBatchResult retry = device.ScanBatch([rfcKey, otherKey, otherKey, otherKey], Rfc8032Timestamp, 1, pattern);
+        Assert.Contains(Rfc8032Timestamp, retry.Hits[0]);
+    }
 }

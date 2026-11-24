@@ -259,22 +259,29 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
 
         for (int lane = 0; lane < FourKeyCount; lane++)
         {
-            byte[] key = publicKeys[lane];
-            if (key.Length != Ed25519KeyGenerator.KeyByteLength)
+            if (publicKeys[lane] is not { Length: Ed25519KeyGenerator.KeyByteLength })
             {
                 throw new ArgumentException("Each Ed25519 public key must be 32 bytes.", nameof(publicKeys));
             }
+        }
 
-            uint[] schedule = Sha1ScheduleHelper.GetOrComputeFixedSchedule(key);
+        _hasCachedKeys = false;
+        for (int lane = 0; lane < FourKeyCount; lane++)
+        {
+            uint[] schedule = Sha1ScheduleHelper.GetOrComputeFixedSchedule(publicKeys[lane]);
             for (int t = 0; t < Sha1ScheduleHelper.ScheduleRounds; t++)
             {
                 _scheduleStaging[(t * FourKeyCount) + lane] = schedule[t];
             }
-
-            _cachedKeys[lane] = (byte[])key.Clone();
         }
 
         UploadConstantBuffer(_scheduleBuffer, _scheduleStaging);
+
+        for (int lane = 0; lane < FourKeyCount; lane++)
+        {
+            _cachedKeys[lane] = (byte[])publicKeys[lane].Clone();
+        }
+
         _hasCachedKeys = true;
     }
 

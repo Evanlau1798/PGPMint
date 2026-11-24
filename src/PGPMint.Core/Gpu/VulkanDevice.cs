@@ -470,19 +470,20 @@ public sealed unsafe class VulkanDevice : IGpuSearchDevice
 
         for (int lane = 0; lane < FourKeyCount; lane++)
         {
-            byte[] key = publicKeys[lane];
-            if (key.Length != Ed25519KeyGenerator.KeyByteLength)
+            if (publicKeys[lane] is not { Length: Ed25519KeyGenerator.KeyByteLength })
             {
                 throw new ArgumentException("Each Ed25519 public key must be 32 bytes.", nameof(publicKeys));
             }
+        }
 
-            uint[] sched = Sha1ScheduleHelper.GetOrComputeFixedSchedule(key);
+        _hasCachedKeys = false;
+        for (int lane = 0; lane < FourKeyCount; lane++)
+        {
+            uint[] sched = Sha1ScheduleHelper.GetOrComputeFixedSchedule(publicKeys[lane]);
             for (int t = 0; t < Sha1ScheduleHelper.ScheduleRounds; t++)
             {
                 _uboStaging[(t * FourKeyCount) + lane] = sched[t];
             }
-
-            _cachedKeys[lane] = (byte[])key.Clone();
         }
 
         _uboStaging.AsSpan().CopyTo(new Span<uint>((void*)_uboMapped, UboUints));
@@ -496,6 +497,11 @@ public sealed unsafe class VulkanDevice : IGpuSearchDevice
                 Size = VulkanNative.VkWholeSize
             };
             CheckVk(VulkanNative.vkFlushMappedMemoryRanges(_device, 1, &flushRange), "vkFlushMappedMemoryRanges(ubo)");
+        }
+
+        for (int lane = 0; lane < FourKeyCount; lane++)
+        {
+            _cachedKeys[lane] = (byte[])publicKeys[lane].Clone();
         }
 
         _hasCachedKeys = true;
