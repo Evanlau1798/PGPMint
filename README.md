@@ -33,8 +33,8 @@ Unlike command-line tools that require installing Python or the NVIDIA CUDA Tool
 ## Features
 
 - **Single-File Portable Executable** — Self-contained compressed `.exe` for `win-x64` and `win-arm64`. No Python, CUDA Toolkit, .NET Runtime, or Windows App Runtime installation required.
-- **Universal Windows Hardware GPU Engine** — Automatically accelerates via native `OpenCL.dll` (four-key interleaved SHA-1 kernel) on NVIDIA, AMD, and Intel GPUs, and transparently falls back to DirectCompute (`D3D11 cs_5_0`) on GPUs without an OpenCL ICD (including Windows on ARM). Supports multi-GPU parallel search while excluding CPU software renderers and virtual display adapters.
-- **Measured Speed & Two-Stage Throttle**: PGPMint measures each GPU's throughput while searching and reuses valid calibration for the same suffix length and GPU configuration. Batch sizes adjust to measured dispatch times. Once calibrated, use `1%-99%` to limit speed or select `MAX` for full speed.
+- **Universal Windows Hardware GPU Engine** — Zero-dependency three-tier compute cascade: runs via native `OpenCL.dll` (`opencl-sha1-four-v4`) when an OpenCL GPU ICD is present, cascades to native Vulkan Compute (`vulkan-1.dll` + programmatic SPIR-V 1.3, `vulkan-sha1-four-v4`) when OpenCL is unavailable, and falls back transparently to DirectCompute (`D3D11 cs_5_0`, `d3d11-sha1-four-v4`) on any Direct3D 11 Feature Level 11.0+ GPU (including Windows on ARM). Supports multi-GPU parallel search while excluding CPU software renderers and virtual display adapters.
+- **Measured Speed & Two-Stage Throttle**: PGPMint measures each GPU's throughput while searching and reuses valid calibration for the same workload execution path (`1`-`4` hex individually, `5`-`8` hex low-word group, `9`-`16` hex 64-bit group) and GPU configuration. Batch sizes adjust to measured dispatch times. Once calibrated, use `1%-99%` to limit speed or select `MAX` for full speed.
 - **Zero-Overhead System Tray & Pure-CPU Floating HUD** — Closing the main window minimizes PGPMint to the notification area so WinUI 3 stops consuming GPU rendering cycles. An optional pure-CPU Direct2D/DirectWrite floating Mini HUD tracks live speed, probability, ETA, and progress (auto-hides during fullscreen apps/games).
 - **Minimalist Dashboard & Separate Settings** — Live hash rate, smooth progress bar, cumulative hit probability (hover for single-hash odds; switches cleanly to `Found` once a matching key is stored), scientific-notation checked count, live ETA, and an adaptive results card that expands for up to 5 saved keys.
 - **DPAPI Encrypted Vault & Signing-Ready `.asc` Export** — Every GPU match is double-verified on CPU, encrypted locally using Windows DPAPI (`CurrentUser`), and exported as RFC 9580 / GnuPG-compatible `.secret.asc` and `.public.asc` files with `Certify | Sign` key flags and optional AES-256-CFB passphrase protection.
@@ -52,7 +52,7 @@ Unlike command-line tools that require installing Python or the NVIDIA CUDA Tool
 
 **Stop** works during calibration and search, including from the tray. PGPMint finishes the active batch and can save its verified match before returning to idle. If a GPU becomes unavailable, PGPMint tries to reopen it once and resumes with a small batch. Incomplete batches are excluded from search progress.
 
-Existing vault records and preferences load when upgrading. Calibration is measured again when the saved profile lacks a workload identity or the device, driver, backend, kernel configuration, or suffix length has changed.
+Existing vault records and preferences load when upgrading. Calibration is measured again when the saved profile lacks a workload identity or the device, driver, backend, kernel configuration, or workload execution group (`1`-`4` hex individually, `5`-`8` hex low-word, `9`-`16` hex 64-bit) has changed.
 
 ---
 
@@ -84,6 +84,14 @@ The historical v1 baseline below was measured on an **NVIDIA GeForce RTX 3080** 
 
 The v3 kernels introduced in `ad24a05` use four lanes, up to 128 threads per workgroup, and unroll 2. Both passed fingerprint oracle tests on the RTX 3080 with WDDM driver `32.0.16.1088` and OpenCL ICD `610.88`. In paired FindOne tests of 8, 9, and 16 hex digits at 134,217,728 candidates per batch, v3 median host wall times were 6.97–7.44 ms on OpenCL and 10.40–10.74 ms on DirectCompute. These measurements cover dispatch and blocking readback with warmed device sessions. The 64- and 256-thread alternatives showed no consistent gain. AMD, Intel, and native ARM64 GPU coverage is pending.
 
+The current **v4 engine** eliminates constant-cache register spill (workgroup 128, outer unroll 1), places key schedules and phase constants in constant memory / UBOs, extends cross-lane sharing to rounds `0..6`, reconstructs timestamp XORs minimally, folds `-K3` into `targetLowNoK3` to defer `rotl(b, 30)` and round `76` out of the hot path, and runs via three zero-dependency backends (`OpenCL.dll`, `vulkan-1.dll` + programmatic SPIR-V 1.3, and `D3D11 cs_5_0`). Paired RTX 3080 (`32.0.16.1088`, Release x64, 16 warmup + 31 timed FindOne dispatches, 8-hex and 16-hex suffixes) and 5-second end-to-end `MultiGpuCoordinator` + `KeySchedulePool` measurements at `MAX` throttle:
+
+| Backend | Kernel | 134M Batch Median | 536M Batch Median | End-to-End Coordinator (`MAX`) |
+|---|---|---:|---:|---:|
+| Native OpenCL (`OpenCL.dll`) | `opencl-sha1-four-v4` (`cmem0-v4`) | **5.68–6.27 ms** (`21.42–23.61 GH/s`) | **23.78–23.92 ms** (`22.44–22.58 GH/s`) | **23.19 GH/s** |
+| Native Vulkan (`vulkan-1.dll`) | `vulkan-sha1-four-v4` (`ubo-spirv-v4`) | **5.63–6.12 ms** (`21.93–23.82 GH/s`) | **23.11–23.14 ms** (`23.20–23.24 GH/s`) | **23.23 GH/s** |
+| DirectCompute (`D3D11 cs_5_0`) | `d3d11-sha1-four-v4` (`cb1-v4`) | **9.14–9.44 ms** (`14.21–14.69 GH/s`) | **37.33–37.38 ms** (`14.36–14.38 GH/s`) | Fallback tier |
+
 ### Expected Average Wait Time (at 20 GH/s)
 
 | Suffix Length | Search Space ($16^k$) | Expected Average Time |
@@ -100,7 +108,7 @@ The v3 kernels introduced in `ad24a05` use four lanes, up to 128 threads per wor
 |---|---|---|---|---|
 | Native Windows 11 UI + System Tray | Yes (WinUI 3 + Mica) | No | No | Browser tab (throttled in background) |
 | Zero Python / CUDA Toolkit Setup | Yes (single `.exe`) | Requires CUDA | Requires runtime | Yes |
-| Universal Windows GPU Fallback | OpenCL + DirectCompute | NVIDIA only | Needs OpenCL ICD | Browser dependent |
+| Universal Windows GPU Fallback | OpenCL + Vulkan + DirectCompute | NVIDIA only | Needs OpenCL ICD | Browser dependent |
 | Multi-GPU + Stepless Rate Cap | Yes (`1%-99%` + `MAX`) | Full speed only | Full speed only | Limited |
 | Encrypted Local Vault + Git-Ready `.asc` | Yes (DPAPI + self-sig) | Raw export | Raw export | Manual download |
 
@@ -109,7 +117,7 @@ The v3 kernels introduced in `ad24a05` use four lanes, up to 128 threads per wor
 ## System Requirements
 
 - **OS**: Windows 10 (build 19041 / 2004 or later) or Windows 11 (`x64` or `ARM64`)
-- **GPU**: One or more hardware GPUs supporting Direct3D 11 Feature Level 11.0+ (OpenCL ICD optional for maximum throughput; CPU-only / software rendering is intentionally excluded)
+- **GPU**: One or more hardware GPUs supporting Direct3D 11 Feature Level 11.0+ (OpenCL ICD or Vulkan 1.1+ driver optional for maximum throughput with automatic Direct3D 11 fallback; CPU-only / software rendering is intentionally excluded)
 
 ---
 
@@ -121,14 +129,14 @@ The v3 kernels introduced in `ad24a05` use four lanes, up to 128 threads per wor
 An OpenPGP v4 `Ed25519Legacy` primary key fingerprint is `SHA-1` over a single 54-byte packet (`0x99 || len(51) || 0x04 || uint32_be(timestamp) || Ed25519 OID + MPI header || 32-byte pubkey`), which fits inside one 64-byte SHA-1 block.
 
 ```text
-CPU: Generate 4 Ed25519 keypairs -> Precompute timestamp-independent SHA-1 schedule
+CPU: Async KeySchedulePool generates 4 Ed25519 keypairs -> Precomputes shared SHA-1 schedule
   |
   v
-GPU: Share rounds 0..4 across all 4 keys for each Unix timestamp (1 .. now)
-  |  Interleave rounds 5..75 across 4 lanes
-  |  After round 75: compare SHA-1 state with the precomputed low suffix target
-  |  Round 76 (only for surviving lanes with more than 8 hex digits): compare high suffix
-  |  Keep one hit per lane and return one candidate for verification
+GPU: Share rounds 0..6 across all 4 keys for each Unix timestamp (2000-01-01 .. now)
+  |  Interleave rounds 7..75 across 4 lanes; reconstruct timestamp XORs minimally
+  |  After round 75: compare a76_nk directly with folded targetLowNoK3 (deferring rotl & K3)
+  |  Round 76 (only on low-word match): evaluate round 76 and compare high suffix target
+  |  Keep one hit per lane in FindOne mode (or fill bounded buffer) and return for verification
   v
 CPU: Recompute full SHA-1 fingerprint -> Verify suffix -> Encrypt seed via DPAPI -> Notify
 ```
