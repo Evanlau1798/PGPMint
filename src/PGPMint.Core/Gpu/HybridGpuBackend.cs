@@ -6,48 +6,100 @@ namespace PGPMint.Core.Gpu;
 /// Universal Windows hardware GPU backend:
 /// - Discovers real physical hardware GPUs via DXGI + WDDM (filtering CPU/WARP, remote, and virtual display adapters).
 /// - Uses native zero-dependency OpenCL (OpenCL.dll) whenever an OpenCL GPU ICD is present for peak throughput.
-/// - Automatically falls back to DirectCompute (D3D11 HLSL) on any Windows GPU without OpenCL ICD or if OpenCL init fails.
+/// - Cascades automatically to native Vulkan Compute (vulkan-1.dll + SPIR-V 1.3) when OpenCL is unavailable or fails.
+/// - Falls back to DirectCompute (D3D11 HLSL) on any Windows GPU without OpenCL or Vulkan 1.1+ compute support.
 /// </summary>
 public sealed class HybridGpuBackend : IGpuBackend
 {
     private readonly DirectComputeBackend _directCompute;
     private readonly string _openClCacheDirectory;
+    private readonly string _vulkanCacheDirectory;
+    private readonly bool _enableOpenCl;
+    private readonly bool _enableVulkan;
     private readonly object _mapLock = new();
     private readonly Dictionary<string, OpenClAdapterDescriptor> _openClMap = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, VulkanAdapterDescriptor> _vulkanMap = new(StringComparer.Ordinal);
+    private bool _enumerated;
 
     public HybridGpuBackend(string? shaderCacheDirectory = null)
+        : this(shaderCacheDirectory, enableOpenCl: true, enableVulkan: true)
+    {
+    }
+
+    internal HybridGpuBackend(string? shaderCacheDirectory, bool enableOpenCl, bool enableVulkan)
     {
         _directCompute = new DirectComputeBackend(shaderCacheDirectory);
         string cacheDirectory = shaderCacheDirectory ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PGPMint", "shader-cache");
         _openClCacheDirectory = Path.Combine(cacheDirectory, "opencl");
+        _vulkanCacheDirectory = Path.Combine(cacheDirectory, "vulkan");
+        _enableOpenCl = enableOpenCl;
+        _enableVulkan = enableVulkan;
     }
 
     public IReadOnlyList<GpuDeviceInfo> EnumerateHardwareGpus()
     {
         IReadOnlyList<GpuDeviceInfo> dxgiHardware = _directCompute.EnumerateHardwareGpus();
-        IReadOnlyList<OpenClAdapterDescriptor> openClAdapters = OpenClEnumerator.TryEnumerateGpuAdapters();
+        IReadOnlyList<OpenClAdapterDescriptor> openClAdapters = _enableOpenCl
+            ? OpenClEnumerator.TryEnumerateGpuAdapters()
+            : Array.Empty<OpenClAdapterDescriptor>();
+        IReadOnlyList<VulkanAdapterDescriptor> vulkanAdapters = _enableVulkan
+            ? VulkanEnumerator.TryEnumerateGpuAdapters()
+            : Array.Empty<VulkanAdapterDescriptor>();
 
         var usedOpenClDevices = new HashSet<nint>();
+        var usedVulkanIndices = new HashSet<int>();
         var results = new List<GpuDeviceInfo>(dxgiHardware.Count);
 
         lock (_mapLock)
         {
+            _enumerated = true;
             _openClMap.Clear();
+            _vulkanMap.Clear();
 
             foreach (GpuDeviceInfo hw in dxgiHardware)
             {
-                OpenClAdapterDescriptor? matched = FindMatchingOpenClAdapter(hw, openClAdapters, usedOpenClDevices);
-                if (matched is not null)
+                OpenClAdapterDescriptor? matchedOpenCl = _enableOpenCl
+                    ? FindMatchingOpenClAdapter(hw, openClAdapters, usedOpenClDevices)
+                    : null;
+                if (matchedOpenCl is not null)
                 {
-                    usedOpenClDevices.Add(matched.DeviceId);
-                    _openClMap[hw.DeviceKey] = matched;
+                    usedOpenClDevices.Add(matchedOpenCl.DeviceId);
+                    _openClMap[hw.DeviceKey] = matchedOpenCl;
+                }
+
+                VulkanAdapterDescriptor? matchedVulkan = null;
+                if (_enableVulkan)
+                {
+                    int vulkanIndex = VulkanBackend.FindMatchingAdapterIndex(hw, vulkanAdapters, usedVulkanIndices);
+                    if (vulkanIndex >= 0)
+                    {
+                        usedVulkanIndices.Add(vulkanIndex);
+                        matchedVulkan = vulkanAdapters[vulkanIndex];
+                        _vulkanMap[hw.DeviceKey] = matchedVulkan;
+                    }
+                }
+
+                if (matchedOpenCl is not null)
+                {
                     results.Add(hw with
                     {
                         BackendName = "OpenCL",
-                        BackendDriverVersion = matched.DriverVersion,
-                        KernelConfiguration = OpenClDevice.ConfigurationFor(matched.MaxWorkgroupSize, matched.MaxParameterSize >= OpenClDevice.ScheduleParamBytes),
+                        BackendDriverVersion = matchedOpenCl.DriverVersion,
+                        KernelConfiguration = OpenClDevice.ConfigurationFor(matchedOpenCl.MaxWorkgroupSize, matchedOpenCl.MaxParameterSize >= OpenClDevice.ScheduleParamBytes),
                         KernelVersion = OpenClKernelSource.KernelVersion
+                    });
+                }
+                else if (matchedVulkan is not null)
+                {
+                    uint wg = Math.Clamp(Math.Min(matchedVulkan.MaxWorkgroupSizeX, matchedVulkan.MaxWorkgroupInvocations),
+                        1u, (uint)VulkanSpirvSource.DefaultWorkgroupSize);
+                    results.Add(hw with
+                    {
+                        BackendName = "Vulkan",
+                        BackendDriverVersion = matchedVulkan.DriverVersion,
+                        KernelConfiguration = VulkanDevice.ConfigurationFor(wg),
+                        KernelVersion = VulkanSpirvSource.KernelVersion
                     });
                 }
                 else
@@ -68,10 +120,30 @@ public sealed class HybridGpuBackend : IGpuBackend
     {
         ArgumentNullException.ThrowIfNull(deviceInfo);
 
-        OpenClAdapterDescriptor? openCl = null;
+        bool needsInitialEnumerate;
         lock (_mapLock)
         {
-            _openClMap.TryGetValue(deviceInfo.DeviceKey, out openCl);
+            needsInitialEnumerate = !_enumerated;
+        }
+
+        if (needsInitialEnumerate)
+        {
+            EnumerateHardwareGpus();
+        }
+
+        OpenClAdapterDescriptor? openCl = null;
+        VulkanAdapterDescriptor? vulkan = null;
+        lock (_mapLock)
+        {
+            if (_enableOpenCl)
+            {
+                _openClMap.TryGetValue(deviceInfo.DeviceKey, out openCl);
+            }
+
+            if (_enableVulkan)
+            {
+                _vulkanMap.TryGetValue(deviceInfo.DeviceKey, out vulkan);
+            }
         }
 
         if (openCl is not null)
@@ -82,10 +154,26 @@ public sealed class HybridGpuBackend : IGpuBackend
             }
             catch
             {
-                // Permanently drop failed OpenCL pairing for this session so retries go straight to DirectCompute
+                // Permanently drop failed OpenCL pairing for this session so retries cascade to Vulkan / DirectCompute
                 lock (_mapLock)
                 {
                     _openClMap.Remove(deviceInfo.DeviceKey);
+                }
+            }
+        }
+
+        if (vulkan is not null)
+        {
+            try
+            {
+                return new VulkanDevice(vulkan, deviceInfo, _vulkanCacheDirectory);
+            }
+            catch
+            {
+                // Permanently drop failed Vulkan pairing for this session so retries go straight to DirectCompute
+                lock (_mapLock)
+                {
+                    _vulkanMap.Remove(deviceInfo.DeviceKey);
                 }
             }
         }

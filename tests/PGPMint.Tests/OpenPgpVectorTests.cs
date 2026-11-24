@@ -94,5 +94,11 @@ public class OpenPgpVectorTests
         string hlsl = DirectComputeShaderSource.BuildFourKeyHlsl();
         Assert.Contains("register(b1)", hlsl, StringComparison.Ordinal);
         Assert.Contains("targetLowNoK3", hlsl, StringComparison.Ordinal);
+
+        Assert.Equal("vulkan-sha1-four-v4", VulkanSpirvSource.KernelVersion);
+        byte[] spirv = VulkanSpirvSource.BuildFourKeySpirv();
+        Assert.True(spirv.Length > 100 && spirv.Length % 4 == 0);
+        Assert.Equal(0x07230203u, BitConverter.ToUInt32(spirv, 0));
+        Assert.Equal(0x00010300u, BitConverter.ToUInt32(spirv, 4));
     }
 }

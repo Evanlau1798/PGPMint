@@ -42,7 +42,7 @@ public class DirectComputeGpuTests
     [Fact]
     public void HybridAndDirectComputeKernelsFindRfc8032VectorAndHandleOverflowAndMaxTimestamp()
     {
-        var backends = new IGpuBackend[] { new HybridGpuBackend(), new DirectComputeBackend() };
+        var backends = new IGpuBackend[] { new HybridGpuBackend(), new VulkanBackend(), new DirectComputeBackend() };
         byte[] basePub = Convert.FromHexString(Rfc8032PublicHex);
 
         foreach (IGpuBackend backend in backends)
@@ -121,7 +121,7 @@ public class DirectComputeGpuTests
     [Fact]
     public void FindOneReturnsOneValidHitWithoutOverflowRescans()
     {
-        var backends = new IGpuBackend[] { new HybridGpuBackend(), new DirectComputeBackend() };
+        var backends = new IGpuBackend[] { new HybridGpuBackend(), new VulkanBackend(), new DirectComputeBackend() };
         byte[][] keys = Enumerable.Range(0, 4).Select(lane =>
         {
             byte[] key = Convert.FromHexString(Rfc8032PublicHex);
@@ -181,16 +181,23 @@ public class DirectComputeGpuTests
     }
 
     [Theory]
-    [InlineData("0", false)]
-    [InlineData("0000000000000000", false)]
-    [InlineData("0", true)]
-    [InlineData("0000000000000000", true)]
-    public async Task CoordinatorStopsHardwareSearchAtBatchBoundary(string suffix, bool forceDirectCompute)
+    [InlineData("0", "Hybrid")]
+    [InlineData("0000000000000000", "Hybrid")]
+    [InlineData("0", "Vulkan")]
+    [InlineData("0000000000000000", "Vulkan")]
+    [InlineData("0", "DirectCompute")]
+    [InlineData("0000000000000000", "DirectCompute")]
+    public async Task CoordinatorStopsHardwareSearchAtBatchBoundary(string suffix, string backendKind)
     {
         string directory = Path.Combine(Path.GetTempPath(), "pm-gpu-stop-" + Guid.NewGuid().ToString("N"));
         try
         {
-            IGpuBackend backend = forceDirectCompute ? new DirectComputeBackend() : new HybridGpuBackend();
+            IGpuBackend backend = backendKind switch
+            {
+                "Vulkan" => new VulkanBackend(),
+                "DirectCompute" => new DirectComputeBackend(),
+                _ => new HybridGpuBackend()
+            };
             using var coordinator = new MultiGpuCoordinator(backend, new AppStateStore(directory),
                 new DpapiVaultStore(directory), new CoordinatorOptions { TelemetryInterval = TimeSpan.FromMilliseconds(20) });
             coordinator.Initialize();
@@ -239,7 +246,7 @@ public class DirectComputeGpuTests
         const uint count = 133;
         string keyId = OpenPgpFingerprintOracle.Compute(third, uint.MaxValue)[^16..];
 
-        foreach (IGpuBackend backend in new IGpuBackend[] { new HybridGpuBackend(), new DirectComputeBackend() })
+        foreach (IGpuBackend backend in new IGpuBackend[] { new HybridGpuBackend(), new VulkanBackend(), new DirectComputeBackend() })
         {
             using IGpuSearchDevice device = backend.CreateDevice(backend.EnumerateHardwareGpus()[0]);
             _output.WriteLine($"GPU: {device.Info.Name}, backend={device.Info.BackendName}, kernel={device.KernelVersion}");
@@ -298,7 +305,7 @@ public class DirectComputeGpuTests
         uint[] counts = [1, 2, 3, 127, 128, 129, 255, 256, 257, 4095, 4096, 4097];
         (uint Start, uint Count)[] boundaries = [(0u, 1u), (1u, 1u), (uint.MaxValue, 1u), (0xFFFFFFF0u, 16u)];
 
-        foreach (IGpuBackend backend in new IGpuBackend[] { new HybridGpuBackend(), new DirectComputeBackend() })
+        foreach (IGpuBackend backend in new IGpuBackend[] { new HybridGpuBackend(), new VulkanBackend(), new DirectComputeBackend() })
         {
             using IGpuSearchDevice device = backend.CreateDevice(backend.EnumerateHardwareGpus()[0]);
             foreach (var (start, count) in boundaries.Concat(counts.Select(count => (0x80000000u - count / 2, count))))
@@ -358,5 +365,82 @@ public class DirectComputeGpuTests
         double ghs = totalCandidates / elapsed / 1e9;
         _output.WriteLine($"GPU: {gpuInfo.Name} [{gpuInfo.BackendName}/{device.KernelVersion}] (Driver {gpuInfo.DriverVersion}) -> {ghs:F3} GH/s ({totalCandidates:N0} candidates in {elapsed:F2}s)");
         Assert.True(ghs > 1.0, $"Expected high-performance GPU throughput > 1.0 GH/s, got {ghs:F3} GH/s");
+    }
+
+    [Fact]
+    public void VulkanLiveGpuSustainedThroughputMeetsHighPerformanceBaseline()
+    {
+        var backend = new VulkanBackend();
+        GpuDeviceInfo gpuInfo = backend.EnumerateHardwareGpus()[0];
+        using IGpuSearchDevice device = backend.CreateDevice(gpuInfo);
+
+        byte[][] keys = Enumerable.Range(0, 4).Select(_ => Ed25519KeyGenerator.Generate().PublicKey).ToArray();
+        var pattern = KeyIdPattern.Parse("1145141919810");
+        uint batchStamps = (uint)(device.MaxCandidatesPerBatch / 4);
+
+        device.ScanGroup(keys, 1u, batchStamps, pattern);
+
+        long startTs = Stopwatch.GetTimestamp();
+        long totalCandidates = 0;
+        uint cursor = 1u;
+        while (Stopwatch.GetElapsedTime(startTs).TotalSeconds < 2.5)
+        {
+            if ((ulong)cursor + batchStamps > (1UL << 32))
+            {
+                keys = Enumerable.Range(0, 4).Select(_ => Ed25519KeyGenerator.Generate().PublicKey).ToArray();
+                cursor = 1u;
+            }
+            device.ScanGroup(keys, cursor, batchStamps, pattern);
+            cursor += batchStamps;
+            totalCandidates += (long)batchStamps * 4;
+        }
+
+        double elapsed = Stopwatch.GetElapsedTime(startTs).TotalSeconds;
+        double ghs = totalCandidates / elapsed / 1e9;
+        _output.WriteLine($"GPU: {gpuInfo.Name} [{gpuInfo.BackendName}/{device.KernelVersion}] (Driver {gpuInfo.DriverVersion}) -> {ghs:F3} GH/s ({totalCandidates:N0} candidates in {elapsed:F2}s)");
+        Assert.True(ghs > 1.0, $"Expected Vulkan GPU throughput > 1.0 GH/s, got {ghs:F3} GH/s");
+    }
+
+    [Fact]
+    public void HybridBackendCascadesAcrossOpenClVulkanAndDirectComputeTiers()
+    {
+        byte[] pub = Convert.FromHexString(Rfc8032PublicHex);
+        byte[][] keys = [pub, pub, pub, pub];
+        var pattern = KeyIdPattern.Parse("99933B470FD7C498");
+
+        var tier1 = new HybridGpuBackend(null, enableOpenCl: true, enableVulkan: true);
+        GpuDeviceInfo info1 = tier1.EnumerateHardwareGpus()[0];
+        using (IGpuSearchDevice dev1 = tier1.CreateDevice(info1))
+        {
+            Assert.Equal("OpenCL", dev1.Info.BackendName);
+            Assert.Equal(OpenClKernelSource.KernelVersion, dev1.KernelVersion);
+            Assert.Contains(Rfc8032Timestamp, dev1.ScanGroup(keys, Rfc8032Timestamp, 1, pattern)[0]);
+        }
+
+        var tier2 = new HybridGpuBackend(null, enableOpenCl: false, enableVulkan: true);
+        GpuDeviceInfo info2 = tier2.EnumerateHardwareGpus()[0];
+        using (IGpuSearchDevice dev2 = tier2.CreateDevice(info2))
+        {
+            Assert.Equal("Vulkan", dev2.Info.BackendName);
+            Assert.Equal(VulkanSpirvSource.KernelVersion, dev2.KernelVersion);
+            Assert.Contains(Rfc8032Timestamp, dev2.ScanGroup(keys, Rfc8032Timestamp, 1, pattern)[0]);
+        }
+
+        var freshTier2 = new HybridGpuBackend(null, enableOpenCl: false, enableVulkan: true);
+        using (IGpuSearchDevice freshDev2 = freshTier2.CreateDevice(info2))
+        {
+            Assert.IsType<VulkanDevice>(freshDev2);
+            Assert.Equal("Vulkan", freshDev2.Info.BackendName);
+            Assert.Contains(Rfc8032Timestamp, freshDev2.ScanGroup(keys, Rfc8032Timestamp, 1, pattern)[0]);
+        }
+
+        var tier3 = new HybridGpuBackend(null, enableOpenCl: false, enableVulkan: false);
+        GpuDeviceInfo info3 = tier3.EnumerateHardwareGpus()[0];
+        using (IGpuSearchDevice dev3 = tier3.CreateDevice(info3))
+        {
+            Assert.Equal("DirectCompute", dev3.Info.BackendName);
+            Assert.Equal(DirectComputeShaderSource.KernelVersion, dev3.KernelVersion);
+            Assert.Contains(Rfc8032Timestamp, dev3.ScanGroup(keys, Rfc8032Timestamp, 1, pattern)[0]);
+        }
     }
 }

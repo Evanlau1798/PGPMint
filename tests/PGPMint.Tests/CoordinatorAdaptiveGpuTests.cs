@@ -12,14 +12,20 @@ namespace PGPMint.Tests;
 public sealed class CoordinatorAdaptiveGpuTests(ITestOutputHelper output)
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task MeasuresFullAndCappedBatchesAndStopLatency(bool forceDirectCompute)
+    [InlineData("Hybrid")]
+    [InlineData("Vulkan")]
+    [InlineData("DirectCompute")]
+    public async Task MeasuresFullAndCappedBatchesAndStopLatency(string backendKind)
     {
         string directory = Path.Combine(Path.GetTempPath(), "pm-adaptive-" + Guid.NewGuid().ToString("N"));
         try
         {
-            IGpuBackend backend = forceDirectCompute ? new DirectComputeBackend() : new HybridGpuBackend();
+            IGpuBackend backend = backendKind switch
+            {
+                "Vulkan" => new VulkanBackend(),
+                "DirectCompute" => new DirectComputeBackend(),
+                _ => new HybridGpuBackend()
+            };
             var options = new CoordinatorOptions
             {
                 CalibrationWindow = TimeSpan.FromMilliseconds(125),
