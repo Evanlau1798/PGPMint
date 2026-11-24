@@ -172,7 +172,7 @@ public partial class CoordinatorCalibrationTests
         {
             var gpu0 = new GpuDeviceInfo("GPU-0", 101, "Mock RTX A", 0x10DE, 1, 0, 1, 10_000_000_000UL, "1.0", true);
             var gpu1 = new GpuDeviceInfo("GPU-1", 102, "Mock RX B", 0x1002, 2, 0, 1, 8_000_000_000UL, "2.0", true);
-            var backend = new FakeGpuBackend(new[] { gpu0, gpu1 }, batchDelayMs: 5, maxCandidatesPerBatch: 4000);
+            var backend = new FakeGpuBackend(new[] { gpu0, gpu1 }, batchDelayMs: 5, maxCandidatesPerBatch: 4000, maxHitBatches: 2);
 
             var stateStore = new AppStateStore(tempDir);
             var vault = new DpapiVaultStore(tempDir);
@@ -198,13 +198,19 @@ public partial class CoordinatorCalibrationTests
             // Start with 1-hex suffix and AutoPauseOnHit=false so 30s (320ms) measurement completes and captures hits
             coordinator.SetAutoPauseOnHit(false);
             var pattern = KeyIdPattern.Parse("0");
+            var sliderDuringCalibration = new TaskCompletionSource<double>(TaskCreationOptions.RunContinuationsAsynchronously);
+            int observedCalibration = 0;
+            coordinator.TelemetryUpdated += (_, telemetry) =>
+            {
+                if (telemetry.State == CoordinatorState.Calibrating && Interlocked.Exchange(ref observedCalibration, 1) == 0)
+                {
+                    coordinator.SetSliderPosition(0.4);
+                    sliderDuringCalibration.TrySetResult(coordinator.SliderPosition);
+                }
+            };
 
             await coordinator.StartSearchAsync(pattern);
-            await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Calibrating, TimeSpan.FromSeconds(2));
-
-            // Attempting to adjust slider during initial full-speed measurement must be ignored
-            coordinator.SetSliderPosition(0.4);
-            Assert.Equal(1.0, coordinator.SliderPosition, 6);
+            Assert.Equal(1.0, await sliderDuringCalibration.Task.WaitAsync(TimeSpan.FromSeconds(2)), 6);
 
             await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Running, TimeSpan.FromSeconds(5));
 
@@ -218,6 +224,7 @@ public partial class CoordinatorCalibrationTests
             // Adjust slider to 60% capped mode while running
             coordinator.SetSliderPosition(0.6);
             Assert.Equal(0.6, coordinator.SliderPosition, 6);
+            Assert.False(coordinator.LatestTelemetry.VaultIsFull);
             ulong checkedBeforeCap = coordinator.LatestTelemetry.TotalChecked;
             await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Running &&
                                        coordinator.LatestTelemetry.TotalChecked > checkedBeforeCap, TimeSpan.FromSeconds(3));

@@ -41,7 +41,7 @@ public sealed class CoordinatorPersistenceTests
             Assert.Equal(records.Count, records.Select(record => record.PublicKeyHex).Distinct().Count());
             Assert.Equal((long)records.Count, coordinator.LatestTelemetry.SessionWork.SavedKeys);
             Assert.Equal(records.Count, vault.LoadMatches().Count);
-            OpenPgpExportGpgTests.VerifyPersistedKeysSign(vault, directory);
+            OpenPgpExportGpgTests.VerifyPersistedKeysSign(vault, Path.Combine(directory, "signing-verification"));
         }
         finally
         {

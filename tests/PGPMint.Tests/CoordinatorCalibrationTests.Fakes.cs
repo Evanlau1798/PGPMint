@@ -46,33 +46,38 @@ public partial class CoordinatorCalibrationTests
         private readonly int _batchDelayMs;
         private readonly long _maxCandidatesPerBatch;
         private readonly string _kernelVersion;
+        private readonly int _maxHitBatches;
 
-        public FakeGpuBackend(IReadOnlyList<GpuDeviceInfo> devices, int batchDelayMs, long maxCandidatesPerBatch, string kernelVersion = "fake-kernel-v1")
+        public FakeGpuBackend(IReadOnlyList<GpuDeviceInfo> devices, int batchDelayMs, long maxCandidatesPerBatch,
+            string kernelVersion = "fake-kernel-v1", int maxHitBatches = int.MaxValue)
         {
             _devices = devices;
             _batchDelayMs = batchDelayMs;
             _maxCandidatesPerBatch = maxCandidatesPerBatch;
             _kernelVersion = kernelVersion;
+            _maxHitBatches = maxHitBatches;
         }
 
         public IReadOnlyList<GpuDeviceInfo> EnumerateHardwareGpus() => _devices;
 
         public IGpuSearchDevice CreateDevice(GpuDeviceInfo deviceInfo) =>
-            new FakeGpuDevice(deviceInfo, _batchDelayMs, _maxCandidatesPerBatch, _kernelVersion);
+            new FakeGpuDevice(deviceInfo, _batchDelayMs, _maxCandidatesPerBatch, _kernelVersion, _maxHitBatches);
     }
 
     private sealed class FakeGpuDevice : IGpuSearchDevice
     {
         private readonly int _batchDelayMs;
+        private int _remainingHitBatches;
         public GpuDeviceInfo Info { get; }
         public int KeysPerBatch => 4;
         public long MaxCandidatesPerBatch { get; }
         public string KernelVersion { get; }
 
-        public FakeGpuDevice(GpuDeviceInfo info, int batchDelayMs, long maxCandidatesPerBatch, string kernelVersion)
+        public FakeGpuDevice(GpuDeviceInfo info, int batchDelayMs, long maxCandidatesPerBatch, string kernelVersion, int maxHitBatches = int.MaxValue)
         {
             Info = info;
             _batchDelayMs = batchDelayMs;
+            _remainingHitBatches = maxHitBatches;
             MaxCandidatesPerBatch = maxCandidatesPerBatch;
             KernelVersion = kernelVersion;
         }
@@ -112,11 +117,12 @@ public partial class CoordinatorCalibrationTests
             var results = new IReadOnlyList<uint>[4];
             Array.Fill<IReadOnlyList<uint>>(results, Array.Empty<uint>());
             var batch = new SearchBatchResult(results, (long)timestampCount * KeysPerBatch, HashEvaluations: null);
-            if (pattern.FixedHexLength >= 10)
+            if (pattern.FixedHexLength >= 10 || _remainingHitBatches == 0)
             {
                 return batch;
             }
 
+            _remainingHitBatches--;
             uint scanLimit = Math.Min(timestampCount, 64u);
             for (int lane = 0; lane < 4; lane++)
             {

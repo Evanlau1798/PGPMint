@@ -17,15 +17,17 @@ public class OpenPgpExportGpgTests
     {
         string? gpg = FindGpgExecutable();
         Assert.NotNull(gpg);
-        string home = Path.Combine(directory, "gpg");
+        // Git for Windows' GnuPG agent socket needs a short home path.
+        string home = Path.Combine(Path.GetTempPath(), "pmg-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(directory);
         Directory.CreateDirectory(home);
         var env = new Dictionary<string, string> { ["GNUPGHOME"] = FormatGpgHomeEnv(gpg, home) };
         string payload = Path.Combine(directory, "payload.txt");
         string keyFile = Path.Combine(directory, "secret.asc");
         string signature = Path.Combine(directory, "payload.sig");
-        File.WriteAllText(payload, "PGPMint continuous mint signing verification\n");
         try
         {
+            File.WriteAllText(payload, "PGPMint continuous mint signing verification\n");
             foreach (MatchedKeyRecord record in vault.LoadMatches())
             {
                 byte[] seed = vault.DecryptPrivateSeed(record);
@@ -58,7 +60,8 @@ public class OpenPgpExportGpgTests
         }
         finally
         {
-            TryKillGpgAgent(gpg, directory, home);
+            TryKillGpgAgent(gpg, home, home);
+            try { Directory.Delete(home, recursive: true); } catch { }
         }
     }
 
