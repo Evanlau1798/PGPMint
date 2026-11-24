@@ -133,6 +133,7 @@ CPU: Recompute full SHA-1 fingerprint -> Verify suffix -> Encrypt seed via DPAPI
 - **Fully Offline / Zero Telemetry**: PGPMint makes no network requests.
 - **Local Data Path**: Settings (`state.json`) and encrypted matches (`hits.vault.json`) are stored strictly in `%LOCALAPPDATA%\PGPMint\`.
 - **Local Key Protection**: Matched Ed25519 private seeds are encrypted on disk with Windows DPAPI (`DataProtectionScope.CurrentUser`) and zeroed in memory after key rotation or export.
+- **Vault Capacity**: The vault keeps up to 50 records. When it is full, minting stops and existing records stay intact. Export keys you want to keep before removing any records. Continuous minting uses a fresh key group after each saved key.
 - **Corrupt Vault Safeguard**: If `hits.vault.json` cannot be parsed, PGPMint creates a `.corrupt.<timestamp>.bak` backup and refuses to overwrite stored keys.
 - **CPU Verification Gate**: Every timestamp returned by a GPU is re-hashed on CPU with `System.Security.Cryptography.SHA1` before persistence.
 

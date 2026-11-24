@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using PGPMint.Core.Crypto;
+using PGPMint.Core.Storage;
 
 namespace PGPMint.Core.Search;
 
@@ -31,8 +32,8 @@ public sealed partial class MultiGpuCoordinator
                     new RateDirective(RateMode.FullSpeed, RateControl.FullSpeedSentinel),
                     end - cursor);
 
-                ScanSearchBatch(device, keys, pubKeys, cursor, warmupStamps, pattern, ct);
-                cursor += warmupStamps;
+                ScanSearchBatch(device, keys, pubKeys, cursor, warmupStamps, pattern, ct, out bool retired);
+                cursor = AdvanceKeyGroupCursor(keys, cursor, warmupStamps, end, retired);
             }
 
             var samples = new List<double>();
@@ -63,9 +64,9 @@ public sealed partial class MultiGpuCoordinator
                     new RateDirective(RateMode.FullSpeed, RateControl.FullSpeedSentinel),
                     end - cursor);
 
-                long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, ct);
+                long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, ct, out bool retired);
 
-                cursor += stamps;
+                cursor = AdvanceKeyGroupCursor(keys, cursor, stamps, end, retired);
                 windowChecked += batchCandidates;
                 totalMeasured += batchCandidates;
 
@@ -221,10 +222,10 @@ public sealed partial class MultiGpuCoordinator
                     directive,
                     end - cursor);
 
-                long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, ct);
+                long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, ct, out bool retired);
                 firstBatch = false;
                 sampleChecked += batchCandidates;
-                cursor += stamps;
+                cursor = AdvanceKeyGroupCursor(keys, cursor, stamps, end, retired);
 
                 if (directive.Mode == RateMode.Capped)
                 {
@@ -272,7 +273,7 @@ public sealed partial class MultiGpuCoordinator
             CalibratedAtUtc: DateTimeOffset.UtcNow);
     }
 
-    private void HandleVerifiedHits(
+    private bool HandleVerifiedHits(
         GpuDeviceInfo deviceInfo,
         Ed25519KeyPair[] keys,
         IReadOnlyList<uint>[] laneHits,
@@ -288,69 +289,95 @@ public sealed partial class MultiGpuCoordinator
                 continue;
             }
 
-            foreach (uint ts in timestamps)
+            uint ts = timestamps[0];
+            string fingerprint = OpenPgpV4Packet.ComputeFingerprint(keys[lane].PublicKey, ts);
+            ulong keyId = OpenPgpV4Packet.ComputeKeyIdUInt64(keys[lane].PublicKey, ts);
+            if (!pattern.Matches(keyId))
             {
-                string fullFingerprint = OpenPgpV4Packet.ComputeFingerprint(keys[lane].PublicKey, ts);
-                ulong keyIdValue = OpenPgpV4Packet.ComputeKeyIdUInt64(keys[lane].PublicKey, ts);
-                if (!pattern.Matches(keyIdValue))
+                throw new InvalidOperationException(
+                    $"GPU hit verification failed on '{deviceInfo.Name}': keyId {keyId:X16} did not match {pattern.CanonicalMask}.");
+            }
+
+            lock (_lifecycleLock)
+            {
+                _sessionWork = _sessionWork with { VerifiedHits = _sessionWork.VerifiedHits + 1 };
+            }
+
+            MatchedKeyRecord record;
+            bool stopAfterSave;
+            lock (_submissionGate)
+            {
+                if (_submissionFailed || Volatile.Read(ref _autoPauseTriggered) != 0 || cancellationToken.IsCancellationRequested)
                 {
-                    throw new InvalidOperationException(
-                        $"GPU hit verification failed on '{deviceInfo.Name}': keyId {keyIdValue:X16} did not match {pattern.CanonicalMask}.");
+                    return false;
+                }
+
+                int storedCount;
+                bool wasAdded;
+                try
+                {
+                    record = _vaultStore.SaveMatch(keys[lane].PrivateSeed, keys[lane].PublicKey, ts, fingerprint,
+                        pattern.CanonicalMask, deviceInfo.Name, out storedCount, out wasAdded);
+                }
+                catch (Exception ex)
+                {
+                    _submissionFailed = true;
+                    if (ex is VaultFullException)
+                    {
+                        _vaultIsFull = true;
+                        _errorMessage = ex.Message;
+                    }
+                    throw;
+                }
+
+                Interlocked.Exchange(ref _totalMatchesCount, storedCount);
+                if (!wasAdded)
+                {
+                    return true;
                 }
 
                 lock (_lifecycleLock)
                 {
-                    _sessionWork = _sessionWork with { VerifiedHits = _sessionWork.VerifiedHits + 1 };
+                    _sessionWork = _sessionWork with { SavedKeys = _sessionWork.SavedKeys + 1 };
                 }
 
-                MatchedKeyRecord record;
-                bool shouldAutoPause;
-                lock (_submissionGate)
+                _vaultIsFull = storedCount >= DpapiVaultStore.MaxStoredMatches;
+                stopAfterSave = _vaultIsFull || (allowAutoPause && _autoPauseOnHit);
+                if (stopAfterSave)
                 {
-                    if (_submissionFailed || Volatile.Read(ref _autoPauseTriggered) != 0 || cancellationToken.IsCancellationRequested)
-                    {
-                        return;
-                    }
-
-                    int storedCount;
-                    bool wasAdded;
-                    try
-                    {
-                        record = _vaultStore.SaveMatch(keys[lane].PrivateSeed, keys[lane].PublicKey, ts, fullFingerprint,
-                            pattern.CanonicalMask, deviceInfo.Name, out storedCount, out wasAdded);
-                    }
-                    catch
-                    {
-                        _submissionFailed = true;
-                        throw;
-                    }
-
-                    Interlocked.Exchange(ref _totalMatchesCount, storedCount);
-                    if (wasAdded)
-                    {
-                        lock (_lifecycleLock)
-                        {
-                            _sessionWork = _sessionWork with { SavedKeys = _sessionWork.SavedKeys + 1 };
-                        }
-                    }
-
-                    shouldAutoPause = allowAutoPause && _autoPauseOnHit;
-                    if (shouldAutoPause)
-                    {
-                        Interlocked.Exchange(ref _autoPauseTriggered, 1);
-                        Interlocked.Increment(ref _rateEpoch);
-                    }
+                    Interlocked.Exchange(ref _autoPauseTriggered, 1);
+                    Interlocked.Increment(ref _rateEpoch);
                 }
+            }
 
-                if (shouldAutoPause)
-                {
-                    _activeOpCts?.Cancel();
-                }
+            if (stopAfterSave)
+            {
+                _activeOpCts?.Cancel();
+            }
 
-                MatchFound?.Invoke(this, record);
+            NotifyMatchFound(record);
+            return true;
+        }
 
-                // Cap to at most 1 saved match per GPU batch to prevent simple suffixes from flooding storage/UI.
-                return;
+        return false;
+    }
+
+    private void NotifyMatchFound(MatchedKeyRecord record)
+    {
+        if (MatchFound is not { } handlers)
+        {
+            return;
+        }
+
+        foreach (EventHandler<MatchedKeyRecord> listener in handlers.GetInvocationList())
+        {
+            try
+            {
+                listener(this, record);
+            }
+            catch (Exception ex)
+            {
+                Trace.TraceError("A PGPMint match notification failed: {0}", ex.GetType().Name);
             }
         }
     }
@@ -369,8 +396,10 @@ public sealed partial class MultiGpuCoordinator
         uint start,
         uint count,
         KeyIdPattern pattern,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        out bool retired)
     {
+        retired = false;
         SearchBatchResult batch = device.ScanBatch(publicKeys, start, count, pattern,
             resultMode: SearchResultMode.FindOne, cancellationToken: cancellationToken);
         long returnedHits = batch.ReturnedHits;
@@ -404,20 +433,39 @@ public sealed partial class MultiGpuCoordinator
 
         if (!cancellationToken.IsCancellationRequested)
         {
-            HandleVerifiedHits(device.Info, keys, batch.Hits, pattern, allowAutoPause: true, cancellationToken);
+            retired = HandleVerifiedHits(device.Info, keys, batch.Hits, pattern, allowAutoPause: true, cancellationToken);
         }
 
         return batch.UniqueCandidatesCompleted;
     }
 
+    private static uint AdvanceKeyGroupCursor(Ed25519KeyPair[] keys, uint cursor, uint count, uint end, bool retired)
+    {
+        if (!retired)
+        {
+            return cursor + count;
+        }
+
+        ZeroKeyGroup(keys);
+        return end;
+    }
+
     private static Ed25519KeyPair[] GenerateKeyGroup(int count)
     {
         var group = new Ed25519KeyPair[count];
-        for (int i = 0; i < count; i++)
+        try
         {
-            group[i] = Ed25519KeyGenerator.Generate();
+            for (int i = 0; i < count; i++)
+            {
+                group[i] = Ed25519KeyGenerator.Generate();
+            }
+            return group;
         }
-        return group;
+        catch
+        {
+            ZeroKeyGroup(group);
+            throw;
+        }
     }
 
     private static void ZeroKeyGroup(Ed25519KeyPair[] keys)

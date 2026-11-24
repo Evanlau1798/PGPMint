@@ -147,10 +147,14 @@ public sealed partial class MultiGpuCoordinator
         }
     }
 
-    private void PublishTelemetry()
+    internal void PublishTelemetry(Func<CoordinatorTelemetry>? captureSnapshot = null)
     {
-        CoordinatorTelemetry snap = BuildTelemetrySnapshot();
-        LatestTelemetry = snap;
+        CoordinatorTelemetry snap;
+        lock (_lifecycleLock)
+        {
+            snap = captureSnapshot?.Invoke() ?? BuildTelemetrySnapshot();
+            _latestTelemetry = snap;
+        }
         TelemetryUpdated?.Invoke(this, snap);
     }
 
@@ -239,7 +243,8 @@ public sealed partial class MultiGpuCoordinator
             ErrorMessage: _errorMessage,
             Devices: deviceSnaps)
         {
-            SessionWork = sessionWork
+            SessionWork = sessionWork,
+            VaultIsFull = _vaultIsFull
         };
     }
 

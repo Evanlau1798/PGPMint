@@ -146,12 +146,15 @@ public partial class CoordinatorCalibrationTests
             MethodInfo? submit = typeof(MultiGpuCoordinator).GetMethod("HandleVerifiedHits", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.NotNull(submit);
 
+            int notified = 0;
+            coordinator.MatchFound += (_, _) => Interlocked.Increment(ref notified);
             object[] candidate = [gpu, new[] { key }, hits, pattern, false, CancellationToken.None];
             submit.Invoke(coordinator, candidate);
             submit.Invoke(coordinator, candidate);
-            coordinator.NotifyVaultCountChanged(vault.LoadMatches().Count);
+            coordinator.SetTargetPattern(pattern);
 
             Assert.Single(vault.LoadMatches());
+            Assert.Equal(1, notified);
             Assert.Equal(2L, coordinator.LatestTelemetry.SessionWork.VerifiedHits);
             Assert.Equal(1L, coordinator.LatestTelemetry.SessionWork.SavedKeys);
         }

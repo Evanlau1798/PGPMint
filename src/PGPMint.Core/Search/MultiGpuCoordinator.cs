@@ -41,6 +41,7 @@ public sealed record CoordinatorTelemetry(
     IReadOnlyList<GpuTelemetrySnapshot> Devices)
 {
     public SearchWorkMetrics SessionWork { get; init; }
+    public bool VaultIsFull { get; init; }
 }
 
 public sealed class CoordinatorOptions
@@ -86,6 +87,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
     private volatile CoordinatorState _state = CoordinatorState.Idle;
     private double _calibrationRemainingSeconds;
     private string? _errorMessage;
+    private volatile bool _vaultIsFull;
 
     private CancellationTokenSource? _activeOpCts;
     private Task? _activeOpTask;
@@ -96,7 +98,8 @@ public sealed partial class MultiGpuCoordinator : IDisposable
     public double SliderPosition => Volatile.Read(ref _sliderPosition);
     public double FullCalibrationDurationSeconds => Math.Max(1.0, _options.FullCalibrationDuration.TotalSeconds);
     public bool AutoPauseOnHit => _autoPauseOnHit;
-    public CoordinatorTelemetry LatestTelemetry { get; private set; }
+    private volatile CoordinatorTelemetry _latestTelemetry;
+    public CoordinatorTelemetry LatestTelemetry => _latestTelemetry;
 
     public event EventHandler<CoordinatorTelemetry>? TelemetryUpdated;
     public event EventHandler<MatchedKeyRecord>? MatchFound;
@@ -112,7 +115,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
         _vaultStore = vaultStore ?? throw new ArgumentNullException(nameof(vaultStore));
         _options = options ?? new CoordinatorOptions();
 
-        LatestTelemetry = BuildTelemetrySnapshot();
+        _latestTelemetry = BuildTelemetrySnapshot();
     }
 
     public void Initialize()
@@ -210,12 +213,6 @@ public sealed partial class MultiGpuCoordinator : IDisposable
     {
         _autoPauseOnHit = enabled;
         _stateStore.Update(s => s.AutoPauseOnHit = enabled);
-    }
-
-    public void NotifyVaultCountChanged(int count)
-    {
-        Interlocked.Exchange(ref _totalMatchesCount, Math.Max(0, count));
-        PublishTelemetry();
     }
 
     public void SetTargetPattern(KeyIdPattern pattern)
@@ -405,6 +402,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
             SyncPatternProgressScope(pattern);
 
             _errorMessage = null;
+            _vaultIsFull = false;
             _submissionFailed = false;
             Interlocked.Exchange(ref _sessionChecked, 0);
             _sessionWork = new SearchWorkMetrics(0, 0, 0, 0, 0);

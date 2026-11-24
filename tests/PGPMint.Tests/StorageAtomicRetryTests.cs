@@ -176,30 +176,87 @@ public class StorageAtomicRetryTests
     }
 
     [Fact]
-    public void DpapiVaultCapsStoredMatchesAtLimitAndSupportsClearAll()
+    public void DpapiVaultPreservesEveryStoredKeyWhenFullAndStillAcceptsDuplicates()
     {
         string tempDir = Path.Combine(Path.GetTempPath(), "pm-cap-" + Guid.NewGuid().ToString("N")[..8]);
         try
         {
             var vault = new DpapiVaultStore(tempDir);
             Ed25519KeyPair pair = Ed25519KeyGenerator.Generate();
-            int totalToInsert = DpapiVaultStore.MaxStoredMatches + 5;
-
-            for (int i = 0; i < totalToInsert; i++)
+            const uint firstTimestamp = 1700000000u;
+            for (uint offset = 0; offset < DpapiVaultStore.MaxStoredMatches; offset++)
             {
-                uint ts = 1700000000u + (uint)i;
-                string fp = OpenPgpV4Packet.ComputeFingerprint(pair.PublicKey, ts);
-                vault.SaveMatch(pair.PrivateSeed, pair.PublicKey, ts, fp, "***0", "Test GPU");
+                SaveAt(firstTimestamp + offset);
             }
 
+            IReadOnlyList<MatchedKeyRecord> original = vault.LoadMatches();
+            Assert.Equal(DpapiVaultStore.MaxStoredMatches, original.Count);
+            byte[] before = File.ReadAllBytes(vault.VaultFilePath);
+            Assert.Equal(original[^1].Id, SaveAt(firstTimestamp).Id);
+            Assert.Equal(before, File.ReadAllBytes(vault.VaultFilePath));
+
+            Exception? rejection = Record.Exception(() => SaveAt(firstTimestamp + DpapiVaultStore.MaxStoredMatches));
+
+            Assert.Equal(original.Select(item => item.Id), vault.LoadMatches().Select(item => item.Id));
+            Assert.Equal(before, File.ReadAllBytes(vault.VaultFilePath));
+            Assert.Equal(DpapiVaultStore.MaxStoredMatches, Assert.IsType<VaultFullException>(rejection).Capacity);
+            Assert.Equal(DpapiVaultStore.MaxStoredMatches, vault.ClearAllMatches());
+            Assert.Empty(vault.LoadMatches());
+
+            MatchedKeyRecord SaveAt(uint timestamp)
+            {
+                string fingerprint = OpenPgpV4Packet.ComputeFingerprint(pair.PublicKey, timestamp);
+                return vault.SaveMatch(pair.PrivateSeed, pair.PublicKey, timestamp, fingerprint, "***0", "Test GPU");
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task DpapiVaultAllowsOnlyOneConcurrentSaveForTheLastSlot()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), "pm-cap-race-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var vault = new DpapiVaultStore(tempDir);
+            Ed25519KeyPair pair = Ed25519KeyGenerator.Generate();
+            const uint firstTimestamp = 1700000000u;
+            uint lastSlot = firstTimestamp + DpapiVaultStore.MaxStoredMatches - 1u;
+            for (uint timestamp = firstTimestamp; timestamp < lastSlot; timestamp++)
+            {
+                SaveAt(vault, timestamp);
+            }
+
+            string[] originalIds = vault.LoadMatches().Select(item => item.Id).ToArray();
+            var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task<Exception?>[] writers =
+            [
+                TrySaveAfterStartAsync(lastSlot),
+                TrySaveAfterStartAsync(lastSlot + 1u)
+            ];
+            start.SetResult();
+            Exception?[] outcomes = await Task.WhenAll(writers);
+
+            Assert.Single(outcomes, outcome => outcome is null);
+            Assert.IsType<VaultFullException>(Assert.Single(outcomes, outcome => outcome is not null));
             IReadOnlyList<MatchedKeyRecord> stored = vault.LoadMatches();
             Assert.Equal(DpapiVaultStore.MaxStoredMatches, stored.Count);
-            // Most recent inserted item is kept at index 0
-            Assert.Equal(1700000000u + (uint)(totalToInsert - 1), stored[0].CreationTimestamp);
+            Assert.Equal(originalIds, stored.Skip(1).Select(item => item.Id));
 
-            int cleared = vault.ClearAllMatches();
-            Assert.Equal(DpapiVaultStore.MaxStoredMatches, cleared);
-            Assert.Empty(vault.LoadMatches());
+            async Task<Exception?> TrySaveAfterStartAsync(uint timestamp)
+            {
+                await start.Task;
+                return Record.Exception(() => SaveAt(new DpapiVaultStore(tempDir), timestamp));
+            }
+
+            void SaveAt(DpapiVaultStore target, uint timestamp)
+            {
+                string fingerprint = OpenPgpV4Packet.ComputeFingerprint(pair.PublicKey, timestamp);
+                target.SaveMatch(pair.PrivateSeed, pair.PublicKey, timestamp, fingerprint, "***0", "Test GPU");
+            }
         }
         finally
         {

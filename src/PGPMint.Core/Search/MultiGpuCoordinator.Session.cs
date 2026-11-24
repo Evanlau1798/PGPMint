@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using PGPMint.Core.Storage;
 
 namespace PGPMint.Core.Search;
 
@@ -19,14 +20,18 @@ public sealed partial class MultiGpuCoordinator
                 _pausedByZeroSlider = false;
                 _state = CoordinatorState.Idle;
                 Volatile.Write(ref _calibrationRemainingSeconds, 0.0);
-                PublishTelemetry();
-                return;
             }
-
-            _state = CoordinatorState.Stopping;
+            else
+            {
+                _state = CoordinatorState.Stopping;
+            }
         }
 
         PublishTelemetry();
+        if (runningTask is null)
+        {
+            return;
+        }
 
         try
         {
@@ -99,6 +104,12 @@ public sealed partial class MultiGpuCoordinator
 
         try
         {
+            if (!CheckVaultCapacity())
+            {
+                PublishTelemetry();
+                return;
+            }
+
             foreach (GpuDeviceInfo info in enabled)
             {
                 IGpuSearchDevice created = _backend.CreateDevice(info);
@@ -233,7 +244,11 @@ public sealed partial class MultiGpuCoordinator
         }
         catch (Exception ex)
         {
-            _errorMessage = ex.Message;
+            if (ex is not VaultFullException)
+            {
+                _errorMessage = ex.Message;
+                _vaultIsFull = false;
+            }
             _state = CoordinatorState.Faulted;
             PublishTelemetry();
         }

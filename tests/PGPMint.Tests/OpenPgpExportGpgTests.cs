@@ -1,5 +1,8 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using PGPMint.Core.Crypto;
+using PGPMint.Core.Search;
+using PGPMint.Core.Storage;
 using Xunit;
 
 namespace PGPMint.Tests;
@@ -9,6 +12,55 @@ public class OpenPgpExportGpgTests
     private const string Rfc8032SeedHex = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
     private const uint Rfc8032Timestamp = 1700000000u;
     private const string ExpectedFingerprint = "7629413EDCE0D2380410F05599933B470FD7C498";
+
+    internal static void VerifyPersistedKeysSign(DpapiVaultStore vault, string directory)
+    {
+        string? gpg = FindGpgExecutable();
+        Assert.NotNull(gpg);
+        string home = Path.Combine(directory, "gpg");
+        Directory.CreateDirectory(home);
+        var env = new Dictionary<string, string> { ["GNUPGHOME"] = FormatGpgHomeEnv(gpg, home) };
+        string payload = Path.Combine(directory, "payload.txt");
+        string keyFile = Path.Combine(directory, "secret.asc");
+        string signature = Path.Combine(directory, "payload.sig");
+        File.WriteAllText(payload, "PGPMint continuous mint signing verification\n");
+        try
+        {
+            foreach (MatchedKeyRecord record in vault.LoadMatches())
+            {
+                byte[] seed = vault.DecryptPrivateSeed(record);
+                OpenPgpExportResult exported;
+                try
+                {
+                    byte[] publicKey = Convert.FromHexString(record.PublicKeyHex);
+                    Assert.Equal(publicKey, Ed25519KeyGenerator.DerivePublicKey(seed));
+                    exported = OpenPgpArmorExporter.ExportKeyPair(new OpenPgpExportRequest(
+                        seed, publicKey, record.CreationTimestamp, "PGPMint Tester", "tester@pgpmint.example", null));
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(seed);
+                }
+
+                Assert.Equal(record.Fingerprint, exported.Fingerprint);
+                File.WriteAllText(keyFile, exported.PrivateKeyArmor);
+                var import = RunProcess(gpg, ["--batch", "--import", keyFile], directory, env);
+                Assert.True(import.ExitCode == 0, import.StdErr);
+
+                var sign = RunProcess(gpg, ["--batch", "--yes", "--detach-sign", "--local-user", record.Fingerprint,
+                    "--output", signature, payload], directory, env);
+                Assert.True(sign.ExitCode == 0, sign.StdErr);
+
+                var verify = RunProcess(gpg, ["--batch", "--verify", signature, payload], directory, env);
+                Assert.True(verify.ExitCode == 0, verify.StdErr);
+                Assert.Contains(record.Fingerprint, verify.StdOut + verify.StdErr);
+            }
+        }
+        finally
+        {
+            TryKillGpgAgent(gpg, directory, home);
+        }
+    }
 
     private static string? FindExecutableOnPath(string fileName)
     {

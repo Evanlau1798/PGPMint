@@ -12,7 +12,7 @@ public sealed class DpapiVaultStore
 
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("PGPMint.Ed25519.Vault.v1");
 
-    private readonly object _gate = new();
+    private static readonly object VaultAccessGate = new();
     public string VaultFilePath { get; }
 
     public DpapiVaultStore(string? dataDirectory = null)
@@ -25,7 +25,7 @@ public sealed class DpapiVaultStore
 
     public IReadOnlyList<MatchedKeyRecord> LoadMatches()
     {
-        lock (_gate)
+        lock (VaultAccessGate)
         {
             return LoadInternal();
         }
@@ -76,19 +76,7 @@ public sealed class DpapiVaultStore
             throw new InvalidOperationException("Fingerprint verification failed before vault persistence.");
         }
 
-        byte[] seedCopy = privateSeed.ToArray();
-        string protectedB64;
-        try
-        {
-            byte[] protectedSeed = ProtectedData.Protect(seedCopy, Entropy, DataProtectionScope.CurrentUser);
-            protectedB64 = Convert.ToBase64String(protectedSeed);
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(seedCopy);
-        }
-
-        lock (_gate)
+        lock (VaultAccessGate)
         {
             List<MatchedKeyRecord> existing = LoadInternal();
             MatchedKeyRecord? duplicate = existing.FirstOrDefault(r =>
@@ -100,6 +88,23 @@ public sealed class DpapiVaultStore
                 totalStoredCount = existing.Count;
                 wasAdded = false;
                 return duplicate;
+            }
+
+            if (existing.Count >= MaxStoredMatches)
+            {
+                throw new VaultFullException(MaxStoredMatches);
+            }
+
+            byte[] seedCopy = privateSeed.ToArray();
+            string protectedB64;
+            try
+            {
+                byte[] protectedSeed = ProtectedData.Protect(seedCopy, Entropy, DataProtectionScope.CurrentUser);
+                protectedB64 = Convert.ToBase64String(protectedSeed);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(seedCopy);
             }
 
             var record = new MatchedKeyRecord(
@@ -114,10 +119,6 @@ public sealed class DpapiVaultStore
                 ProtectedPrivateSeedBase64: protectedB64);
 
             existing.Insert(0, record);
-            if (existing.Count > MaxStoredMatches)
-            {
-                existing.RemoveRange(MaxStoredMatches, existing.Count - MaxStoredMatches);
-            }
             string json = JsonSerializer.Serialize(existing, StorageJsonContext.Default.ListMatchedKeyRecord);
             AtomicFileStore.WriteTextAtomic(VaultFilePath, json);
             totalStoredCount = existing.Count;
@@ -133,12 +134,15 @@ public sealed class DpapiVaultStore
         return ProtectedData.Unprotect(protectedBytes, Entropy, DataProtectionScope.CurrentUser);
     }
 
-    public bool DeleteMatch(string recordId)
+    public bool DeleteMatch(string recordId) => DeleteMatch(recordId, out _);
+
+    internal bool DeleteMatch(string recordId, out int remainingCount)
     {
-        lock (_gate)
+        lock (VaultAccessGate)
         {
             List<MatchedKeyRecord> existing = LoadInternal();
             int removed = existing.RemoveAll(r => string.Equals(r.Id, recordId, StringComparison.Ordinal));
+            remainingCount = existing.Count;
             if (removed > 0)
             {
                 string json = JsonSerializer.Serialize(existing, StorageJsonContext.Default.ListMatchedKeyRecord);
@@ -152,7 +156,7 @@ public sealed class DpapiVaultStore
 
     public int ClearAllMatches()
     {
-        lock (_gate)
+        lock (VaultAccessGate)
         {
             List<MatchedKeyRecord> existing = LoadInternal();
             int count = existing.Count;
