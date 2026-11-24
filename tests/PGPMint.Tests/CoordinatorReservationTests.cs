@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using System.Reflection;
 using PGPMint.Core.Crypto;
 using PGPMint.Core.Search;
 using PGPMint.Core.Storage;
@@ -16,10 +16,7 @@ public sealed class CoordinatorReservationTests
         {
             using var backend = new TwoWorkerBackend();
             var vault = new DpapiVaultStore(directory);
-            Directory.CreateDirectory(directory);
-            File.WriteAllText(vault.VaultFilePath, "[]");
             using var coordinator = new MultiGpuCoordinator(backend, new AppStateStore(directory), vault);
-            using var blockReplace = new FileStream(vault.VaultFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             coordinator.Initialize();
             var terminal = new TaskCompletionSource<CoordinatorState>(TaskCreationOptions.RunContinuationsAsynchronously);
             coordinator.TelemetryUpdated += (_, telemetry) =>
@@ -35,23 +32,37 @@ public sealed class CoordinatorReservationTests
             await coordinator.StartSearchAsync(KeyIdPattern.Parse("0"));
             try
             {
-                long started = Stopwatch.GetTimestamp();
-                while (!Directory.EnumerateFiles(directory, ".hits.vault.json.*.tmp").Any()
-                    && Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(2))
-                {
-                    await Task.Delay(10);
-                }
-                Assert.Single(Directory.EnumerateFiles(directory, ".hits.vault.json.*.tmp"));
+                await Task.WhenAll(backend.WinnerReadbackPending.Task, backend.FollowerReadbackPending.Task)
+                    .WaitAsync(TimeSpan.FromSeconds(5));
 
-                backend.ReleaseFollowerReadback.Set();
-                Task nextBatch = backend.FollowerDispatchedAgain.Task;
-                Assert.Same(nextBatch, await Task.WhenAny(nextBatch, Task.Delay(750)));
-                Assert.Equal(0, saved);
+                object vaultGate = typeof(DpapiVaultStore)
+                    .GetField("VaultAccessGate", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+                object submissionGate = typeof(MultiGpuCoordinator)
+                    .GetField("_submissionGate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(coordinator)!;
+
+                lock (vaultGate)
+                {
+                    backend.ReleaseWinnerReadback.Set();
+                    Assert.True(SpinWait.SpinUntil(() =>
+                    {
+                        if (!Monitor.TryEnter(submissionGate))
+                        {
+                            return true;
+                        }
+                        Monitor.Exit(submissionGate);
+                        return false;
+                    }, TimeSpan.FromSeconds(2)), "Winner did not reserve the vault write.");
+
+                    backend.ReleaseFollowerReadback.Set();
+                    Assert.True(backend.FollowerDispatchedAgain.Wait(TimeSpan.FromSeconds(2)),
+                        "Follower did not dispatch while the winner waited for the vault.");
+                    Assert.Equal(0, Volatile.Read(ref saved));
+                }
             }
             finally
             {
+                backend.ReleaseWinnerReadback.Set();
                 backend.ReleaseFollowerReadback.Set();
-                blockReplace.Dispose();
             }
 
             Assert.Equal(CoordinatorState.Idle, await terminal.Task.WaitAsync(TimeSpan.FromSeconds(5)));
@@ -76,12 +87,21 @@ public sealed class CoordinatorReservationTests
         ];
 
         public ManualResetEventSlim ReleaseFollowerReadback { get; } = new();
-        public TaskCompletionSource FollowerDispatchedAgain { get; } =
+        public ManualResetEventSlim ReleaseWinnerReadback { get; } = new();
+        public TaskCompletionSource FollowerReadbackPending { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource WinnerReadbackPending { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public ManualResetEventSlim FollowerDispatchedAgain { get; } = new();
 
         public IReadOnlyList<GpuDeviceInfo> EnumerateHardwareGpus() => _gpus;
         public IGpuSearchDevice CreateDevice(GpuDeviceInfo info) => new FixtureDevice(info, this);
-        public void Dispose() => ReleaseFollowerReadback.Dispose();
+        public void Dispose()
+        {
+            ReleaseFollowerReadback.Dispose();
+            ReleaseWinnerReadback.Dispose();
+            FollowerDispatchedAgain.Dispose();
+        }
     }
 
     private sealed class FixtureDevice(GpuDeviceInfo info, TwoWorkerBackend backend) : IGpuSearchDevice
@@ -103,15 +123,18 @@ public sealed class CoordinatorReservationTests
             {
                 if (++_batches == 1)
                 {
-                    backend.ReleaseFollowerReadback.Wait(TimeSpan.FromSeconds(3));
+                    backend.FollowerReadbackPending.TrySetResult();
+                    backend.ReleaseFollowerReadback.Wait(cancellationToken);
                 }
                 else
                 {
-                    backend.FollowerDispatchedAgain.TrySetResult();
+                    backend.FollowerDispatchedAgain.Set();
                 }
             }
             else
             {
+                backend.WinnerReadbackPending.TrySetResult();
+                backend.ReleaseWinnerReadback.Wait(cancellationToken);
                 for (uint offset = 0; offset < timestampCount; offset++)
                 {
                     uint timestamp = startTimestamp + offset;
