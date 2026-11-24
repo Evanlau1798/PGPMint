@@ -13,10 +13,12 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
 {
     public const int FourKeyCount = 4;
     internal static readonly GpuKernelConfiguration DefaultConfiguration =
-        new(FourKeyCount, DirectComputeShaderSource.ThreadGroupSize, 0, "fixed-xor");
+        new(FourKeyCount, DirectComputeShaderSource.ThreadGroupSize, 1, "cb1-v4");
     private const uint MaxDispatchGroups = 65535u;
-    private const int SearchParametersUints = 12;
-    private const int ConstantBufferBytes = (SearchParametersUints + Sha1ScheduleHelper.ScheduleRounds * 4) * sizeof(uint);
+    private const int SearchParametersUints = 12; // 48 bytes (16-byte aligned cbuffer b0)
+    private const int ParamsConstantBufferBytes = SearchParametersUints * sizeof(uint);
+    private const int ScheduleConstantBufferUints = (Sha1ScheduleHelper.ScheduleRounds + 1) * FourKeyCount; // 1,248 bytes (b1)
+    private const int ScheduleConstantBufferBytes = ScheduleConstantBufferUints * sizeof(uint);
 
     private static readonly object ShaderCompileLock = new();
     private static byte[]? _cachedShaderBytecode;
@@ -25,12 +27,15 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
     private readonly ID3D11Device _device;
     private readonly ID3D11DeviceContext _context;
     private readonly ID3D11ComputeShader _shader;
-    private readonly ID3D11Buffer _constantBuffer;
-    private readonly uint[] _constantStaging = new uint[ConstantBufferBytes / 4];
+    private readonly ID3D11Buffer _paramsBuffer;
+    private readonly ID3D11Buffer _scheduleBuffer;
+    private readonly uint[] _paramsStaging = new uint[SearchParametersUints];
+    private readonly uint[] _scheduleStaging = new uint[ScheduleConstantBufferUints];
 
     private ID3D11Buffer? _resultsBuffer;
     private ID3D11UnorderedAccessView? _resultsUav;
     private ID3D11Buffer? _resultsStaging;
+    private uint[]? _resultsHost;
     private int _allocatedCapacity;
     private bool _counterMayBeDirty = true;
 
@@ -47,6 +52,8 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
     {
         _adapter = adapter;
         Info = info with { KernelConfiguration = DefaultConfiguration };
+
+        Array.Copy(Sha1ScheduleHelper.PhaseConstants, 0, _scheduleStaging, Sha1ScheduleHelper.ScheduleRounds * FourKeyCount, 4);
 
         // Larger batch cap for discrete GPUs with >= 4GB VRAM while staying safely under Windows 2s TDR
         MaxCandidatesPerBatch = info.DedicatedVideoMemoryBytes >= 4UL * 1024UL * 1024UL * 1024UL
@@ -77,16 +84,22 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
         {
             _shader = CreateComputeShaderWithSelfHealingCache(shaderCacheDirectory);
 
-            var cbDesc = new BufferDescription(
-                byteWidth: (uint)ConstantBufferBytes,
+            _paramsBuffer = _device.CreateBuffer(new BufferDescription(
+                byteWidth: ParamsConstantBufferBytes,
                 bindFlags: BindFlags.ConstantBuffer,
                 usage: ResourceUsage.Dynamic,
-                cpuAccessFlags: CpuAccessFlags.Write);
-            _constantBuffer = _device.CreateBuffer(cbDesc);
+                cpuAccessFlags: CpuAccessFlags.Write));
+
+            _scheduleBuffer = _device.CreateBuffer(new BufferDescription(
+                byteWidth: ScheduleConstantBufferBytes,
+                bindFlags: BindFlags.ConstantBuffer,
+                usage: ResourceUsage.Dynamic,
+                cpuAccessFlags: CpuAccessFlags.Write));
         }
         catch
         {
-            _constantBuffer?.Dispose();
+            _scheduleBuffer?.Dispose();
+            _paramsBuffer?.Dispose();
             _shader?.Dispose();
             _context.Dispose();
             _device.Dispose();
@@ -185,26 +198,28 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
         uint dispatchGroups = Math.Clamp(desiredGroups, 1u, MaxDispatchGroups);
         uint totalThreads = dispatchGroups * (uint)DirectComputeShaderSource.ThreadGroupSize;
 
-        _constantStaging[0] = startTimestamp;
-        _constantStaging[1] = timestampCount;
-        _constantStaging[2] = plan.LowMask;
-        _constantStaging[3] = plan.LowTarget;
-        _constantStaging[4] = plan.HighMask;
-        _constantStaging[5] = plan.HighTarget;
-        _constantStaging[6] = (uint)capacity;
-        _constantStaging[7] = totalThreads;
-        _constantStaging[8] = (uint)resultMode;
+        _paramsStaging[0] = startTimestamp;
+        _paramsStaging[1] = timestampCount;
+        _paramsStaging[2] = plan.LowMask;
+        _paramsStaging[3] = plan.LowTarget;
+        _paramsStaging[4] = plan.HighMask;
+        _paramsStaging[5] = plan.HighTarget;
+        _paramsStaging[6] = (uint)capacity;
+        _paramsStaging[7] = totalThreads;
+        _paramsStaging[8] = (uint)resultMode;
+        _paramsStaging[9] = unchecked(plan.LowTarget - Sha1ScheduleHelper.PhaseConstants[3]);
 
-        UploadConstantBuffer();
+        UploadConstantBuffer(_paramsBuffer, _paramsStaging);
 
         _context.CSSetShader(_shader);
-        _context.CSSetConstantBuffer(0, _constantBuffer);
+        _context.CSSetConstantBuffer(0, _paramsBuffer);
+        _context.CSSetConstantBuffer(1, _scheduleBuffer);
         _context.CSSetUnorderedAccessView(0, _resultsUav!);
         _context.Dispatch(dispatchGroups, 1, 1);
 
         _context.CopyResource(_resultsStaging!, _resultsBuffer!);
 
-        uint[] readback = new uint[totalUints];
+        uint[] readback = _resultsHost!;
         MappedSubresource mapped = _context.Map(_resultsStaging!, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
         try
         {
@@ -250,16 +265,16 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
                 throw new ArgumentException("Each Ed25519 public key must be 32 bytes.", nameof(publicKeys));
             }
 
-            uint[] schedule = Sha1ScheduleHelper.ComputeFixedSchedule(key);
+            uint[] schedule = Sha1ScheduleHelper.GetOrComputeFixedSchedule(key);
             for (int t = 0; t < Sha1ScheduleHelper.ScheduleRounds; t++)
             {
-                // Header is 8 uints (32 bytes); blocks[t] is uint4 at offset 8 + t*4
-                _constantStaging[SearchParametersUints + (t * 4) + lane] = schedule[t];
+                _scheduleStaging[(t * FourKeyCount) + lane] = schedule[t];
             }
 
             _cachedKeys[lane] = (byte[])key.Clone();
         }
 
+        UploadConstantBuffer(_scheduleBuffer, _scheduleStaging);
         _hasCachedKeys = true;
     }
 
@@ -276,6 +291,7 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
         _resultsBuffer = null;
         _resultsStaging?.Dispose();
         _resultsStaging = null;
+        _resultsHost = null;
         _allocatedCapacity = 0;
 
         uint totalUints = (uint)(FourKeyCount * (capacity + 1));
@@ -304,23 +320,24 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
             cpuAccessFlags: CpuAccessFlags.Read);
         _resultsStaging = _device.CreateBuffer(stagingDesc);
 
+        _resultsHost = new uint[totalUints];
         _allocatedCapacity = capacity;
         _counterMayBeDirty = true;
     }
 
-    private void UploadConstantBuffer()
+    private void UploadConstantBuffer(ID3D11Buffer buffer, uint[] staging)
     {
-        MappedSubresource mapped = _context.Map(_constantBuffer, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
+        MappedSubresource mapped = _context.Map(buffer, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
         try
         {
             unsafe
             {
-                _constantStaging.AsSpan().CopyTo(new Span<uint>((void*)mapped.DataPointer, _constantStaging.Length));
+                staging.AsSpan().CopyTo(new Span<uint>((void*)mapped.DataPointer, staging.Length));
             }
         }
         finally
         {
-            _context.Unmap(_constantBuffer, 0);
+            _context.Unmap(buffer, 0);
         }
     }
 
@@ -437,8 +454,10 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
         _resultsBuffer = null;
         _resultsStaging?.Dispose();
         _resultsStaging = null;
+        _resultsHost = null;
         _allocatedCapacity = 0;
-        _constantBuffer.Dispose();
+        _scheduleBuffer.Dispose();
+        _paramsBuffer.Dispose();
         _shader.Dispose();
         _context.Dispose();
         _device.Dispose();

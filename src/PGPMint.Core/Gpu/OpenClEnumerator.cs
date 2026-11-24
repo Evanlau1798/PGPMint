@@ -10,7 +10,8 @@ internal sealed record OpenClAdapterDescriptor(
     ulong GlobalMemoryBytes,
     long? Luid,
     bool SupportsFillBuffer,
-    nuint MaxWorkgroupSize);
+    nuint MaxWorkgroupSize,
+    nuint MaxParameterSize);
 
 internal static unsafe class OpenClEnumerator
 {
@@ -74,9 +75,16 @@ internal static unsafe class OpenClEnumerator
                     OpenClNative.clGetDeviceInfo(dev, OpenClNative.ClDeviceMaxWorkGroupSize, (nuint)sizeof(nuint),
                         &maxWorkgroupSize, null);
 
+                    nuint maxParameterSize = 0;
+                    if (OpenClNative.clGetDeviceInfo(dev, OpenClNative.ClDeviceMaxParameterSize, (nuint)sizeof(nuint),
+                        &maxParameterSize, null) != OpenClNative.ClSuccess)
+                    {
+                        maxParameterSize = 1024;
+                    }
+
                     long? luid = TryReadLuid(dev, extensions);
                     bool supportsFill = OpenClNative.SupportsFillBufferExport() && IsOpenCl12OrNewer(version);
-                    results.Add(new OpenClAdapterDescriptor(dev, name, vendorId, driver, globalMem, luid, supportsFill, maxWorkgroupSize));
+                    results.Add(new OpenClAdapterDescriptor(dev, name, vendorId, driver, globalMem, luid, supportsFill, maxWorkgroupSize, maxParameterSize));
                 }
             }
         }

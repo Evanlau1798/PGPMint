@@ -46,7 +46,7 @@ public sealed class HybridGpuBackend : IGpuBackend
                     {
                         BackendName = "OpenCL",
                         BackendDriverVersion = matched.DriverVersion,
-                        KernelConfiguration = OpenClDevice.ConfigurationFor(matched.MaxWorkgroupSize),
+                        KernelConfiguration = OpenClDevice.ConfigurationFor(matched.MaxWorkgroupSize, matched.MaxParameterSize >= OpenClDevice.ScheduleParamBytes),
                         KernelVersion = OpenClKernelSource.KernelVersion
                     });
                 }
@@ -78,7 +78,7 @@ public sealed class HybridGpuBackend : IGpuBackend
         {
             try
             {
-                return new OpenClDevice(openCl.DeviceId, deviceInfo, openCl.SupportsFillBuffer, _openClCacheDirectory);
+                return new OpenClDevice(openCl.DeviceId, deviceInfo, openCl.SupportsFillBuffer, _openClCacheDirectory, openCl.MaxParameterSize);
             }
             catch
             {

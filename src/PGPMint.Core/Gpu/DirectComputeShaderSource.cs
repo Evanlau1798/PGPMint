@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Text;
 using PGPMint.Core.Crypto;
 
@@ -5,14 +6,14 @@ namespace PGPMint.Core.Gpu;
 
 public static class DirectComputeShaderSource
 {
-    public const string KernelVersion = "d3d11-sha1-four-v3";
+    public const string KernelVersion = "d3d11-sha1-four-v4";
     public const int ThreadGroupSize = 128;
 
     private static readonly string[] PhaseMixExpressions =
     {
         "(d ^ (b & (c ^ d)))",
         "(b ^ c ^ d)",
-        "((b & c) | (d & (b | c)))",
+        "(b ^ ((b ^ c) & (b ^ d)))",
         "(b ^ c ^ d)"
     };
 
@@ -22,40 +23,21 @@ public static class DirectComputeShaderSource
     {
         uint[] templateFixed = Sha1ScheduleHelper.TemplateFixedSchedule;
         uint[] masks = Sha1ScheduleHelper.TimestampMasks;
-        uint[] constants = Sha1ScheduleHelper.PhaseConstants;
+        TimestampXorPlan xorPlan = Sha1ScheduleHelper.SharedXorPlan;
 
         var sb = new StringBuilder(32_768);
         sb.AppendLine("struct Sha1State { uint a; uint b; uint c; uint d; uint e; };");
         sb.AppendLine();
         sb.AppendLine("#define ROTL(x, n) (((x) << (n)) | ((x) >> (32u - (n))))");
+        sb.AppendLine("#define MIX0(b, c, d) ((d) ^ ((b) & ((c) ^ (d))))");
+        sb.AppendLine("#define MIX3(b, c, d) ((b) ^ (c) ^ (d))");
         sb.AppendLine("#define STEP(s, word, mix) { \\");
         sb.AppendLine("    uint b = (s).b, c = (s).c, d = (s).d; \\");
-        sb.AppendLine("    uint next = ((word) + (s).e) + ((mix) + ROTL((s).a, 5u)); \\");
+        sb.AppendLine("    uint next = ((s).e + (mix) + ROTL((s).a, 5u)) + (word); \\");
         sb.AppendLine("    (s).e = d; (s).d = c; (s).c = ROTL(b, 30u); \\");
         sb.AppendLine("    (s).b = (s).a; (s).a = next; \\");
         sb.AppendLine("}");
         sb.AppendLine("#define MATCH_STATE(a, m, t) ((m) == 0xffffffffu ? (a) == (t) : (((a) & (m)) == (t)))");
-        sb.AppendLine("#define CHECK_LAST(s, word, mix, lane) { \\");
-        sb.AppendLine("    [branch] if (MATCH_STATE((s).a, maskLow, targetLow)) { \\");
-        sb.AppendLine("        bool highMatches = true; \\");
-        sb.AppendLine("        [branch] if (maskHigh != 0u) { \\");
-        sb.AppendLine("            STEP(s, word, mix); \\");
-        sb.AppendLine("            highMatches = MATCH_STATE((s).a, maskHigh, targetHigh); \\");
-        sb.AppendLine("        } \\");
-        sb.AppendLine("        [branch] if (highMatches) { \\");
-        sb.AppendLine("            uint slot = (lane) * (capacity + 1u); \\");
-        sb.AppendLine("            uint idx; \\");
-        sb.AppendLine("            if (resultMode != 0u) { \\");
-        sb.AppendLine("                InterlockedCompareExchange(matches[slot], 0u, 1u, idx); \\");
-        sb.AppendLine("            } else { \\");
-        sb.AppendLine("                InterlockedAdd(matches[slot], 1u, idx); \\");
-        sb.AppendLine("            } \\");
-        sb.AppendLine("            if (idx < capacity) { \\");
-        sb.AppendLine("                matches[slot + 1u + idx] = timestamp; \\");
-        sb.AppendLine("            } \\");
-        sb.AppendLine("        } \\");
-        sb.AppendLine("    } \\");
-        sb.AppendLine("}");
         sb.AppendLine();
         sb.AppendLine("cbuffer SearchParams : register(b0)");
         sb.AppendLine("{");
@@ -68,7 +50,14 @@ public static class DirectComputeShaderSource
         sb.AppendLine("    uint capacity;");
         sb.AppendLine("    uint totalThreads;");
         sb.AppendLine("    uint resultMode;");
-        sb.AppendLine("    uint4 blocks[77];");
+        sb.AppendLine("    uint targetLowNoK3;");
+        sb.AppendLine("    uint2 _pad;");
+        sb.AppendLine("};");
+        sb.AppendLine();
+        sb.AppendLine("cbuffer KeySchedule : register(b1)");
+        sb.AppendLine("{");
+        sb.AppendLine($"    uint4 blocks[{Sha1ScheduleHelper.ScheduleRounds}];");
+        sb.AppendLine("    uint4 phaseK;");
         sb.AppendLine("};");
         sb.AppendLine();
         sb.AppendLine("RWStructuredBuffer<uint> matches : register(u0);");
@@ -84,23 +73,79 @@ public static class DirectComputeShaderSource
         for (int t = 0; t < 5; t++)
         {
             string mix = PhaseMixExpressions[t / 20];
-            string baseLiteral = $"0x{templateFixed[t]:x8}u";
-            string wordExpr = FormatRoundWord(t, baseLiteral, masks[t], constants[t / 20], hoistedTsVar: null);
+            string wordExpr = t == 1 ? "(timestamp + phaseK.x)" : $"0x{templateFixed[t]:x8}u";
             sb.AppendLine($"        STEP(sharedState, {wordExpr}, {mix});");
         }
 
         sb.AppendLine("        Sha1State s0 = sharedState, s1 = sharedState, s2 = sharedState, s3 = sharedState;");
 
-        for (int t = 5; t < Sha1ScheduleHelper.ScheduleRounds; t++)
+        foreach (int shift in xorPlan.RequiredRotations)
         {
-            string mix = PhaseMixExpressions[t / 20];
-            uint mask = masks[t];
-            string? tsVar = null;
+            sb.AppendLine($"        uint r{shift} = ROTL(timestamp, {shift}u);");
+        }
 
-            if (mask != 0u)
+        foreach (TimestampXorStep step in xorPlan.Steps)
+        {
+            sb.AppendLine($"        uint {MaskVarName(step.ResultMask)} = {MaskVarName(step.LeftMask)} ^ {MaskVarName(step.RightMask)};");
+        }
+
+        // Round 5: shares (e + Ch + rotl(a, 5)) and rotl(b, 30) across all 4 lanes.
+        sb.AppendLine("        uint base5 = (sharedState.e + MIX0(sharedState.b, sharedState.c, sharedState.d)) + ROTL(sharedState.a, 5u);");
+        sb.AppendLine("        uint c5 = ROTL(sharedState.b, 30u);");
+        for (int lane = 0; lane < 4; lane++)
+        {
+            string comp = LaneComponents[lane];
+            sb.AppendLine($"        s{lane}.e = sharedState.d; s{lane}.d = sharedState.c; s{lane}.c = c5; s{lane}.b = sharedState.a; s{lane}.a = base5 + blocks[5].{comp};");
+        }
+
+        // Round 6: shares (e + Ch) and rotl(b, 30) across all 4 lanes.
+        sb.AppendLine("        uint base6 = s0.e + MIX0(s0.b, s0.c, s0.d);");
+        sb.AppendLine("        uint c6 = ROTL(s0.b, 30u);");
+        for (int lane = 0; lane < 4; lane++)
+        {
+            string comp = LaneComponents[lane];
+            sb.AppendLine($"        {{ uint nx = (base6 + ROTL(s{lane}.a, 5u)) + blocks[6].{comp}; s{lane}.e = s{lane}.d; s{lane}.d = s{lane}.c; s{lane}.c = c6; s{lane}.b = s{lane}.a; s{lane}.a = nx; }}");
+        }
+
+        for (int t = 7; t < Sha1ScheduleHelper.ScheduleRounds - 1; t++)
+        {
+            int phase = t / 20;
+            string mix = PhaseMixExpressions[phase];
+            string kComp = LaneComponents[phase];
+            uint mask = masks[t];
+
+            if (t == 75)
             {
-                tsVar = $"tw{t}";
-                sb.AppendLine($"        uint {tsVar} = {BuildTimestampXorExpression(mask)};");
+                string tw75 = MaskVarName(masks[75]);
+                string tw76 = MaskVarName(masks[76]);
+                for (int lane = 0; lane < 4; lane++)
+                {
+                    string comp = LaneComponents[lane];
+                    sb.AppendLine($"        {{ uint a76_nk = (s{lane}.e + MIX3(s{lane}.b, s{lane}.c, s{lane}.d) + ROTL(s{lane}.a, 5u)) + (blocks[75].{comp} ^ {tw75});");
+                    sb.AppendLine("          bool lowMatches = maskLow == 0xffffffffu ? (a76_nk == targetLowNoK3) : (((a76_nk + phaseK.w) & maskLow) == targetLow);");
+                    sb.AppendLine("          [branch] if (lowMatches) {");
+                    sb.AppendLine("              bool highMatches = true;");
+                    sb.AppendLine("              [branch] if (maskHigh != 0u) {");
+                    sb.AppendLine("                  uint a76 = a76_nk + phaseK.w;");
+                    sb.AppendLine($"                  uint c76 = ROTL(s{lane}.b, 30u);");
+                    sb.AppendLine($"                  uint a77 = (s{lane}.d + MIX3(s{lane}.a, c76, s{lane}.c) + ROTL(a76, 5u)) + ((blocks[76].{comp} ^ {tw76}) + phaseK.w);");
+                    sb.AppendLine("                  highMatches = MATCH_STATE(a77, maskHigh, targetHigh);");
+                    sb.AppendLine("              }");
+                    sb.AppendLine("              [branch] if (highMatches) {");
+                    sb.AppendLine($"                  uint slot = {lane}u * (capacity + 1u);");
+                    sb.AppendLine("                  uint idx;");
+                    sb.AppendLine("                  if (resultMode != 0u) {");
+                    sb.AppendLine("                      InterlockedCompareExchange(matches[slot], 0u, 1u, idx);");
+                    sb.AppendLine("                  } else {");
+                    sb.AppendLine("                      InterlockedAdd(matches[slot], 1u, idx);");
+                    sb.AppendLine("                  }");
+                    sb.AppendLine("                  if (idx < capacity) {");
+                    sb.AppendLine("                      matches[slot + 1u + idx] = timestamp;");
+                    sb.AppendLine("                  }");
+                    sb.AppendLine("              }");
+                    sb.AppendLine("          } }");
+                }
+                continue;
             }
 
             for (int lane = 0; lane < 4; lane++)
@@ -109,16 +154,11 @@ public static class DirectComputeShaderSource
                     ? $"0x{templateFixed[t]:x8}u"
                     : $"blocks[{t}].{LaneComponents[lane]}";
 
-                string wordExpr = FormatRoundWord(t, baseExpr, mask, constants[t / 20], tsVar);
+                string wordExpr = mask == 0u
+                    ? baseExpr
+                    : $"(({baseExpr} ^ {MaskVarName(mask)}) + phaseK.{kComp})";
 
-                if (t == 76)
-                {
-                    sb.AppendLine($"        CHECK_LAST(s{lane}, {wordExpr}, {mix}, {lane}u);");
-                }
-                else
-                {
-                    sb.AppendLine($"        STEP(s{lane}, {wordExpr}, {mix});");
-                }
+                sb.AppendLine($"        STEP(s{lane}, {wordExpr}, {mix});");
             }
         }
 
@@ -127,28 +167,10 @@ public static class DirectComputeShaderSource
         return sb.ToString();
     }
 
-    private static string FormatRoundWord(int t, string baseExpr, uint mask, uint constant, string? hoistedTsVar)
-    {
-        if (mask == 0u)
-        {
-            return baseExpr;
-        }
-
-        string tsExpr = hoistedTsVar ?? BuildTimestampXorExpression(mask);
-        return $"(({baseExpr} ^ ({tsExpr})) + 0x{constant:x8}u)";
-    }
-
-    private static string BuildTimestampXorExpression(uint mask)
-    {
-        var terms = new List<string>(8);
-        for (int shift = 0; shift < 32; shift++)
-        {
-            if (((mask >> shift) & 1u) != 0u)
-            {
-                terms.Add(shift == 0 ? "timestamp" : $"ROTL(timestamp, {shift}u)");
-            }
-        }
-
-        return string.Join(" ^ ", terms);
-    }
+    private static string MaskVarName(uint mask) =>
+        mask == 1u
+            ? "timestamp"
+            : BitOperations.IsPow2(mask)
+                ? $"r{BitOperations.TrailingZeroCount(mask)}"
+                : $"tw_{mask:x8}";
 }

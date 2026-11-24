@@ -13,9 +13,9 @@ internal static unsafe class OpenClProgramCache
     private const int MaxCacheCharacters = DigestHexCharacters + 1 + 4 * ((MaxBinaryBytes + 2) / 3);
 
     internal static (nint Program, nint Kernel, bool Cached) Create(
-        nint context, nint device, GpuDeviceInfo info, string cacheDirectory)
+        nint context, nint device, GpuDeviceInfo info, string cacheDirectory, bool useByValueSchedule = true)
     {
-        byte[] source = Encoding.ASCII.GetBytes(OpenClKernelSource.BuildFourKeyOpenCl());
+        byte[] source = Encoding.ASCII.GetBytes(OpenClKernelSource.BuildFourKeyOpenCl(useByValueSchedule));
         string path = CachePath(cacheDirectory, info, source);
         byte[]? binary = ReadBinary(path);
         if (binary is not null && TryOpenBinary(context, device, binary, out nint cachedProgram, out nint cachedKernel))

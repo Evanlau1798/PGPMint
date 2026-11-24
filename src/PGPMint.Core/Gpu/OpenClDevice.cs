@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using PGPMint.Core.Crypto;
 using PGPMint.Core.Search;
 
@@ -7,9 +8,12 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
 {
     public const int FourKeyCount = 4;
     internal const int DefaultWorkgroupSize = 128;
+    internal const int ScheduleParamUints = FourKeyCount * Sha1ScheduleHelper.ScheduleRounds + 4;
+    internal const int ScheduleParamBytes = ScheduleParamUints * sizeof(uint);
 
     private readonly nint _deviceId;
     private readonly bool _supportsFillBuffer;
+    private readonly bool _useByValueSchedule;
     private readonly nint _context;
     private readonly nint _queue;
     private readonly nint _program;
@@ -21,11 +25,22 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
 
     private nint _resultsBuffer;
     private uint[]? _resultsHost;
+    private GCHandle _resultsHostPin;
     private int _allocatedCapacity;
     private bool _counterMayBeDirty = true;
 
+    private bool _hasLastScalarArgs;
+    private uint _lastFirstArg;
+    private uint _lastCountArg;
+    private uint _lastLowMaskArg;
+    private uint _lastLowTargetArg;
+    private uint _lastHighMaskArg;
+    private uint _lastHighTargetArg;
+    private uint _lastCapacityArg;
+    private uint _lastModeArg;
+
     private readonly byte[][] _cachedKeys = new byte[FourKeyCount][];
-    private readonly uint[] _scheduleHost = new uint[FourKeyCount * Sha1ScheduleHelper.ScheduleRounds];
+    private readonly uint[] _scheduleParamHost = new uint[ScheduleParamUints];
     private bool _hasCachedKeys;
     private bool _disposed;
 
@@ -36,13 +51,22 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
 
     internal bool LoadedProgramBinary { get; }
 
-    internal static GpuKernelConfiguration ConfigurationFor(nuint maxWorkgroupSize) =>
-        new(FourKeyCount, (int)Math.Clamp(maxWorkgroupSize, 1, DefaultWorkgroupSize), 2, "fixed-xor");
+    internal static GpuKernelConfiguration ConfigurationFor(nuint maxWorkgroupSize, bool useByValueSchedule = true) =>
+        new(FourKeyCount, (int)Math.Clamp(maxWorkgroupSize, 1, DefaultWorkgroupSize), 1,
+            useByValueSchedule ? "cmem0-v4" : "constptr-v4");
 
-    internal OpenClDevice(nint deviceId, GpuDeviceInfo info, bool supportsFillBuffer, string programCacheDirectory)
+    internal OpenClDevice(
+        nint deviceId,
+        GpuDeviceInfo info,
+        bool supportsFillBuffer,
+        string programCacheDirectory,
+        nuint maxParameterSize = ScheduleParamBytes)
     {
         _deviceId = deviceId;
         _supportsFillBuffer = supportsFillBuffer;
+        _useByValueSchedule = maxParameterSize >= ScheduleParamBytes;
+
+        Array.Copy(Sha1ScheduleHelper.PhaseConstants, 0, _scheduleParamHost, FourKeyCount * Sha1ScheduleHelper.ScheduleRounds, 4);
 
         // Keep a coarse device ceiling above the adaptive batch limit.
         MaxCandidatesPerBatch = info.DedicatedVideoMemoryBytes >= 6UL * 1024UL * 1024UL * 1024UL
@@ -67,20 +91,26 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
                 throw new InvalidOperationException($"clCreateCommandQueue failed ({err}).");
             }
 
-            (_program, _kernel, LoadedProgramBinary) = OpenClProgramCache.Create(_context, deviceId, info, programCacheDirectory);
+            (_program, _kernel, LoadedProgramBinary) = OpenClProgramCache.Create(
+                _context, deviceId, info, programCacheDirectory, _useByValueSchedule);
 
             nuint kernelMaxGroup = DefaultWorkgroupSize;
             OpenClNative.clGetKernelWorkGroupInfo(_kernel, deviceId, OpenClNative.ClKernelWorkGroupSize, (nuint)sizeof(nuint), &kernelMaxGroup, null);
-            GpuKernelConfiguration configuration = ConfigurationFor(kernelMaxGroup);
+            GpuKernelConfiguration configuration = ConfigurationFor(kernelMaxGroup, _useByValueSchedule);
             _groupSize = (nuint)configuration.WorkgroupSize;
             Info = info with { KernelConfiguration = configuration };
             _candidatesPerGroup = (ulong)_groupSize * (info.IsDiscrete ? 32UL : 8UL);
 
-            nuint blockBytes = (nuint)(FourKeyCount * Sha1ScheduleHelper.ScheduleRounds * sizeof(uint));
-            _blockBuffer = OpenClNative.clCreateBuffer(_context, OpenClNative.ClMemReadOnly, blockBytes, null, &err);
-            if (err != OpenClNative.ClSuccess || _blockBuffer == 0)
+            if (!_useByValueSchedule)
             {
-                throw new InvalidOperationException($"clCreateBuffer(block) failed ({err}).");
+                _blockBuffer = OpenClNative.clCreateBuffer(_context, OpenClNative.ClMemReadOnly, (nuint)ScheduleParamBytes, null, &err);
+                if (err != OpenClNative.ClSuccess || _blockBuffer == 0)
+                {
+                    throw new InvalidOperationException($"clCreateBuffer(block) failed ({err}).");
+                }
+
+                nint blockArg = _blockBuffer;
+                CheckCl(OpenClNative.clSetKernelArg(_kernel, 0, (nuint)sizeof(nint), &blockArg), "clSetKernelArg(0)");
             }
         }
         catch
@@ -179,17 +209,13 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
             if (!filled)
             {
                 Array.Clear(_resultsHost!, 0, totalUints);
-                fixed (uint* hostPtr = _resultsHost)
-                {
-                    CheckCl(OpenClNative.clEnqueueWriteBuffer(_queue, _resultsBuffer, 1, 0, totalBytes, hostPtr, 0, null, null), "clEnqueueWriteBuffer(clear)");
-                }
+                uint* hostPtr = (uint*)_resultsHostPin.AddrOfPinnedObject();
+                CheckCl(OpenClNative.clEnqueueWriteBuffer(_queue, _resultsBuffer, 1, 0, totalBytes, hostPtr, 0, null, null), "clEnqueueWriteBuffer(clear)");
             }
         }
 
         _counterMayBeDirty = true;
 
-        nint blockArg = _blockBuffer;
-        nint resultsArg = _resultsBuffer;
         uint firstArg = startTimestamp;
         uint countArg = timestampCount;
         uint lowMaskArg = plan.LowMask;
@@ -199,16 +225,39 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
         uint capArg = (uint)capacity;
         uint modeArg = (uint)resultMode;
 
-        CheckCl(OpenClNative.clSetKernelArg(_kernel, 0, (nuint)sizeof(nint), &blockArg), "clSetKernelArg(0)");
-        CheckCl(OpenClNative.clSetKernelArg(_kernel, 1, (nuint)sizeof(nint), &resultsArg), "clSetKernelArg(1)");
-        CheckCl(OpenClNative.clSetKernelArg(_kernel, 2, sizeof(uint), &firstArg), "clSetKernelArg(2)");
-        CheckCl(OpenClNative.clSetKernelArg(_kernel, 3, sizeof(uint), &countArg), "clSetKernelArg(3)");
-        CheckCl(OpenClNative.clSetKernelArg(_kernel, 4, sizeof(uint), &lowMaskArg), "clSetKernelArg(4)");
-        CheckCl(OpenClNative.clSetKernelArg(_kernel, 5, sizeof(uint), &lowTargetArg), "clSetKernelArg(5)");
-        CheckCl(OpenClNative.clSetKernelArg(_kernel, 6, sizeof(uint), &highMaskArg), "clSetKernelArg(6)");
-        CheckCl(OpenClNative.clSetKernelArg(_kernel, 7, sizeof(uint), &highTargetArg), "clSetKernelArg(7)");
-        CheckCl(OpenClNative.clSetKernelArg(_kernel, 8, sizeof(uint), &capArg), "clSetKernelArg(8)");
-        CheckCl(OpenClNative.clSetKernelArg(_kernel, 9, sizeof(uint), &modeArg), "clSetKernelArg(9)");
+        if (!_hasLastScalarArgs)
+        {
+            nint resultsArg = _resultsBuffer;
+            CheckCl(OpenClNative.clSetKernelArg(_kernel, 1, (nuint)sizeof(nint), &resultsArg), "clSetKernelArg(1)");
+            CheckCl(OpenClNative.clSetKernelArg(_kernel, 2, sizeof(uint), &firstArg), "clSetKernelArg(2)");
+            CheckCl(OpenClNative.clSetKernelArg(_kernel, 3, sizeof(uint), &countArg), "clSetKernelArg(3)");
+            CheckCl(OpenClNative.clSetKernelArg(_kernel, 4, sizeof(uint), &lowMaskArg), "clSetKernelArg(4)");
+            CheckCl(OpenClNative.clSetKernelArg(_kernel, 5, sizeof(uint), &lowTargetArg), "clSetKernelArg(5)");
+            CheckCl(OpenClNative.clSetKernelArg(_kernel, 6, sizeof(uint), &highMaskArg), "clSetKernelArg(6)");
+            CheckCl(OpenClNative.clSetKernelArg(_kernel, 7, sizeof(uint), &highTargetArg), "clSetKernelArg(7)");
+            CheckCl(OpenClNative.clSetKernelArg(_kernel, 8, sizeof(uint), &capArg), "clSetKernelArg(8)");
+            CheckCl(OpenClNative.clSetKernelArg(_kernel, 9, sizeof(uint), &modeArg), "clSetKernelArg(9)");
+            _hasLastScalarArgs = true;
+            _lastFirstArg = firstArg;
+            _lastCountArg = countArg;
+            _lastLowMaskArg = lowMaskArg;
+            _lastLowTargetArg = lowTargetArg;
+            _lastHighMaskArg = highMaskArg;
+            _lastHighTargetArg = highTargetArg;
+            _lastCapacityArg = capArg;
+            _lastModeArg = modeArg;
+        }
+        else
+        {
+            if (firstArg != _lastFirstArg) { CheckCl(OpenClNative.clSetKernelArg(_kernel, 2, sizeof(uint), &firstArg), "clSetKernelArg(2)"); _lastFirstArg = firstArg; }
+            if (countArg != _lastCountArg) { CheckCl(OpenClNative.clSetKernelArg(_kernel, 3, sizeof(uint), &countArg), "clSetKernelArg(3)"); _lastCountArg = countArg; }
+            if (lowMaskArg != _lastLowMaskArg) { CheckCl(OpenClNative.clSetKernelArg(_kernel, 4, sizeof(uint), &lowMaskArg), "clSetKernelArg(4)"); _lastLowMaskArg = lowMaskArg; }
+            if (lowTargetArg != _lastLowTargetArg) { CheckCl(OpenClNative.clSetKernelArg(_kernel, 5, sizeof(uint), &lowTargetArg), "clSetKernelArg(5)"); _lastLowTargetArg = lowTargetArg; }
+            if (highMaskArg != _lastHighMaskArg) { CheckCl(OpenClNative.clSetKernelArg(_kernel, 6, sizeof(uint), &highMaskArg), "clSetKernelArg(6)"); _lastHighMaskArg = highMaskArg; }
+            if (highTargetArg != _lastHighTargetArg) { CheckCl(OpenClNative.clSetKernelArg(_kernel, 7, sizeof(uint), &highTargetArg), "clSetKernelArg(7)"); _lastHighTargetArg = highTargetArg; }
+            if (capArg != _lastCapacityArg) { CheckCl(OpenClNative.clSetKernelArg(_kernel, 8, sizeof(uint), &capArg), "clSetKernelArg(8)"); _lastCapacityArg = capArg; }
+            if (modeArg != _lastModeArg) { CheckCl(OpenClNative.clSetKernelArg(_kernel, 9, sizeof(uint), &modeArg), "clSetKernelArg(9)"); _lastModeArg = modeArg; }
+        }
 
         ulong groups = Math.Max(1UL, ((ulong)timestampCount + _candidatesPerGroup - 1UL) / _candidatesPerGroup);
         nuint globalSize = (nuint)(groups * _groupSize);
@@ -217,10 +266,8 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
         CheckCl(OpenClNative.clEnqueueNDRangeKernel(_queue, _kernel, 1, null, &globalSize, &localSize, 0, null, null), "clEnqueueNDRangeKernel");
 
         uint[] readback = _resultsHost!;
-        fixed (uint* hostPtr = readback)
-        {
-            CheckCl(OpenClNative.clEnqueueReadBuffer(_queue, _resultsBuffer, 1, 0, totalBytes, hostPtr, 0, null, null), "clEnqueueReadBuffer");
-        }
+        uint* readPtr = (uint*)_resultsHostPin.AddrOfPinnedObject();
+        CheckCl(OpenClNative.clEnqueueReadBuffer(_queue, _resultsBuffer, 1, 0, totalBytes, readPtr, 0, null, null), "clEnqueueReadBuffer");
 
         _counterMayBeDirty = GpuSearchBatch.HasHits(readback, strideUints, FourKeyCount);
         return readback;
@@ -246,7 +293,6 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
             return;
         }
 
-        // Validate all 4 keys before mutating schedule or cache state
         for (int lane = 0; lane < FourKeyCount; lane++)
         {
             if (publicKeys[lane].Length != Ed25519KeyGenerator.KeyByteLength)
@@ -258,14 +304,23 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
         _hasCachedKeys = false;
         for (int lane = 0; lane < FourKeyCount; lane++)
         {
-            uint[] sched = Sha1ScheduleHelper.ComputeFixedSchedule(publicKeys[lane]);
-            Array.Copy(sched, 0, _scheduleHost, lane * Sha1ScheduleHelper.ScheduleRounds, Sha1ScheduleHelper.ScheduleRounds);
+            uint[] sched = Sha1ScheduleHelper.GetOrComputeFixedSchedule(publicKeys[lane]);
+            for (int t = 0; t < Sha1ScheduleHelper.ScheduleRounds; t++)
+            {
+                _scheduleParamHost[t * FourKeyCount + lane] = sched[t];
+            }
         }
 
-        nuint bytes = (nuint)(_scheduleHost.Length * sizeof(uint));
-        fixed (uint* ptr = _scheduleHost)
+        fixed (uint* ptr = _scheduleParamHost)
         {
-            CheckCl(OpenClNative.clEnqueueWriteBuffer(_queue, _blockBuffer, 1, 0, bytes, ptr, 0, null, null), "clEnqueueWriteBuffer(blocks)");
+            if (_useByValueSchedule)
+            {
+                CheckCl(OpenClNative.clSetKernelArg(_kernel, 0, (nuint)ScheduleParamBytes, ptr), "clSetKernelArg(0)");
+            }
+            else
+            {
+                CheckCl(OpenClNative.clEnqueueWriteBuffer(_queue, _blockBuffer, 1, 0, (nuint)ScheduleParamBytes, ptr, 0, null, null), "clEnqueueWriteBuffer(blocks)");
+            }
         }
 
         for (int lane = 0; lane < FourKeyCount; lane++)
@@ -283,18 +338,17 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
             return;
         }
 
-        if (_resultsBuffer != 0)
-        {
-            OpenClNative.clReleaseMemObject(_resultsBuffer);
-            _resultsBuffer = 0;
-        }
-        _resultsHost = null;
-        _allocatedCapacity = 0;
+        ReleaseResultsResources();
 
         int totalUints = FourKeyCount * (capacity + 1);
         nuint bytes = (nuint)(totalUints * sizeof(uint));
         int err = 0;
-        _resultsBuffer = OpenClNative.clCreateBuffer(_context, OpenClNative.ClMemReadWrite, bytes, null, &err);
+        _resultsBuffer = OpenClNative.clCreateBuffer(_context, OpenClNative.ClMemReadWrite | OpenClNative.ClMemAllocHostPtr, bytes, null, &err);
+        if (err != OpenClNative.ClSuccess || _resultsBuffer == 0)
+        {
+            _resultsBuffer = OpenClNative.clCreateBuffer(_context, OpenClNative.ClMemReadWrite, bytes, null, &err);
+        }
+
         CheckCl(err, "clCreateBuffer(results)");
         if (_resultsBuffer == 0)
         {
@@ -302,8 +356,28 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
         }
 
         _resultsHost = new uint[totalUints];
+        _resultsHostPin = GCHandle.Alloc(_resultsHost, GCHandleType.Pinned);
         _allocatedCapacity = capacity;
         _counterMayBeDirty = true;
+        _hasLastScalarArgs = false;
+    }
+
+    private void ReleaseResultsResources()
+    {
+        if (_resultsBuffer != 0)
+        {
+            OpenClNative.clReleaseMemObject(_resultsBuffer);
+            _resultsBuffer = 0;
+        }
+
+        if (_resultsHostPin.IsAllocated)
+        {
+            _resultsHostPin.Free();
+        }
+
+        _resultsHost = null;
+        _allocatedCapacity = 0;
+        _hasLastScalarArgs = false;
     }
 
     private static void CheckCl(int err, string operation)
@@ -327,7 +401,7 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
         }
 
         _disposed = true;
-        if (_resultsBuffer != 0) { OpenClNative.clReleaseMemObject(_resultsBuffer); _resultsBuffer = 0; }
+        ReleaseResultsResources();
         if (_blockBuffer != 0) { OpenClNative.clReleaseMemObject(_blockBuffer); }
         if (_kernel != 0) { OpenClNative.clReleaseKernel(_kernel); }
         if (_program != 0) { OpenClNative.clReleaseProgram(_program); }

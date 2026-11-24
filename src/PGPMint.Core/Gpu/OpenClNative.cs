@@ -10,6 +10,7 @@ internal static unsafe class OpenClNative
 
     public const uint ClDeviceVendorId = 0x1001;
     public const uint ClDeviceMaxWorkGroupSize = 0x1004;
+    public const uint ClDeviceMaxParameterSize = 0x1017;
     public const uint ClDeviceGlobalMemSize = 0x101F;
     public const uint ClDeviceName = 0x102B;
     public const uint ClDriverVersion = 0x102D;
@@ -25,6 +26,7 @@ internal static unsafe class OpenClNative
 
     public const ulong ClMemReadWrite = 1UL << 0;
     public const ulong ClMemReadOnly = 1UL << 2;
+    public const ulong ClMemAllocHostPtr = 1UL << 4;
 
     private static readonly Lazy<nint> LibraryHandle = new(() =>
         NativeLibrary.TryLoad("OpenCL.dll", out nint handle) ? handle : 0);

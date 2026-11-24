@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using PGPMint.Core.Crypto;
+using PGPMint.Core.Gpu;
 using Xunit;
 
 namespace PGPMint.Tests;
@@ -78,5 +79,20 @@ public class OpenPgpVectorTests
         Assert.Equal(32, pair.PrivateSeed.Length);
         Assert.Equal(32, pair.PublicKey.Length);
         Assert.Equal(pair.PublicKey, Ed25519KeyGenerator.DerivePublicKey(pair.PrivateSeed));
+    }
+
+    [Fact]
+    public void GpuKernelSourcesAdvertiseAndEmitV4Contracts()
+    {
+        Assert.Equal("opencl-sha1-four-v4", OpenClKernelSource.KernelVersion);
+        Assert.Equal("d3d11-sha1-four-v4", DirectComputeShaderSource.KernelVersion);
+
+        string openCl = OpenClKernelSource.BuildFourKeyOpenCl();
+        Assert.Contains("ScheduleParam", openCl, StringComparison.Ordinal);
+        Assert.Contains("targetLowNoK3", openCl, StringComparison.Ordinal);
+
+        string hlsl = DirectComputeShaderSource.BuildFourKeyHlsl();
+        Assert.Contains("register(b1)", hlsl, StringComparison.Ordinal);
+        Assert.Contains("targetLowNoK3", hlsl, StringComparison.Ordinal);
     }
 }
