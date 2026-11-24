@@ -30,7 +30,10 @@ internal sealed class KeySchedulePool : IDisposable
         _capacity = capacity;
         _onGroupGenerated = onGroupGenerated;
         _queue = new Queue<PreparedKeyGroup>(capacity);
-        _producerTask = Task.Run(ProduceLoop);
+        _producerTask = WindowsComputeQoS.RunDedicatedWorker(
+            ProduceLoop,
+            "PGPMint-KeySchedulePool",
+            aboveNormalPriority: false);
     }
 
     internal PreparedKeyGroup TakeNext(CancellationToken cancellationToken)

@@ -72,7 +72,12 @@ public sealed partial class MainViewModel
             rawProgressPercent < _smoothProgressCurrent - 0.5)
         {
             _smoothProgressCurrent = t.State == CoordinatorState.Calibrating ? 0.0 : rawProgressPercent;
-            ProgressPercent = _smoothProgressCurrent;
+            if (!_mainWindowInTray ||
+                Math.Abs(_smoothProgressCurrent - ProgressPercent) >= 0.04 ||
+                _smoothProgressCurrent is 0.0 or 100.0)
+            {
+                ProgressPercent = _smoothProgressCurrent;
+            }
         }
         else if (!_smoothProgressTimer.IsRunning)
         {
@@ -131,7 +136,7 @@ public sealed partial class MainViewModel
 
         UpdateActionPermissions(t);
         ValidateDraftTarget();
-        UpdateTrayState(t, rawProgressPercent, activeTargetFound);
+        UpdateTrayState(t, rawProgressPercent, activeTargetFound, forceTrayHintTextUpdate);
     }
 
     private void SyncSmoothProgressTimer()
@@ -327,7 +332,11 @@ public sealed partial class MainViewModel
     private string CalibrationStopText(double remainingSeconds) =>
         $"{Loc.Stop} · {Loc.FormatHudMeasuring((int)Math.Ceiling(remainingSeconds))}";
 
-    private void UpdateTrayState(CoordinatorTelemetry t, double rawProgressPercent, bool activeTargetFound)
+    private void UpdateTrayState(
+        CoordinatorTelemetry t,
+        double rawProgressPercent,
+        bool activeTargetFound,
+        bool forceTooltipUpdate = false)
     {
         string toggleLabel = t.State is CoordinatorState.Calibrating or CoordinatorState.Running or CoordinatorState.Paused
             ? Loc.Stop
@@ -371,23 +380,34 @@ public sealed partial class MainViewModel
             summaryLine1,
             summaryLine2);
 
-        string tip = t.State switch
+        long nowTooltipTick = Environment.TickCount64;
+        bool throttleTooltip = t.State is CoordinatorState.Running or CoordinatorState.Calibrating;
+        if (forceTooltipUpdate ||
+            !throttleTooltip ||
+            t.State != _lastTrayTooltipState ||
+            nowTooltipTick - _lastTrayTooltipTick >= 1000)
         {
-            CoordinatorState.Running => string.IsNullOrEmpty(ActiveTargetSuffix)
-                ? $"PGPMint  {rateCompact}\n{ProbabilityText} | {LiveEtaText} | {CheckedCountText}"
-                : $"PGPMint  {rateCompact}\n{ProbabilityText} | {LiveEtaText} | {CheckedCountText}\n{ActiveFormattedPreview}",
-            CoordinatorState.Calibrating => hasRate
-                ? $"PGPMint  {hudMeasuring}\n{rateCompact}"
-                : $"PGPMint  {hudMeasuring}",
-            CoordinatorState.Faulted => $"PGPMint - {Loc.Error}",
-            _ => (t.TotalChecked > 0 || activeTargetFound)
-                ? $"PGPMint - {Loc.Idle}\n{ProbabilityText} | {CheckedCountText}"
-                : (string.IsNullOrEmpty(ActiveTargetSuffix)
-                    ? $"PGPMint - {Loc.Idle}"
-                    : $"PGPMint - {Loc.Idle}\n{ActiveFormattedPreview}")
-        };
+            _lastTrayTooltipState = t.State;
+            _lastTrayTooltipTick = nowTooltipTick;
 
-        _trayIcon.UpdateTooltip(tip);
+            string tip = t.State switch
+            {
+                CoordinatorState.Running => string.IsNullOrEmpty(ActiveTargetSuffix)
+                    ? $"PGPMint  {rateCompact}\n{ProbabilityText} | {LiveEtaText} | {CheckedCountText}"
+                    : $"PGPMint  {rateCompact}\n{ProbabilityText} | {LiveEtaText} | {CheckedCountText}\n{ActiveFormattedPreview}",
+                CoordinatorState.Calibrating => hasRate
+                    ? $"PGPMint  {hudMeasuring}\n{rateCompact}"
+                    : $"PGPMint  {hudMeasuring}",
+                CoordinatorState.Faulted => $"PGPMint - {Loc.Error}",
+                _ => (t.TotalChecked > 0 || activeTargetFound)
+                    ? $"PGPMint - {Loc.Idle}\n{ProbabilityText} | {CheckedCountText}"
+                    : (string.IsNullOrEmpty(ActiveTargetSuffix)
+                        ? $"PGPMint - {Loc.Idle}"
+                        : $"PGPMint - {Loc.Idle}\n{ActiveFormattedPreview}")
+            };
+
+            _trayIcon.UpdateTooltip(tip);
+        }
 
         string hudPrimary = t.State switch
         {

@@ -193,11 +193,16 @@ public sealed partial class MultiGpuCoordinator
                 _state = CoordinatorState.Calibrating;
                 PublishTelemetry();
 
-                var calTasks = devices.Select(slot => Task.Run(() => RunOnDevice(slot, (device, _) =>
-                    RunZeroWasteCalibrationOnOpenDevice(device, pattern, workerToken, failureToken)),
-                    CancellationToken.None)).ToArray();
+                CalibrationRecord?[] records;
+                using (WindowsComputeQoS.AcquireProcessScope())
+                {
+                    var calTasks = devices.Select(slot => WindowsComputeQoS.RunDedicatedWorker(() => RunOnDevice(slot, (device, _) =>
+                        RunZeroWasteCalibrationOnOpenDevice(device, pattern, workerToken, failureToken)),
+                        "PGPMint-GpuWorker",
+                        aboveNormalPriority: true)).ToArray();
 
-                CalibrationRecord?[] records = await Task.WhenAll(calTasks).ConfigureAwait(false);
+                    records = await Task.WhenAll(calTasks).ConfigureAwait(false);
+                }
                 Volatile.Write(ref calClockActive, 0);
 
                 if (workerToken.IsCancellationRequested)
@@ -228,10 +233,11 @@ public sealed partial class MultiGpuCoordinator
                 PublishTelemetry();
 
                 // Phase 2: Continuous multi-GPU search (dynamic median updates only while in FullSpeed mode)
-                var workerTasks = devices.Select(slot => Task.Run(() => RunOnDevice(slot, (device, recovered) =>
+                var workerTasks = devices.Select(slot => WindowsComputeQoS.RunDedicatedWorker(() => RunOnDevice(slot, (device, recovered) =>
                 {
                     if (recovered && GetValidatedDeviceBaselineHps(device.Info) <= 0)
                     {
+                        using IDisposable recoveryQoS = WindowsComputeQoS.AcquireProcessScope();
                         CalibrationRecord? record = RunZeroWasteCalibrationOnOpenDevice(device, pattern, workerToken, failureToken);
                         if (record is not null)
                         {
@@ -241,7 +247,7 @@ public sealed partial class MultiGpuCoordinator
 
                     RunSearchWorkerLoop(device, pattern, workerToken, failureToken);
                     return true;
-                }), CancellationToken.None)).ToArray();
+                }), "PGPMint-GpuWorker", aboveNormalPriority: true)).ToArray();
 
                 await Task.WhenAll(workerTasks).ConfigureAwait(false);
             }

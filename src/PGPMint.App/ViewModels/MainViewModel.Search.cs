@@ -216,7 +216,14 @@ public sealed partial class MainViewModel
     {
         _mainWindowInTray = inTray;
         _miniHud.SetMainWindowInTray(inTray);
-        SyncSmoothProgressTimer();
+        if (!inTray && IsInitialized)
+        {
+            ApplyTelemetry(_coordinator.LatestTelemetry, forceTrayHintTextUpdate: true);
+        }
+        else
+        {
+            SyncSmoothProgressTimer();
+        }
     }
 
     public void SaveMiniHudPosition(int x, int y)

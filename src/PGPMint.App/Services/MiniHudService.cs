@@ -59,6 +59,7 @@ public sealed class MiniHudService : IDisposable
     private static readonly IntPtr MaNoActivate = (IntPtr)3;
     private static readonly IntPtr FullscreenPollTimerId = (IntPtr)1;
     private const uint FullscreenPollIntervalMs = 1500;
+    private const long TelemetryRedrawIntervalMs = 1000;
 
     private const int SwHide = 0;
     private const int SwShowNoActivate = 4;
@@ -87,8 +88,19 @@ public sealed class MiniHudService : IDisposable
     private ID2D1Factory? _d2dFactory;
     private IDWriteFactory? _dwriteFactory;
     private ID2D1DCRenderTarget? _dcRenderTarget;
+    private float _cachedFormatScale;
+    private IDWriteTextFormat? _rateTextFormat;
+    private IDWriteTextFormat? _probTextFormat;
+    private IDWriteTextFormat? _etaTextFormat;
     private string _monoFontFamily = "Cascadia Mono";
     private string _uiFontFamily = "Segoe UI";
+
+    private IntPtr _backbufferDc;
+    private IntPtr _backbufferDib;
+    private IntPtr _backbufferOldObj;
+    private int _backbufferWidth;
+    private int _backbufferHeight;
+    private bool _dcBound;
 
     private IntPtr _hwnd;
     private int _widthPx;
@@ -105,6 +117,9 @@ public sealed class MiniHudService : IDisposable
     private bool _hasRenderedSurface;
     private bool _pollTimerRunning;
     private bool _isRecalculating;
+    private bool _cachedIsLightTheme;
+    private bool _isFullscreenSuppressed;
+    private long _lastRenderTick = -TelemetryRedrawIntervalMs;
 
     private bool _isDragging;
     private int _dragStartMouseX;
@@ -125,6 +140,7 @@ public sealed class MiniHudService : IDisposable
     {
         _wndProc = WindowProc;
         _taskbarCreatedMsg = RegisterWindowMessageW("TaskbarCreated");
+        _cachedIsLightTheme = QuerySystemLightTheme();
 
         InitializeCpuDirect2D();
         CreateHudWindow();
@@ -179,14 +195,57 @@ public sealed class MiniHudService : IDisposable
         return candidates[^1];
     }
 
+    private void DisposeTextFormats()
+    {
+        _rateTextFormat?.Dispose();
+        _rateTextFormat = null;
+        _probTextFormat?.Dispose();
+        _probTextFormat = null;
+        _etaTextFormat?.Dispose();
+        _etaTextFormat = null;
+        _cachedFormatScale = 0f;
+    }
+
     private void DisposeDirect2D()
     {
+        DisposeTextFormats();
+        _dcBound = false;
         _dcRenderTarget?.Dispose();
         _dcRenderTarget = null;
         _dwriteFactory?.Dispose();
         _dwriteFactory = null;
         _d2dFactory?.Dispose();
         _d2dFactory = null;
+    }
+
+    private void DisposeBackbuffer()
+    {
+        _dcBound = false;
+        if (_backbufferDc != IntPtr.Zero)
+        {
+            if (_backbufferOldObj != IntPtr.Zero)
+            {
+                SelectObject(_backbufferDc, _backbufferOldObj);
+                _backbufferOldObj = IntPtr.Zero;
+            }
+
+            if (_backbufferDib != IntPtr.Zero)
+            {
+                DeleteObject(_backbufferDib);
+                _backbufferDib = IntPtr.Zero;
+            }
+
+            DeleteDC(_backbufferDc);
+            _backbufferDc = IntPtr.Zero;
+        }
+        else if (_backbufferDib != IntPtr.Zero)
+        {
+            DeleteObject(_backbufferDib);
+            _backbufferDib = IntPtr.Zero;
+        }
+
+        _backbufferWidth = 0;
+        _backbufferHeight = 0;
     }
 
     public void Configure(bool enabledByUser, int? savedX, int? savedY)
@@ -205,6 +264,7 @@ public sealed class MiniHudService : IDisposable
         }
 
         RecalculateMetricsAndPosition();
+        _isFullscreenSuppressed = QueryFullscreenAppActive();
         RefreshVisibilityAndRender(forceRedraw: true);
     }
 
@@ -216,6 +276,10 @@ public sealed class MiniHudService : IDisposable
         }
 
         _enabledByUser = enabled;
+        if (enabled)
+        {
+            _isFullscreenSuppressed = QueryFullscreenAppActive();
+        }
         RefreshVisibilityAndRender(forceRedraw: true);
     }
 
@@ -227,6 +291,10 @@ public sealed class MiniHudService : IDisposable
         }
 
         _mainWindowInTray = inTray;
+        if (inTray)
+        {
+            _isFullscreenSuppressed = QueryFullscreenAppActive();
+        }
         RefreshVisibilityAndRender(forceRedraw: true);
     }
 
@@ -238,13 +306,19 @@ public sealed class MiniHudService : IDisposable
         }
 
         _setupActive = setupActive;
+        if (!setupActive)
+        {
+            _isFullscreenSuppressed = QueryFullscreenAppActive();
+        }
         RefreshVisibilityAndRender(forceRedraw: true);
     }
 
     public void UpdateSnapshot(MiniHudSnapshot snapshot)
     {
+        bool bypassThrottle = snapshot.State != _lastSnapshot.State ||
+                              snapshot.State is not (CoordinatorState.Running or CoordinatorState.Calibrating);
         _lastSnapshot = snapshot;
-        RefreshVisibilityAndRender(forceRedraw: false);
+        RefreshVisibilityAndRender(forceRedraw: false, bypassThrottle: bypassThrottle);
     }
 
     private void CreateHudWindow()
@@ -425,7 +499,7 @@ public sealed class MiniHudService : IDisposable
         }
     }
 
-    private void RefreshVisibilityAndRender(bool forceRedraw)
+    private void RefreshVisibilityAndRender(bool forceRedraw, bool bypassThrottle = false)
     {
         if (_disposed || _hwnd == IntPtr.Zero)
         {
@@ -435,7 +509,7 @@ public sealed class MiniHudService : IDisposable
         bool eligible = _configured && _enabledByUser && _mainWindowInTray && !_setupActive;
         SyncFullscreenPollTimer(eligible);
 
-        bool wantVisible = eligible && (_isDragging || !IsFullscreenAppActive());
+        bool wantVisible = eligible && (_isDragging || !_isFullscreenSuppressed);
 
         if (!wantVisible)
         {
@@ -447,15 +521,20 @@ public sealed class MiniHudService : IDisposable
             return;
         }
 
-        bool isLight = IsSystemLightTheme();
+        bool isLight = _cachedIsLightTheme;
         string renderKey = $"{_lastSnapshot.State}|{_lastSnapshot.RateText}|{_lastSnapshot.ProbabilityText}|{_lastSnapshot.EtaText}|{(int)Math.Round(_lastSnapshot.ProgressFraction * 500)}|{_widthPx}x{_heightPx}|{isLight}";
 
-        if (forceRedraw || !_isVisible || !string.Equals(_lastRenderedKey, renderKey, StringComparison.Ordinal))
+        bool keyChanged = !string.Equals(_lastRenderedKey, renderKey, StringComparison.Ordinal);
+        long nowTick = Environment.TickCount64;
+        bool throttleAllows = forceRedraw || bypassThrottle || !_isVisible || (nowTick - _lastRenderTick >= TelemetryRedrawIntervalMs);
+
+        if ((forceRedraw || !_isVisible || keyChanged) && throttleAllows)
         {
             if (RenderLayeredSurface(_lastSnapshot, isLight))
             {
                 _lastRenderedKey = renderKey;
                 _hasRenderedSurface = true;
+                _lastRenderTick = nowTick;
             }
             else if (!_hasRenderedSurface)
             {
@@ -471,7 +550,7 @@ public sealed class MiniHudService : IDisposable
         }
     }
 
-    private bool IsFullscreenAppActive()
+    private bool QueryFullscreenAppActive()
     {
         try
         {
@@ -552,7 +631,7 @@ public sealed class MiniHudService : IDisposable
         return false;
     }
 
-    private static bool IsSystemLightTheme()
+    private static bool QuerySystemLightTheme()
     {
         try
         {
@@ -626,6 +705,121 @@ public sealed class MiniHudService : IDisposable
         return false;
     }
 
+    private bool EnsureBackbuffer(IntPtr screenDc, int width, int height)
+    {
+        if (_backbufferDc != IntPtr.Zero &&
+            _backbufferDib != IntPtr.Zero &&
+            _backbufferWidth == width &&
+            _backbufferHeight == height)
+        {
+            return true;
+        }
+
+        DisposeBackbuffer();
+
+        IntPtr memDc = CreateCompatibleDC(screenDc);
+        if (memDc == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        var bmi = new BITMAPINFOHEADER
+        {
+            biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>(),
+            biWidth = width,
+            biHeight = -height,
+            biPlanes = 1,
+            biBitCount = 32,
+            biCompression = 0
+        };
+
+        IntPtr hBitmap = CreateDIBSection(screenDc, ref bmi, 0, out IntPtr bitsPtr, IntPtr.Zero, 0);
+        if (hBitmap == IntPtr.Zero || bitsPtr == IntPtr.Zero)
+        {
+            if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap);
+            DeleteDC(memDc);
+            return false;
+        }
+
+        IntPtr oldBitmap = SelectObject(memDc, hBitmap);
+        if (oldBitmap == IntPtr.Zero)
+        {
+            DeleteObject(hBitmap);
+            DeleteDC(memDc);
+            return false;
+        }
+
+        _backbufferDc = memDc;
+        _backbufferDib = hBitmap;
+        _backbufferOldObj = oldBitmap;
+        _backbufferWidth = width;
+        _backbufferHeight = height;
+        _dcBound = false;
+        return true;
+    }
+
+    private void EnsureTextFormats(float scale)
+    {
+        if (_dwriteFactory is null)
+        {
+            return;
+        }
+
+        if (_rateTextFormat is not null &&
+            _probTextFormat is not null &&
+            _etaTextFormat is not null &&
+            MathF.Abs(scale - _cachedFormatScale) <= 0.001f)
+        {
+            return;
+        }
+
+        DisposeTextFormats();
+        try
+        {
+            _rateTextFormat = CreateCachedTextFormat(_monoFontFamily, FontWeight.SemiBold, 12.2f * scale, TextAlignment.Leading);
+            _probTextFormat = CreateCachedTextFormat(_monoFontFamily, FontWeight.Normal, 11.0f * scale, TextAlignment.Center);
+            _etaTextFormat = CreateCachedTextFormat(_uiFontFamily, FontWeight.Medium, 11.2f * scale, TextAlignment.Trailing);
+            _cachedFormatScale = scale;
+        }
+        catch
+        {
+            DisposeTextFormats();
+            throw;
+        }
+    }
+
+    private IDWriteTextFormat CreateCachedTextFormat(
+        string fontFamily,
+        FontWeight fontWeight,
+        float fontSize,
+        TextAlignment alignment)
+    {
+        IDWriteTextFormat fmt = _dwriteFactory!.CreateTextFormat(
+            fontFamily,
+            null,
+            fontWeight,
+            DWriteFontStyle.Normal,
+            FontStretch.Normal,
+            fontSize,
+            string.Empty);
+
+        try
+        {
+            fmt.TextAlignment = alignment;
+            fmt.ParagraphAlignment = ParagraphAlignment.Center;
+            fmt.WordWrapping = WordWrapping.NoWrap;
+
+            using IDWriteInlineObject ellipsis = _dwriteFactory.CreateEllipsisTrimmingSign(fmt);
+            fmt.SetTrimming(new Trimming { Granularity = TrimmingGranularity.Character }, ellipsis);
+            return fmt;
+        }
+        catch
+        {
+            fmt.Dispose();
+            throw;
+        }
+    }
+
     private bool TryRenderLayeredSurfaceOnce(MiniHudSnapshot snap, bool isLight, out bool needsRecreate)
     {
         needsRecreate = false;
@@ -640,36 +834,9 @@ public sealed class MiniHudService : IDisposable
             return false;
         }
 
-        IntPtr memDc = CreateCompatibleDC(screenDc);
-        if (memDc == IntPtr.Zero)
-        {
-            ReleaseDC(IntPtr.Zero, screenDc);
-            return false;
-        }
-
-        IntPtr hBitmap = IntPtr.Zero;
-        IntPtr oldBitmap = IntPtr.Zero;
-
         try
         {
-            var bmi = new BITMAPINFOHEADER
-            {
-                biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>(),
-                biWidth = _widthPx,
-                biHeight = -_heightPx,
-                biPlanes = 1,
-                biBitCount = 32,
-                biCompression = 0
-            };
-
-            hBitmap = CreateDIBSection(screenDc, ref bmi, 0, out IntPtr bitsPtr, IntPtr.Zero, 0);
-            if (hBitmap == IntPtr.Zero || bitsPtr == IntPtr.Zero)
-            {
-                return false;
-            }
-
-            oldBitmap = SelectObject(memDc, hBitmap);
-            if (oldBitmap == IntPtr.Zero)
+            if (!EnsureBackbuffer(screenDc, _widthPx, _heightPx))
             {
                 return false;
             }
@@ -692,7 +859,13 @@ public sealed class MiniHudService : IDisposable
                 _ => FromArgb(255, 107, 114, 128)
             };
 
-            _dcRenderTarget.BindDC(memDc, new RawRect(0, 0, _widthPx, _heightPx));
+            if (!_dcBound)
+            {
+                _dcRenderTarget.BindDC(_backbufferDc, new RawRect(0, 0, _widthPx, _heightPx));
+                _dcBound = true;
+            }
+
+            EnsureTextFormats(s);
             _dcRenderTarget.BeginDraw();
             SharpGen.Runtime.Result endHr;
             try
@@ -733,32 +906,9 @@ public sealed class MiniHudService : IDisposable
                 float etaX = probX + probW;
                 float etaW = Math.Max(24f, w - etaX - 10f * s);
 
-                DrawDirectWriteText(
-                    snap.RateText,
-                    fontFamily: _monoFontFamily,
-                    fontWeight: FontWeight.SemiBold,
-                    fontSize: 12.2f * s,
-                    brush: primaryBrush,
-                    bounds: new Rect(rateX, contentTop, rateW, contentH),
-                    alignment: TextAlignment.Leading);
-
-                DrawDirectWriteText(
-                    snap.ProbabilityText,
-                    fontFamily: _monoFontFamily,
-                    fontWeight: FontWeight.Normal,
-                    fontSize: 11.0f * s,
-                    brush: mutedBrush,
-                    bounds: new Rect(probX, contentTop, probW, contentH),
-                    alignment: TextAlignment.Center);
-
-                DrawDirectWriteText(
-                    snap.EtaText,
-                    fontFamily: _uiFontFamily,
-                    fontWeight: FontWeight.Medium,
-                    fontSize: 11.2f * s,
-                    brush: mutedBrush,
-                    bounds: new Rect(etaX, contentTop, etaW, contentH),
-                    alignment: TextAlignment.Trailing);
+                DrawCachedText(snap.RateText, _rateTextFormat, primaryBrush, new Rect(rateX, contentTop, rateW, contentH));
+                DrawCachedText(snap.ProbabilityText, _probTextFormat, mutedBrush, new Rect(probX, contentTop, probW, contentH));
+                DrawCachedText(snap.EtaText, _etaTextFormat, mutedBrush, new Rect(etaX, contentTop, etaW, contentH));
 
                 // 4. Rounded 2px bottom progress hairline
                 float barPadX = 10f * s;
@@ -787,6 +937,7 @@ public sealed class MiniHudService : IDisposable
 
             if (endHr == D2D1ResultCode.RecreateTarget)
             {
+                _dcBound = false;
                 needsRecreate = true;
                 return false;
             }
@@ -807,10 +958,11 @@ public sealed class MiniHudService : IDisposable
                 AlphaFormat = AcSrcAlpha
             };
 
-            return UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, memDc, ref ptSrc, 0, ref blend, UlwAlpha);
+            return UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, _backbufferDc, ref ptSrc, 0, ref blend, UlwAlpha);
         }
         catch (SharpGen.Runtime.SharpGenException ex) when (ex.ResultCode == D2D1ResultCode.RecreateTarget)
         {
+            _dcBound = false;
             needsRecreate = true;
             return false;
         }
@@ -820,44 +972,18 @@ public sealed class MiniHudService : IDisposable
         }
         finally
         {
-            if (oldBitmap != IntPtr.Zero) SelectObject(memDc, oldBitmap);
-            if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap);
-            if (memDc != IntPtr.Zero) DeleteDC(memDc);
             ReleaseDC(IntPtr.Zero, screenDc);
         }
     }
 
-    private void DrawDirectWriteText(
-        string text,
-        string fontFamily,
-        FontWeight fontWeight,
-        float fontSize,
-        ID2D1Brush brush,
-        Rect bounds,
-        TextAlignment alignment)
+    private void DrawCachedText(string text, IDWriteTextFormat? format, ID2D1Brush brush, Rect bounds)
     {
-        if (string.IsNullOrEmpty(text) || _dwriteFactory is null || _dcRenderTarget is null)
+        if (string.IsNullOrEmpty(text) || format is null || _dcRenderTarget is null)
         {
             return;
         }
 
-        using IDWriteTextFormat fmt = _dwriteFactory.CreateTextFormat(
-            fontFamily,
-            null,
-            fontWeight,
-            DWriteFontStyle.Normal,
-            FontStretch.Normal,
-            fontSize,
-            string.Empty);
-
-        fmt.TextAlignment = alignment;
-        fmt.ParagraphAlignment = ParagraphAlignment.Center;
-        fmt.WordWrapping = WordWrapping.NoWrap;
-
-        using IDWriteInlineObject ellipsis = _dwriteFactory.CreateEllipsisTrimmingSign(fmt);
-        fmt.SetTrimming(new Trimming { Granularity = TrimmingGranularity.Character }, ellipsis);
-
-        _dcRenderTarget.DrawText(text, fmt, bounds, brush, DrawTextOptions.Clip);
+        _dcRenderTarget.DrawText(text, format, bounds, brush, DrawTextOptions.Clip);
     }
 
     private IntPtr WindowProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
@@ -877,6 +1003,7 @@ public sealed class MiniHudService : IDisposable
             case WmTimer:
                 if (wParam == FullscreenPollTimerId && !_isDragging)
                 {
+                    _isFullscreenSuppressed = QueryFullscreenAppActive();
                     RefreshVisibilityAndRender(forceRedraw: false);
                 }
                 return IntPtr.Zero;
@@ -946,9 +1073,17 @@ public sealed class MiniHudService : IDisposable
                 }
                 return IntPtr.Zero;
 
+            case WmSettingChange:
+                _cachedIsLightTheme = QuerySystemLightTheme();
+                if (!_isDragging)
+                {
+                    RecalculateMetricsAndPosition();
+                    RefreshVisibilityAndRender(forceRedraw: true);
+                }
+                return IntPtr.Zero;
+
             case WmDisplayChange:
             case WmDpiChanged:
-            case WmSettingChange:
                 if (!_isDragging)
                 {
                     RecalculateMetricsAndPosition();
@@ -1015,6 +1150,7 @@ public sealed class MiniHudService : IDisposable
 
         UnregisterClassW(_className, GetModuleHandleW(null));
         DisposeDirect2D();
+        DisposeBackbuffer();
     }
 
     private delegate IntPtr WndProcDelegate(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);

@@ -145,6 +145,7 @@ public sealed partial class MultiGpuCoordinator
         long dynamicMedianStart = Stopwatch.GetTimestamp();
         int minMedianSamples = Math.Max(1, _options.MinDynamicMedianSamples);
 
+        IDisposable? qosScope = null;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -206,10 +207,14 @@ public sealed partial class MultiGpuCoordinator
 
                 if (directive.Mode == RateMode.Paused)
                 {
+                    qosScope?.Dispose();
+                    qosScope = null;
                     Volatile.Write(ref rt.ActualHps, 0.0);
                     Thread.Sleep(25);
                     continue;
                 }
+
+                qosScope ??= WindowsComputeQoS.AcquireProcessScope();
 
                 if (nowSec < readyTimeSec)
                 {
@@ -257,6 +262,7 @@ public sealed partial class MultiGpuCoordinator
         }
         finally
         {
+            qosScope?.Dispose();
             Volatile.Write(ref rt.ActualHps, 0.0);
             ZeroKeyGroup(keys);
         }

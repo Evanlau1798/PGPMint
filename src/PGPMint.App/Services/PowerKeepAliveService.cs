@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using PGPMint.Core.Search;
 
 namespace PGPMint.App.Services;
 
@@ -15,6 +16,7 @@ public sealed partial class PowerKeepAliveService : IDisposable
     private static partial ExecutionState SetThreadExecutionState(ExecutionState esFlags);
 
     private bool _active;
+    private IDisposable? _qosScope;
 
     public void SetActive(bool active)
     {
@@ -24,9 +26,17 @@ public sealed partial class PowerKeepAliveService : IDisposable
         }
 
         _active = active;
-        SetThreadExecutionState(active
-            ? ExecutionState.EsContinuous | ExecutionState.EsSystemRequired
-            : ExecutionState.EsContinuous);
+        if (active)
+        {
+            _qosScope ??= WindowsComputeQoS.AcquireProcessScope();
+            SetThreadExecutionState(ExecutionState.EsContinuous | ExecutionState.EsSystemRequired);
+        }
+        else
+        {
+            _qosScope?.Dispose();
+            _qosScope = null;
+            SetThreadExecutionState(ExecutionState.EsContinuous);
+        }
     }
 
     public void Dispose()
