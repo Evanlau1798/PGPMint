@@ -66,14 +66,13 @@ public sealed partial class MainViewModel
         _snapTimestamp = Stopwatch.GetTimestamp();
         _snapTotalChecked = t.TotalChecked;
         _snapActualHps = t.TotalActualHps;
-        _snapCalRemainingSec = t.CalibrationRemainingSeconds;
 
-        if (!activeCompute || _mainWindowInTray ||
+        if (t.State != CoordinatorState.Running || _mainWindowInTray ||
             activeTargetFound ||
             rawProgressPercent < _smoothProgressCurrent - 0.5)
         {
-            _smoothProgressCurrent = rawProgressPercent;
-            ProgressPercent = rawProgressPercent;
+            _smoothProgressCurrent = t.State == CoordinatorState.Calibrating ? 0.0 : rawProgressPercent;
+            ProgressPercent = _smoothProgressCurrent;
         }
         else if (!_smoothProgressTimer.IsRunning)
         {
@@ -137,9 +136,9 @@ public sealed partial class MainViewModel
 
     private void SyncSmoothProgressTimer()
     {
-        bool activeTargetFoundInRun = State == CoordinatorState.Running && HasMatchForActivePattern();
-        bool shouldRun = !_mainWindowInTray && !ShowSetupWizard && !activeTargetFoundInRun &&
-                         State is CoordinatorState.Running or CoordinatorState.Calibrating;
+        // During calibration the button countdown provides feedback without animating the progress bar.
+        bool shouldRun = State == CoordinatorState.Running && !_mainWindowInTray &&
+                         !ShowSetupWizard && !HasMatchForActivePattern();
         if (shouldRun && !_smoothProgressTimer.IsRunning)
         {
             _smoothProgressTimer.Start();
@@ -152,49 +151,32 @@ public sealed partial class MainViewModel
 
     private void OnSmoothProgressTimerTick(DispatcherQueueTimer sender, object args)
     {
-        if (_mainWindowInTray || ShowSetupWizard ||
-            State is not (CoordinatorState.Running or CoordinatorState.Calibrating))
+        if (_mainWindowInTray || ShowSetupWizard || State != CoordinatorState.Running)
         {
             _smoothProgressTimer.Stop();
             return;
         }
 
-        double elapsed = Math.Min(1.0, Stopwatch.GetElapsedTime(_snapTimestamp).TotalSeconds);
-        double targetPct;
-
-        if (State == CoordinatorState.Calibrating)
-        {
-            double calTotal = _coordinator.FullCalibrationDurationSeconds;
-            double rem = Math.Max(0.0, _snapCalRemainingSec - elapsed);
-            targetPct = Math.Clamp((1.0 - (rem / calTotal)) * 100.0, 0.0, 100.0);
-
-            string countdownText = CalibrationStopText(rem);
-            if (!string.Equals(PrimaryButtonText, countdownText, StringComparison.Ordinal))
-            {
-                PrimaryButtonText = countdownText;
-            }
-        }
-        else if (_activePatternObj is not null)
-        {
-            if (HasMatchForActivePattern())
-            {
-                _smoothProgressCurrent = 100.0;
-                if (ProgressPercent < 100.0)
-                {
-                    ProgressPercent = 100.0;
-                }
-                _smoothProgressTimer.Stop();
-                return;
-            }
-
-            ulong extra = _snapActualHps > 0.0 ? (ulong)Math.Max(0.0, _snapActualHps * elapsed) : 0UL;
-            double prob = _activePatternObj.ComputeCumulativeProbability(_snapTotalChecked + extra);
-            targetPct = Math.Clamp(prob * 100.0, 0.0, 100.0);
-        }
-        else
+        if (_activePatternObj is null)
         {
             return;
         }
+
+        if (HasMatchForActivePattern())
+        {
+            _smoothProgressCurrent = 100.0;
+            if (ProgressPercent < 100.0)
+            {
+                ProgressPercent = 100.0;
+            }
+            _smoothProgressTimer.Stop();
+            return;
+        }
+
+        double elapsed = Math.Min(1.0, Stopwatch.GetElapsedTime(_snapTimestamp).TotalSeconds);
+        ulong extra = _snapActualHps > 0.0 ? (ulong)Math.Max(0.0, _snapActualHps * elapsed) : 0UL;
+        double prob = _activePatternObj.ComputeCumulativeProbability(_snapTotalChecked + extra);
+        double targetPct = Math.Clamp(prob * 100.0, 0.0, 100.0);
 
         if (targetPct < _smoothProgressCurrent - 0.5)
         {

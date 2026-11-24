@@ -50,8 +50,14 @@ public sealed partial class SettingsWindow : Window
         ViewModel.SyncDraftFromActive();
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         Closed += OnSettingsWindowClosed;
-        ApplyResponsivePreferencesLayout(LogicalDefaultWidth);
+        double clientWidthDip = AppWindow.ClientSize.Width / WindowMinSizeHelper.GetDpiScale(_hwnd);
+        ApplyResponsivePreferencesLayout(clientWidthDip);
         UpdateVisualStates();
+
+        // Fit the first visible frame using the same content and width as the settings layout.
+        Bindings.Initialize();
+        SettingsContentPanel.Measure(new Windows.Foundation.Size(clientWidthDip, double.PositiveInfinity));
+        ResizeToContent(SettingsContentPanel.DesiredSize.Height);
     }
 
     private void OnSettingsWindowClosed(object sender, WindowEventArgs args)
@@ -91,15 +97,18 @@ public sealed partial class SettingsWindow : Window
 
     private void OnSettingsContentSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (_isClosed || e.NewSize.Height <= 0)
+        ResizeToContent(e.NewSize.Height);
+    }
+
+    private void ResizeToContent(double contentHeight)
+    {
+        if (_isClosed || contentHeight <= 0)
         {
             return;
         }
 
-        // SettingsContentPanel has VerticalAlignment="Top", so e.NewSize.Height is the true natural
-        // content height (independent of viewport size), preventing resize feedback loops.
-        int desiredClientLogicalHeight = (int)Math.Ceiling(e.NewSize.Height) + 38;
-        if (_centeredOnce && Math.Abs(desiredClientLogicalHeight - _lastDesiredLogicalHeight) <= 1)
+        int desiredClientLogicalHeight = (int)Math.Ceiling(contentHeight) + 38;
+        if (_centeredOnce && Math.Abs(desiredClientLogicalHeight - _lastDesiredLogicalHeight) <= 4)
         {
             return;
         }

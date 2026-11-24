@@ -83,7 +83,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private long _snapTimestamp;
     private ulong _snapTotalChecked;
     private double _snapActualHps;
-    private double _snapCalRemainingSec;
     private double _smoothProgressCurrent;
 
     public LocalizationService Loc { get; }
