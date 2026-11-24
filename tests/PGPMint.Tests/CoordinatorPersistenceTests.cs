@@ -100,9 +100,35 @@ public sealed class CoordinatorPersistenceTests
             CoordinatorTelemetry final = await terminal.WaitAsync(TimeSpan.FromSeconds(5));
 
             Assert.Equal(CoordinatorState.Faulted, final.State);
+            Assert.Equal(SearchFailure.SaveFailed, final.Failure);
             Assert.Equal(0, notified);
             Assert.Equal(0L, final.SessionWork.SavedKeys);
             Assert.Equal(before, File.ReadAllBytes(vault.VaultFilePath));
+        }
+        finally
+        {
+            CleanDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task IncompleteGpuResultsDoNotCountAsCompletedWork()
+    {
+        string directory = NewDirectory();
+        try
+        {
+            var backend = new CpuFixtureBackend(incomplete: true);
+            using var coordinator = new MultiGpuCoordinator(backend, new AppStateStore(directory), new DpapiVaultStore(directory));
+            coordinator.Initialize();
+            Task<CoordinatorTelemetry> terminal = ObserveTerminalState(coordinator);
+
+            await coordinator.StartSearchAsync(KeyIdPattern.Parse("0"));
+            CoordinatorTelemetry final = await terminal.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(CoordinatorState.Faulted, final.State);
+            Assert.Equal(SearchFailure.IncompleteResults, final.Failure);
+            Assert.Equal(0, final.SessionWork.UniqueCandidatesCompleted);
+            Assert.Equal(0, final.SessionWork.SavedKeys);
         }
         finally
         {
@@ -371,7 +397,7 @@ public sealed class CoordinatorPersistenceTests
         return result.Task;
     }
 
-    private sealed class CpuFixtureBackend : IGpuBackend
+    private sealed class CpuFixtureBackend(bool incomplete = false) : IGpuBackend
     {
         private readonly GpuDeviceInfo _info = new("cpu-fixture", 1, "Test GPU", 0x10DE, 1, 0, 1, 0, "1", true);
         public IReadOnlyList<GpuDeviceInfo> EnumerateHardwareGpus() => [_info];
@@ -380,11 +406,11 @@ public sealed class CoordinatorPersistenceTests
         public IGpuSearchDevice CreateDevice(GpuDeviceInfo deviceInfo)
         {
             CreatedDevices++;
-            return new CpuFixtureDevice(deviceInfo);
+            return new CpuFixtureDevice(deviceInfo, incomplete);
         }
     }
 
-    private sealed class CpuFixtureDevice(GpuDeviceInfo info) : IGpuSearchDevice
+    private sealed class CpuFixtureDevice(GpuDeviceInfo info, bool incomplete) : IGpuSearchDevice
     {
         public GpuDeviceInfo Info { get; } = info;
         public int KeysPerBatch => 1;
@@ -420,7 +446,11 @@ public sealed class CoordinatorPersistenceTests
             {
                 hits[0] = hits[0].Take(1).ToArray();
             }
-            return new SearchBatchResult(hits, timestampCount, timestampCount);
+            return new SearchBatchResult(hits, timestampCount, timestampCount)
+            {
+                ResultsComplete = !incomplete,
+                HashRangeFullyProcessed = !incomplete
+            };
         }
 
         public void Dispose() { }

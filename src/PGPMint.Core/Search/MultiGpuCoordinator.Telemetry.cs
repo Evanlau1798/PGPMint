@@ -275,7 +275,8 @@ public sealed partial class MultiGpuCoordinator
             Devices: deviceSnaps)
         {
             SessionWork = sessionWork,
-            VaultIsFull = _vaultIsFull
+            VaultIsFull = _vaultIsFull,
+            Failure = _searchFailure
         };
     }
 

@@ -12,6 +12,13 @@ public enum CoordinatorState
     Faulted
 }
 
+public enum SearchFailure
+{
+    None,
+    SaveFailed,
+    IncompleteResults
+}
+
 public sealed record GpuTelemetrySnapshot(
     string DeviceKey,
     string Name,
@@ -45,6 +52,7 @@ public sealed record CoordinatorTelemetry(
 {
     public SearchWorkMetrics SessionWork { get; init; }
     public bool VaultIsFull { get; init; }
+    public SearchFailure Failure { get; init; }
 }
 
 public sealed class CoordinatorOptions
@@ -90,6 +98,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
     private volatile CoordinatorState _state = CoordinatorState.Idle;
     private double _calibrationRemainingSeconds;
     private string? _errorMessage;
+    private SearchFailure _searchFailure;
     private volatile bool _vaultIsFull;
 
     private CancellationTokenSource? _activeOpCts;
@@ -391,6 +400,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
             SyncPatternProgressScope(pattern);
 
             _errorMessage = null;
+            _searchFailure = SearchFailure.None;
             _vaultIsFull = false;
             _submissionFailed = false;
             Interlocked.Exchange(ref _sessionChecked, 0);

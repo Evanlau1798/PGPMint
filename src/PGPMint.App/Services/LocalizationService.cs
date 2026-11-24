@@ -312,9 +312,6 @@ public sealed class LocalizationService : ObservableObject
         _ => string.Empty
     };
 
-    public string FormatMeasuringSpeed(int remainingSeconds) =>
-        SafeFormat("MeasuringSpeedFormat", Math.Max(0, remainingSeconds));
-
     public string FormatHudMeasuring(int remainingSeconds) =>
         SafeFormat("HudMeasuringFormat", Math.Max(0, remainingSeconds));
 
@@ -331,6 +328,8 @@ public sealed class LocalizationService : ObservableObject
     public string ProbabilityPrefix => Get("ProbabilityPrefix");
     public string Found => Get("Found");
     public string VaultFullError => Get("VaultFullError");
+    public string VaultSaveFailedError => Get("VaultSaveFailedError");
+    public string IncompleteSearchResultsError => Get("IncompleteSearchResultsError");
     public string NoResults => Get("NoResults");
     public string SuffixRuleHint => Get("SuffixRuleHint");
     public string TargetPlaceholder => Get("TargetPlaceholder");

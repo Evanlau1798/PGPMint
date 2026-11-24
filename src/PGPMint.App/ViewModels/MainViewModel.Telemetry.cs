@@ -100,7 +100,12 @@ public sealed partial class MainViewModel
         if (t.VaultIsFull || !string.IsNullOrWhiteSpace(t.ErrorMessage))
         {
             HasError = true;
-            ErrorText = t.VaultIsFull ? Loc.VaultFullError : t.ErrorMessage!;
+            ErrorText = t.VaultIsFull ? Loc.VaultFullError : t.Failure switch
+            {
+                SearchFailure.SaveFailed => Loc.VaultSaveFailedError,
+                SearchFailure.IncompleteResults => Loc.IncompleteSearchResultsError,
+                _ => t.ErrorMessage!
+            };
         }
         else if (vaultFullCleared || (HasHardwareGpu && t.State != CoordinatorState.Faulted && activeCompute))
         {
@@ -163,7 +168,7 @@ public sealed partial class MainViewModel
             double rem = Math.Max(0.0, _snapCalRemainingSec - elapsed);
             targetPct = Math.Clamp((1.0 - (rem / calTotal)) * 100.0, 0.0, 100.0);
 
-            string countdownText = Loc.FormatMeasuringSpeed((int)Math.Ceiling(rem));
+            string countdownText = CalibrationStopText(rem);
             if (!string.Equals(PrimaryButtonText, countdownText, StringComparison.Ordinal))
             {
                 PrimaryButtonText = countdownText;
@@ -323,8 +328,8 @@ public sealed partial class MainViewModel
                 CanPrimaryAction = true;
                 break;
             case CoordinatorState.Calibrating:
-                PrimaryButtonText = Loc.FormatMeasuringSpeed((int)Math.Ceiling(t.CalibrationRemainingSeconds));
-                CanPrimaryAction = false;
+                PrimaryButtonText = CalibrationStopText(t.CalibrationRemainingSeconds);
+                CanPrimaryAction = true;
                 break;
             case CoordinatorState.Stopping:
                 PrimaryButtonText = Loc.Stopping;
@@ -337,9 +342,12 @@ public sealed partial class MainViewModel
         }
     }
 
+    private string CalibrationStopText(double remainingSeconds) =>
+        $"{Loc.Stop} · {Loc.FormatHudMeasuring((int)Math.Ceiling(remainingSeconds))}";
+
     private void UpdateTrayState(CoordinatorTelemetry t, double rawProgressPercent, bool activeTargetFound)
     {
-        string toggleLabel = t.State is CoordinatorState.Running or CoordinatorState.Paused
+        string toggleLabel = t.State is CoordinatorState.Calibrating or CoordinatorState.Running or CoordinatorState.Paused
             ? Loc.Stop
             : Loc.Start;
 

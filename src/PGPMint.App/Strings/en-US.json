@@ -26,8 +26,7 @@
     "FullSpeed": "MAX",
     "Paused": "PAUSED",
     "Idle": "IDLE",
-    "MeasuringSpeedFormat": "Measuring actual speed... {0}s left",
-    "HudMeasuringFormat": "Meas {0}s",
+    "HudMeasuringFormat": "Measuring {0}s",
     "Stopping": "STOPPING",
     "Error": "ERROR",
     "Copy": "Copy fingerprint",
@@ -59,6 +58,8 @@
     "TraySpeedupGenericHint": "Close window to tray to free UI GPU resources for higher speed",
     "NoResults": "No results",
     "VaultFullError": "The key vault is full. Export any key you want to keep, then delete a record to make room.",
+    "VaultSaveFailedError": "Could not save the matched key. Search stopped. Check access to the vault and try again.",
+    "IncompleteSearchResultsError": "The GPU returned incomplete search results. Search stopped and the failed batch was excluded from progress.",
     "NoGpuError": "No hardware GPU detected",
     "HitNotificationTitle": "PGPMint Key Matched",
     "ExportSuccess": "Exported secret & public key (.asc)"

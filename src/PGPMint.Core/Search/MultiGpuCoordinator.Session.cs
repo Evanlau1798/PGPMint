@@ -5,6 +5,12 @@ namespace PGPMint.Core.Search;
 
 public sealed partial class MultiGpuCoordinator
 {
+    private sealed class SearchSessionException(SearchFailure failure, string message, Exception? innerException = null)
+        : InvalidOperationException(message, innerException)
+    {
+        public SearchFailure Failure { get; } = failure;
+    }
+
     private sealed class SessionDevice(IGpuSearchDevice device)
     {
         public IGpuSearchDevice? Device { get; set; } = device;
@@ -101,7 +107,10 @@ public sealed partial class MultiGpuCoordinator
     {
         CancellationToken ct = sessionCts.Token;
         var devices = new List<SessionDevice>(enabled.Count);
-        using var failureLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var failureCts = new CancellationTokenSource();
+        using var workerCts = CancellationTokenSource.CreateLinkedTokenSource(ct, failureCts.Token);
+        CancellationToken workerToken = workerCts.Token;
+        CancellationToken failureToken = failureCts.Token;
         using var telemetryCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         Task? telemetryLoop = null;
@@ -160,7 +169,7 @@ public sealed partial class MultiGpuCoordinator
             // Phase 1: Automatic 30s full-speed measurement on open devices when baseline is missing.
             // If interrupted by pause (e.g. AutoPauseOnHit on simple suffix), wait while paused and retry upon Resume.
             bool pausedNotified = false;
-            while (!failureLinkedCts.IsCancellationRequested && NeedsFullCalibration())
+            while (!workerToken.IsCancellationRequested && NeedsFullCalibration())
             {
                 if (IsCurrentlyPaused())
                 {
@@ -173,7 +182,7 @@ public sealed partial class MultiGpuCoordinator
                         PublishTelemetry();
                         pausedNotified = true;
                     }
-                    await Task.Delay(40, failureLinkedCts.Token).ConfigureAwait(false);
+                    await Task.Delay(40, workerToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -185,13 +194,13 @@ public sealed partial class MultiGpuCoordinator
                 PublishTelemetry();
 
                 var calTasks = devices.Select(slot => Task.Run(() => RunOnDevice(slot, (device, _) =>
-                    RunZeroWasteCalibrationOnOpenDevice(device, pattern, failureLinkedCts.Token)),
+                    RunZeroWasteCalibrationOnOpenDevice(device, pattern, workerToken, failureToken)),
                     CancellationToken.None)).ToArray();
 
                 CalibrationRecord?[] records = await Task.WhenAll(calTasks).ConfigureAwait(false);
                 Volatile.Write(ref calClockActive, 0);
 
-                if (failureLinkedCts.IsCancellationRequested)
+                if (workerToken.IsCancellationRequested)
                 {
                     break;
                 }
@@ -213,7 +222,7 @@ public sealed partial class MultiGpuCoordinator
                 }
             }
 
-            if (!failureLinkedCts.IsCancellationRequested)
+            if (!workerToken.IsCancellationRequested)
             {
                 _state = IsCurrentlyPaused() ? CoordinatorState.Paused : CoordinatorState.Running;
                 PublishTelemetry();
@@ -223,14 +232,14 @@ public sealed partial class MultiGpuCoordinator
                 {
                     if (recovered && GetValidatedDeviceBaselineHps(device.Info) <= 0)
                     {
-                        CalibrationRecord? record = RunZeroWasteCalibrationOnOpenDevice(device, pattern, failureLinkedCts.Token);
+                        CalibrationRecord? record = RunZeroWasteCalibrationOnOpenDevice(device, pattern, workerToken, failureToken);
                         if (record is not null)
                         {
                             SaveCalibrationRecord(record);
                         }
                     }
 
-                    RunSearchWorkerLoop(device, pattern, failureLinkedCts.Token);
+                    RunSearchWorkerLoop(device, pattern, workerToken, failureToken);
                     return true;
                 }), CancellationToken.None)).ToArray();
 
@@ -246,6 +255,7 @@ public sealed partial class MultiGpuCoordinator
             if (ex is not VaultFullException)
             {
                 _errorMessage = ex.Message;
+                _searchFailure = ex is SearchSessionException failure ? failure.Failure : SearchFailure.None;
                 _vaultIsFull = false;
             }
             _state = CoordinatorState.Faulted;
@@ -295,7 +305,6 @@ public sealed partial class MultiGpuCoordinator
 
         T RunOnDevice<T>(SessionDevice slot, Func<IGpuSearchDevice, bool, T> run)
         {
-            CancellationToken workerToken = failureLinkedCts.Token;
             bool recovered = false;
             try
             {
@@ -327,9 +336,9 @@ public sealed partial class MultiGpuCoordinator
                     }
                 }
             }
-            catch when (!failureLinkedCts.IsCancellationRequested)
+            catch (Exception ex) when (ex is not OperationCanceledException || !workerToken.IsCancellationRequested)
             {
-                failureLinkedCts.Cancel();
+                failureCts.Cancel();
                 throw;
             }
         }

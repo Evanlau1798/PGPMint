@@ -147,6 +147,7 @@ public sealed partial class MainViewModel
                 await _coordinator.StartSearchAsync(pattern!);
                 break;
 
+            case CoordinatorState.Calibrating:
             case CoordinatorState.Running:
             case CoordinatorState.Paused:
                 await _coordinator.StopAsync();

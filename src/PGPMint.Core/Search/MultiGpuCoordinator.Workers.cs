@@ -10,7 +10,8 @@ public sealed partial class MultiGpuCoordinator
     private CalibrationRecord? RunZeroWasteCalibrationOnOpenDevice(
         IGpuSearchDevice device,
         KeyIdPattern pattern,
-        CancellationToken ct)
+        CancellationToken ct,
+        CancellationToken failureToken)
     {
         WorkerRuntimeState rt = GetOrCreateRuntimeState(device.Info.DeviceKey);
         rt.Error = null;
@@ -32,7 +33,7 @@ public sealed partial class MultiGpuCoordinator
                     new RateDirective(RateMode.FullSpeed, RateControl.FullSpeedSentinel),
                     end - cursor);
 
-                ScanSearchBatch(device, keys, pubKeys, cursor, warmupStamps, pattern, batchSizer, ct, out bool retired);
+                ScanSearchBatch(device, keys, pubKeys, cursor, warmupStamps, pattern, batchSizer, ct, failureToken, out bool retired);
                 cursor = AdvanceKeyGroupCursor(keys, cursor, warmupStamps, end, retired);
             }
 
@@ -64,7 +65,7 @@ public sealed partial class MultiGpuCoordinator
                     new RateDirective(RateMode.FullSpeed, RateControl.FullSpeedSentinel),
                     end - cursor);
 
-                long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, batchSizer, ct, out bool retired);
+                long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, batchSizer, ct, failureToken, out bool retired);
 
                 cursor = AdvanceKeyGroupCursor(keys, cursor, stamps, end, retired);
                 windowChecked += batchCandidates;
@@ -110,7 +111,11 @@ public sealed partial class MultiGpuCoordinator
         }
     }
 
-    private void RunSearchWorkerLoop(IGpuSearchDevice device, KeyIdPattern pattern, CancellationToken ct)
+    private void RunSearchWorkerLoop(
+        IGpuSearchDevice device,
+        KeyIdPattern pattern,
+        CancellationToken ct,
+        CancellationToken failureToken)
     {
         WorkerRuntimeState rt = GetOrCreateRuntimeState(device.Info.DeviceKey);
         rt.Error = null;
@@ -221,7 +226,7 @@ public sealed partial class MultiGpuCoordinator
                     directive,
                     end - cursor);
 
-                long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, batchSizer, ct, out bool retired);
+                long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, batchSizer, ct, failureToken, out bool retired);
                 sampleChecked += batchCandidates;
                 cursor = AdvanceKeyGroupCursor(keys, cursor, stamps, end, retired);
 
@@ -279,7 +284,7 @@ public sealed partial class MultiGpuCoordinator
         IReadOnlyList<uint>[] laneHits,
         KeyIdPattern pattern,
         bool allowAutoPause,
-        CancellationToken cancellationToken)
+        CancellationToken failureToken)
     {
         for (int lane = 0; lane < keys.Length; lane++)
         {
@@ -307,7 +312,7 @@ public sealed partial class MultiGpuCoordinator
             bool stopAfterSave;
             lock (_submissionGate)
             {
-                if (_submissionFailed || Volatile.Read(ref _autoPauseTriggered) != 0 || cancellationToken.IsCancellationRequested)
+                if (_submissionFailed || Volatile.Read(ref _autoPauseTriggered) != 0 || failureToken.IsCancellationRequested)
                 {
                     return false;
                 }
@@ -326,8 +331,10 @@ public sealed partial class MultiGpuCoordinator
                     {
                         _vaultIsFull = true;
                         _errorMessage = ex.Message;
+                        throw;
                     }
-                    throw;
+
+                    throw new SearchSessionException(SearchFailure.SaveFailed, ex.Message, ex);
                 }
 
                 Interlocked.Exchange(ref _totalMatchesCount, storedCount);
@@ -394,15 +401,28 @@ public sealed partial class MultiGpuCoordinator
         KeyIdPattern pattern,
         AdaptiveBatchSizer batchSizer,
         CancellationToken cancellationToken,
+        CancellationToken failureToken,
         out bool retired)
     {
         retired = false;
         long batchStarted = Stopwatch.GetTimestamp();
         SearchBatchResult batch = device.ScanBatch(publicKeys, start, count, pattern,
             resultMode: SearchResultMode.FindOne, cancellationToken: cancellationToken);
+        long returnedHits = batch.ReturnedHits;
+        if (batch.WasCancelled && !cancellationToken.IsCancellationRequested)
+        {
+            throw new SearchSessionException(SearchFailure.IncompleteResults, $"Unexpected batch cancellation on '{device.Info.Name}'.");
+        }
+
+        if (!batch.WasCancelled && (!batch.ResultsComplete || !batch.HashRangeFullyProcessed ||
+            returnedHits > 1 || batch.Hits.Length != keys.Length ||
+            batch.Hits.Any(lane => lane.Count > 0 && (lane[0] < start || (ulong)lane[0] >= (ulong)start + count))))
+        {
+            throw new SearchSessionException(SearchFailure.IncompleteResults, $"Incomplete or invalid GPU search result on '{device.Info.Name}'.");
+        }
+
         batchSizer.Observe((uint)(batch.UniqueCandidatesCompleted / device.KeysPerBatch),
             batch.DispatchWallMilliseconds ?? Stopwatch.GetElapsedTime(batchStarted).TotalMilliseconds);
-        long returnedHits = batch.ReturnedHits;
         lock (_lifecycleLock)
         {
             Interlocked.Add(ref _sessionChecked, batch.UniqueCandidatesCompleted);
@@ -415,26 +435,10 @@ public sealed partial class MultiGpuCoordinator
             };
         }
 
-        if (batch.WasCancelled)
+        // A user Stop lets completed readback reach the vault. A worker failure prevents new saves.
+        if (!batch.WasCancelled && !failureToken.IsCancellationRequested && Volatile.Read(ref _autoPauseTriggered) == 0)
         {
-            if (!cancellationToken.IsCancellationRequested)
-            {
-                throw new InvalidOperationException($"Unexpected batch cancellation on '{device.Info.Name}'.");
-            }
-
-            return batch.UniqueCandidatesCompleted;
-        }
-
-        if (!batch.ResultsComplete || !batch.HashRangeFullyProcessed ||
-            returnedHits > 1 || batch.Hits.Length != keys.Length ||
-            batch.Hits.Any(lane => lane.Count > 0 && (lane[0] < start || (ulong)lane[0] >= (ulong)start + count)))
-        {
-            throw new InvalidOperationException($"Incomplete or invalid GPU search result on '{device.Info.Name}'.");
-        }
-
-        if (!cancellationToken.IsCancellationRequested)
-        {
-            retired = HandleVerifiedHits(device.Info, keys, batch.Hits, pattern, allowAutoPause: true, cancellationToken);
+            retired = HandleVerifiedHits(device.Info, keys, batch.Hits, pattern, allowAutoPause: true, failureToken);
         }
 
         return batch.UniqueCandidatesCompleted;
