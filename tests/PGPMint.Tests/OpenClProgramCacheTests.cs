@@ -19,7 +19,7 @@ public sealed class OpenClProgramCacheTests(ITestOutputHelper output)
         Directory.CreateDirectory(root);
         try
         {
-            var backend = new HybridGpuBackend(root);
+            var backend = new HybridGpuBackend(root, enableOpenCl: true, enableVulkan: false);
             var info = Assert.Single(backend.EnumerateHardwareGpus().Where(gpu => gpu.BackendName == "OpenCL").Take(1));
             OpenAndCheck(expectCached: false, stage: "pair-1-source");
             string entry = Assert.Single(Directory.EnumerateFiles(root, "*.clbin", SearchOption.AllDirectories));

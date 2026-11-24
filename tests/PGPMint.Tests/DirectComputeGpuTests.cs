@@ -21,6 +21,9 @@ public class DirectComputeGpuTests
 
     public DirectComputeGpuTests(ITestOutputHelper output) => _output = output;
 
+    private static IGpuBackend CreateOpenClTierBackend(string? cacheDir = null) =>
+        new HybridGpuBackend(cacheDir, enableOpenCl: true, enableVulkan: false);
+
     [Fact]
     public void HybridBackendEnumeratesHardwareGpusAndExcludesSoftwareAndVirtualAdapters()
     {
@@ -42,7 +45,7 @@ public class DirectComputeGpuTests
     [Fact]
     public void HybridAndDirectComputeKernelsFindRfc8032VectorAndHandleOverflowAndMaxTimestamp()
     {
-        var backends = new IGpuBackend[] { new HybridGpuBackend(), new VulkanBackend(), new DirectComputeBackend() };
+        var backends = new IGpuBackend[] { new HybridGpuBackend(), CreateOpenClTierBackend(), new DirectComputeBackend() };
         byte[] basePub = Convert.FromHexString(Rfc8032PublicHex);
 
         foreach (IGpuBackend backend in backends)
@@ -121,7 +124,7 @@ public class DirectComputeGpuTests
     [Fact]
     public void FindOneReturnsOneValidHitWithoutOverflowRescans()
     {
-        var backends = new IGpuBackend[] { new HybridGpuBackend(), new VulkanBackend(), new DirectComputeBackend() };
+        var backends = new IGpuBackend[] { new HybridGpuBackend(), CreateOpenClTierBackend(), new DirectComputeBackend() };
         byte[][] keys = Enumerable.Range(0, 4).Select(lane =>
         {
             byte[] key = Convert.FromHexString(Rfc8032PublicHex);
@@ -183,8 +186,8 @@ public class DirectComputeGpuTests
     [Theory]
     [InlineData("0", "Hybrid")]
     [InlineData("0000000000000000", "Hybrid")]
-    [InlineData("0", "Vulkan")]
-    [InlineData("0000000000000000", "Vulkan")]
+    [InlineData("0", "OpenCL")]
+    [InlineData("0000000000000000", "OpenCL")]
     [InlineData("0", "DirectCompute")]
     [InlineData("0000000000000000", "DirectCompute")]
     public async Task CoordinatorStopsHardwareSearchAtBatchBoundary(string suffix, string backendKind)
@@ -194,7 +197,7 @@ public class DirectComputeGpuTests
         {
             IGpuBackend backend = backendKind switch
             {
-                "Vulkan" => new VulkanBackend(),
+                "OpenCL" => CreateOpenClTierBackend(),
                 "DirectCompute" => new DirectComputeBackend(),
                 _ => new HybridGpuBackend()
             };
@@ -246,7 +249,7 @@ public class DirectComputeGpuTests
         const uint count = 133;
         string keyId = OpenPgpFingerprintOracle.Compute(third, uint.MaxValue)[^16..];
 
-        foreach (IGpuBackend backend in new IGpuBackend[] { new HybridGpuBackend(), new VulkanBackend(), new DirectComputeBackend() })
+        foreach (IGpuBackend backend in new IGpuBackend[] { new HybridGpuBackend(), CreateOpenClTierBackend(), new DirectComputeBackend() })
         {
             using IGpuSearchDevice device = backend.CreateDevice(backend.EnumerateHardwareGpus()[0]);
             _output.WriteLine($"GPU: {device.Info.Name}, backend={device.Info.BackendName}, kernel={device.KernelVersion}");
@@ -305,7 +308,7 @@ public class DirectComputeGpuTests
         uint[] counts = [1, 2, 3, 127, 128, 129, 255, 256, 257, 4095, 4096, 4097];
         (uint Start, uint Count)[] boundaries = [(0u, 1u), (1u, 1u), (uint.MaxValue, 1u), (0xFFFFFFF0u, 16u)];
 
-        foreach (IGpuBackend backend in new IGpuBackend[] { new HybridGpuBackend(), new VulkanBackend(), new DirectComputeBackend() })
+        foreach (IGpuBackend backend in new IGpuBackend[] { new HybridGpuBackend(), CreateOpenClTierBackend(), new DirectComputeBackend() })
         {
             using IGpuSearchDevice device = backend.CreateDevice(backend.EnumerateHardwareGpus()[0]);
             foreach (var (start, count) in boundaries.Concat(counts.Select(count => (0x80000000u - count / 2, count))))
@@ -368,9 +371,9 @@ public class DirectComputeGpuTests
     }
 
     [Fact]
-    public void VulkanLiveGpuSustainedThroughputMeetsHighPerformanceBaseline()
+    public void OpenClLiveGpuSustainedThroughputMeetsHighPerformanceBaseline()
     {
-        var backend = new VulkanBackend();
+        IGpuBackend backend = CreateOpenClTierBackend();
         GpuDeviceInfo gpuInfo = backend.EnumerateHardwareGpus()[0];
         using IGpuSearchDevice device = backend.CreateDevice(gpuInfo);
 
@@ -398,11 +401,11 @@ public class DirectComputeGpuTests
         double elapsed = Stopwatch.GetElapsedTime(startTs).TotalSeconds;
         double ghs = totalCandidates / elapsed / 1e9;
         _output.WriteLine($"GPU: {gpuInfo.Name} [{gpuInfo.BackendName}/{device.KernelVersion}] (Driver {gpuInfo.DriverVersion}) -> {ghs:F3} GH/s ({totalCandidates:N0} candidates in {elapsed:F2}s)");
-        Assert.True(ghs > 1.0, $"Expected Vulkan GPU throughput > 1.0 GH/s, got {ghs:F3} GH/s");
+        Assert.True(ghs > 1.0, $"Expected OpenCL GPU throughput > 1.0 GH/s, got {ghs:F3} GH/s");
     }
 
     [Fact]
-    public void HybridBackendCascadesAcrossOpenClVulkanAndDirectComputeTiers()
+    public void HybridBackendCascadesAcrossVulkanOpenClAndDirectComputeTiers()
     {
         byte[] pub = Convert.FromHexString(Rfc8032PublicHex);
         byte[][] keys = [pub, pub, pub, pub];
@@ -412,25 +415,41 @@ public class DirectComputeGpuTests
         GpuDeviceInfo info1 = tier1.EnumerateHardwareGpus()[0];
         using (IGpuSearchDevice dev1 = tier1.CreateDevice(info1))
         {
-            Assert.Equal("OpenCL", dev1.Info.BackendName);
-            Assert.Equal(OpenClKernelSource.KernelVersion, dev1.KernelVersion);
+            Assert.IsType<VulkanDevice>(dev1);
+            Assert.Equal("Vulkan", dev1.Info.BackendName);
+            Assert.Equal(VulkanSpirvSource.KernelVersion, dev1.KernelVersion);
             Assert.Contains(Rfc8032Timestamp, dev1.ScanGroup(keys, Rfc8032Timestamp, 1, pattern)[0]);
         }
 
-        var tier2 = new HybridGpuBackend(null, enableOpenCl: false, enableVulkan: true);
+        var freshTier1 = new HybridGpuBackend(null, enableOpenCl: true, enableVulkan: true);
+        using (IGpuSearchDevice freshDev1 = freshTier1.CreateDevice(info1))
+        {
+            Assert.IsType<VulkanDevice>(freshDev1);
+            Assert.Equal("Vulkan", freshDev1.Info.BackendName);
+            Assert.Contains(Rfc8032Timestamp, freshDev1.ScanGroup(keys, Rfc8032Timestamp, 1, pattern)[0]);
+        }
+
+        var tier2 = new HybridGpuBackend(null, enableOpenCl: true, enableVulkan: false);
         GpuDeviceInfo info2 = tier2.EnumerateHardwareGpus()[0];
+        Assert.Equal("OpenCL", info2.BackendName);
+        GpuKernelConfiguration? expectedOpenClConfig;
         using (IGpuSearchDevice dev2 = tier2.CreateDevice(info2))
         {
-            Assert.Equal("Vulkan", dev2.Info.BackendName);
-            Assert.Equal(VulkanSpirvSource.KernelVersion, dev2.KernelVersion);
+            Assert.IsType<OpenClDevice>(dev2);
+            Assert.Equal("OpenCL", dev2.Info.BackendName);
+            Assert.Equal(OpenClKernelSource.KernelVersion, dev2.KernelVersion);
+            expectedOpenClConfig = dev2.Info.KernelConfiguration;
             Assert.Contains(Rfc8032Timestamp, dev2.ScanGroup(keys, Rfc8032Timestamp, 1, pattern)[0]);
         }
 
-        var freshTier2 = new HybridGpuBackend(null, enableOpenCl: false, enableVulkan: true);
-        using (IGpuSearchDevice freshDev2 = freshTier2.CreateDevice(info2))
+        var freshTier2 = new HybridGpuBackend(null, enableOpenCl: true, enableVulkan: false);
+        using (IGpuSearchDevice freshDev2 = freshTier2.CreateDevice(info1))
         {
-            Assert.IsType<VulkanDevice>(freshDev2);
-            Assert.Equal("Vulkan", freshDev2.Info.BackendName);
+            Assert.IsType<OpenClDevice>(freshDev2);
+            Assert.Equal("OpenCL", freshDev2.Info.BackendName);
+            Assert.Equal(OpenClKernelSource.KernelVersion, freshDev2.Info.KernelVersion);
+            Assert.Equal(info2.BackendDriverVersion, freshDev2.Info.BackendDriverVersion);
+            Assert.Equal(expectedOpenClConfig, freshDev2.Info.KernelConfiguration);
             Assert.Contains(Rfc8032Timestamp, freshDev2.ScanGroup(keys, Rfc8032Timestamp, 1, pattern)[0]);
         }
 
@@ -446,14 +465,14 @@ public class DirectComputeGpuTests
 
     [Theory]
     [InlineData("Hybrid")]
-    [InlineData("Vulkan")]
+    [InlineData("OpenCL")]
     [InlineData("DirectCompute")]
     public void KeyScheduleCacheRemainsConsistentAfterInvalidKeyFailure(string backendKind)
     {
         IGpuBackend backend = backendKind switch
         {
             "Hybrid" => new HybridGpuBackend(),
-            "Vulkan" => new VulkanBackend(),
+            "OpenCL" => CreateOpenClTierBackend(),
             "DirectCompute" => new DirectComputeBackend(),
             _ => throw new ArgumentOutOfRangeException(nameof(backendKind))
         };

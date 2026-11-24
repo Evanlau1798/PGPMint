@@ -91,14 +91,20 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
                 throw new InvalidOperationException($"clCreateCommandQueue failed ({err}).");
             }
 
+            GpuDeviceInfo normalizedInfo = info with
+            {
+                BackendName = "OpenCL",
+                KernelVersion = OpenClKernelSource.KernelVersion
+            };
+
             (_program, _kernel, LoadedProgramBinary) = OpenClProgramCache.Create(
-                _context, deviceId, info, programCacheDirectory, _useByValueSchedule);
+                _context, deviceId, normalizedInfo, programCacheDirectory, _useByValueSchedule);
 
             nuint kernelMaxGroup = DefaultWorkgroupSize;
             OpenClNative.clGetKernelWorkGroupInfo(_kernel, deviceId, OpenClNative.ClKernelWorkGroupSize, (nuint)sizeof(nuint), &kernelMaxGroup, null);
             GpuKernelConfiguration configuration = ConfigurationFor(kernelMaxGroup, _useByValueSchedule);
             _groupSize = (nuint)configuration.WorkgroupSize;
-            Info = info with { KernelConfiguration = configuration };
+            Info = normalizedInfo with { KernelConfiguration = configuration };
             _candidatesPerGroup = (ulong)_groupSize * (info.IsDiscrete ? 32UL : 8UL);
 
             if (!_useByValueSchedule)

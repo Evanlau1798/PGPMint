@@ -13,7 +13,7 @@ public sealed class CoordinatorAdaptiveGpuTests(ITestOutputHelper output)
 {
     [Theory]
     [InlineData("Hybrid")]
-    [InlineData("Vulkan")]
+    [InlineData("OpenCL")]
     [InlineData("DirectCompute")]
     public async Task MeasuresFullAndCappedBatchesAndStopLatency(string backendKind)
     {
@@ -22,7 +22,7 @@ public sealed class CoordinatorAdaptiveGpuTests(ITestOutputHelper output)
         {
             IGpuBackend backend = backendKind switch
             {
-                "Vulkan" => new VulkanBackend(),
+                "OpenCL" => new HybridGpuBackend(null, enableOpenCl: true, enableVulkan: false),
                 "DirectCompute" => new DirectComputeBackend(),
                 _ => new HybridGpuBackend()
             };

@@ -5,9 +5,9 @@ namespace PGPMint.Core.Gpu;
 /// <summary>
 /// Universal Windows hardware GPU backend:
 /// - Discovers real physical hardware GPUs via DXGI + WDDM (filtering CPU/WARP, remote, and virtual display adapters).
-/// - Uses native zero-dependency OpenCL (OpenCL.dll) whenever an OpenCL GPU ICD is present for peak throughput.
-/// - Cascades automatically to native Vulkan Compute (vulkan-1.dll + SPIR-V 1.3) when OpenCL is unavailable or fails.
-/// - Falls back to DirectCompute (D3D11 HLSL) on any Windows GPU without OpenCL or Vulkan 1.1+ compute support.
+/// - Uses native zero-dependency Vulkan Compute (vulkan-1.dll + SPIR-V 1.3) whenever a Vulkan 1.1+ compute GPU is present for peak sustained throughput.
+/// - Cascades automatically to native OpenCL (OpenCL.dll) when Vulkan is unavailable or fails.
+/// - Falls back to DirectCompute (D3D11 HLSL) on any Windows GPU without Vulkan 1.1+ or OpenCL compute support.
 /// </summary>
 public sealed class HybridGpuBackend : IGpuBackend
 {
@@ -80,27 +80,13 @@ public sealed class HybridGpuBackend : IGpuBackend
                     }
                 }
 
-                if (matchedOpenCl is not null)
+                if (matchedVulkan is not null)
                 {
-                    results.Add(hw with
-                    {
-                        BackendName = "OpenCL",
-                        BackendDriverVersion = matchedOpenCl.DriverVersion,
-                        KernelConfiguration = OpenClDevice.ConfigurationFor(matchedOpenCl.MaxWorkgroupSize, matchedOpenCl.MaxParameterSize >= OpenClDevice.ScheduleParamBytes),
-                        KernelVersion = OpenClKernelSource.KernelVersion
-                    });
+                    results.Add(WithVulkanMetadata(hw, matchedVulkan));
                 }
-                else if (matchedVulkan is not null)
+                else if (matchedOpenCl is not null)
                 {
-                    uint wg = Math.Clamp(Math.Min(matchedVulkan.MaxWorkgroupSizeX, matchedVulkan.MaxWorkgroupInvocations),
-                        1u, (uint)VulkanSpirvSource.DefaultWorkgroupSize);
-                    results.Add(hw with
-                    {
-                        BackendName = "Vulkan",
-                        BackendDriverVersion = matchedVulkan.DriverVersion,
-                        KernelConfiguration = VulkanDevice.ConfigurationFor(wg),
-                        KernelVersion = VulkanSpirvSource.KernelVersion
-                    });
+                    results.Add(WithOpenClMetadata(hw, matchedOpenCl));
                 }
                 else
                 {
@@ -135,30 +121,14 @@ public sealed class HybridGpuBackend : IGpuBackend
         VulkanAdapterDescriptor? vulkan = null;
         lock (_mapLock)
         {
-            if (_enableOpenCl)
-            {
-                _openClMap.TryGetValue(deviceInfo.DeviceKey, out openCl);
-            }
-
             if (_enableVulkan)
             {
                 _vulkanMap.TryGetValue(deviceInfo.DeviceKey, out vulkan);
             }
-        }
 
-        if (openCl is not null)
-        {
-            try
+            if (_enableOpenCl)
             {
-                return new OpenClDevice(openCl.DeviceId, deviceInfo, openCl.SupportsFillBuffer, _openClCacheDirectory, openCl.MaxParameterSize);
-            }
-            catch
-            {
-                // Permanently drop failed OpenCL pairing for this session so retries cascade to Vulkan / DirectCompute
-                lock (_mapLock)
-                {
-                    _openClMap.Remove(deviceInfo.DeviceKey);
-                }
+                _openClMap.TryGetValue(deviceInfo.DeviceKey, out openCl);
             }
         }
 
@@ -166,14 +136,30 @@ public sealed class HybridGpuBackend : IGpuBackend
         {
             try
             {
-                return new VulkanDevice(vulkan, deviceInfo, _vulkanCacheDirectory);
+                return new VulkanDevice(vulkan, WithVulkanMetadata(deviceInfo, vulkan), _vulkanCacheDirectory);
             }
             catch
             {
-                // Permanently drop failed Vulkan pairing for this session so retries go straight to DirectCompute
+                // Permanently drop failed Vulkan pairing for this session so retries cascade to OpenCL / DirectCompute
                 lock (_mapLock)
                 {
                     _vulkanMap.Remove(deviceInfo.DeviceKey);
+                }
+            }
+        }
+
+        if (openCl is not null)
+        {
+            try
+            {
+                return new OpenClDevice(openCl.DeviceId, WithOpenClMetadata(deviceInfo, openCl), openCl.SupportsFillBuffer, _openClCacheDirectory, openCl.MaxParameterSize);
+            }
+            catch
+            {
+                // Permanently drop failed OpenCL pairing for this session so retries cascade to DirectCompute
+                lock (_mapLock)
+                {
+                    _openClMap.Remove(deviceInfo.DeviceKey);
                 }
             }
         }
@@ -186,6 +172,28 @@ public sealed class HybridGpuBackend : IGpuBackend
             KernelVersion = DirectComputeShaderSource.KernelVersion
         });
     }
+
+    private static GpuDeviceInfo WithVulkanMetadata(GpuDeviceInfo info, VulkanAdapterDescriptor vulkan)
+    {
+        uint wg = Math.Clamp(Math.Min(vulkan.MaxWorkgroupSizeX, vulkan.MaxWorkgroupInvocations),
+            1u, (uint)VulkanSpirvSource.DefaultWorkgroupSize);
+        return info with
+        {
+            BackendName = "Vulkan",
+            BackendDriverVersion = vulkan.DriverVersion,
+            KernelConfiguration = VulkanDevice.ConfigurationFor(wg),
+            KernelVersion = VulkanSpirvSource.KernelVersion
+        };
+    }
+
+    private static GpuDeviceInfo WithOpenClMetadata(GpuDeviceInfo info, OpenClAdapterDescriptor openCl) =>
+        info with
+        {
+            BackendName = "OpenCL",
+            BackendDriverVersion = openCl.DriverVersion,
+            KernelConfiguration = OpenClDevice.ConfigurationFor(openCl.MaxWorkgroupSize, openCl.MaxParameterSize >= OpenClDevice.ScheduleParamBytes),
+            KernelVersion = OpenClKernelSource.KernelVersion
+        };
 
     private static OpenClAdapterDescriptor? FindMatchingOpenClAdapter(
         GpuDeviceInfo hw,
