@@ -16,7 +16,7 @@ public sealed class GpuSearchBatchTests
     {
         using var cancellation = new CancellationTokenSource();
         var ranges = new List<(uint Start, uint Count)>();
-        SearchBatchResult result = GpuSearchBatch.Run(1, 10, 4, 1, SearchResultMode.EnumerateAll,
+        SearchBatchResult result = GpuSearchBatch.Run(1, 1, 10, 4, 1, SearchResultMode.EnumerateAll,
             cancellation.Token, (start, count) =>
             {
                 ranges.Add((start, count));

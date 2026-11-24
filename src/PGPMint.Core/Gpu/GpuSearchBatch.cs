@@ -7,6 +7,7 @@ internal static class GpuSearchBatch
 {
     internal static SearchBatchResult Run(
         int laneCount,
+        int distinctKeyCount,
         uint startTimestamp,
         uint timestampCount,
         int capacity,
@@ -19,8 +20,9 @@ internal static class GpuSearchBatch
         bool cancelled = false;
         IReadOnlyList<uint>[] hits = ScanRange(startTimestamp, timestampCount);
         bool rangeCompleted = evaluations != 0;
-        return new SearchBatchResult(hits, rangeCompleted ? (long)timestampCount * laneCount : 0, evaluations)
+        return new SearchBatchResult(hits, rangeCompleted ? (long)timestampCount * distinctKeyCount : 0, evaluations)
         {
+            InitialHashEvaluations = rangeCompleted ? (long)timestampCount * laneCount : 0,
             HashRangeFullyProcessed = rangeCompleted,
             ResultsComplete = !cancelled,
             WasCancelled = cancelled,
@@ -81,6 +83,26 @@ internal static class GpuSearchBatch
 
             return result;
         }
+    }
+
+    internal static int CountDistinctKeys(IReadOnlyList<byte[]> publicKeys)
+    {
+        int distinctCount = 0;
+        for (int lane = 0; lane < publicKeys.Count; lane++)
+        {
+            int prior = 0;
+            while (prior < lane && !publicKeys[lane].AsSpan().SequenceEqual(publicKeys[prior]))
+            {
+                prior++;
+            }
+
+            if (prior == lane)
+            {
+                distinctCount++;
+            }
+        }
+
+        return distinctCount;
     }
 
     internal static bool HasHits(uint[] readback, int stride, int laneCount)

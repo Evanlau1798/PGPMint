@@ -57,7 +57,8 @@ public readonly record struct SearchBatchResult(
     public bool ResultsComplete { get; init; } = true;
     public bool WasCancelled { get; init; }
     public double? DispatchWallMilliseconds { get; init; }
-    public long? RescanEvaluations => HashEvaluations - UniqueCandidatesCompleted;
+    internal long? InitialHashEvaluations { get; init; }
+    public long? RescanEvaluations => HashEvaluations - (InitialHashEvaluations ?? UniqueCandidatesCompleted);
     public long ReturnedHits => Hits.Sum(lane => (long)lane.Count);
 
     internal static IReadOnlyList<uint>[] EmptyHits(int laneCount) =>
@@ -79,7 +80,8 @@ public readonly record struct SearchWorkMetrics(
     long VerifiedHits,
     long SavedKeys)
 {
-    public long? RescanEvaluations => HashEvaluations - UniqueCandidatesCompleted;
+    internal long? ReportedRescanEvaluations { get; init; }
+    public long? RescanEvaluations => ReportedRescanEvaluations ?? (HashEvaluations - UniqueCandidatesCompleted);
 }
 
 public interface IGpuSearchDevice : IDisposable
@@ -117,7 +119,7 @@ public interface IGpuSearchDevice : IDisposable
         }
 
         return new SearchBatchResult(ScanGroup(publicKeys, startTimestamp, timestampCount, pattern, capacity),
-            (long)timestampCount * KeysPerBatch, HashEvaluations: null);
+            (long)timestampCount * Gpu.GpuSearchBatch.CountDistinctKeys(publicKeys), HashEvaluations: null);
     }
 }
 

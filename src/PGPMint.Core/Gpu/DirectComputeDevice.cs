@@ -147,12 +147,14 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
             return SearchBatchResult.CancelledBeforeDispatch(FourKeyCount);
         }
 
+        PatternPlan plan = PatternPlan.From(pattern);
         try
         {
             UpdateKeySchedulesIfNeeded(publicKeys);
             EnsureResultsBuffers(resultCapacity);
-            return GpuSearchBatch.Run(FourKeyCount, startTimestamp, timestampCount, resultCapacity, resultMode, cancellationToken,
-                (first, count) => Dispatch(first, count, pattern, resultCapacity, resultMode));
+            int distinctKeys = GpuSearchBatch.CountDistinctKeys(publicKeys);
+            return GpuSearchBatch.Run(FourKeyCount, distinctKeys, startTimestamp, timestampCount, resultCapacity, resultMode, cancellationToken,
+                (first, count) => Dispatch(first, count, plan, resultCapacity, resultMode));
         }
         catch (SharpGen.Runtime.SharpGenException ex) when (_device.DeviceRemovedReason.Failure)
         {
@@ -163,7 +165,7 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
     private uint[] Dispatch(
         uint startTimestamp,
         uint timestampCount,
-        KeyIdPattern pattern,
+        PatternPlan plan,
         int capacity,
         SearchResultMode resultMode)
     {
@@ -185,10 +187,10 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
 
         _constantStaging[0] = startTimestamp;
         _constantStaging[1] = timestampCount;
-        _constantStaging[2] = pattern.MaskLow;
-        _constantStaging[3] = pattern.TargetLow;
-        _constantStaging[4] = pattern.MaskHigh;
-        _constantStaging[5] = pattern.TargetHigh;
+        _constantStaging[2] = plan.LowMask;
+        _constantStaging[3] = plan.LowTarget;
+        _constantStaging[4] = plan.HighMask;
+        _constantStaging[5] = plan.HighTarget;
         _constantStaging[6] = (uint)capacity;
         _constantStaging[7] = totalThreads;
         _constantStaging[8] = (uint)resultMode;

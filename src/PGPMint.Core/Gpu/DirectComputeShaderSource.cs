@@ -5,7 +5,7 @@ namespace PGPMint.Core.Gpu;
 
 public static class DirectComputeShaderSource
 {
-    public const string KernelVersion = "d3d11-sha1-four-v2";
+    public const string KernelVersion = "d3d11-sha1-four-v3";
     public const int ThreadGroupSize = 128;
 
     private static readonly string[] PhaseMixExpressions =
@@ -34,12 +34,15 @@ public static class DirectComputeShaderSource
         sb.AppendLine("    (s).e = d; (s).d = c; (s).c = ROTL(b, 30u); \\");
         sb.AppendLine("    (s).b = (s).a; (s).a = next; \\");
         sb.AppendLine("}");
+        sb.AppendLine("#define MATCH_STATE(a, m, t) ((m) == 0xffffffffu ? (a) == (t) : (((a) & (m)) == (t)))");
         sb.AppendLine("#define CHECK_LAST(s, word, mix, lane) { \\");
-        sb.AppendLine("    uint low = ROTL((s).a, 30u) + 0xc3d2e1f0u; \\");
-        sb.AppendLine("    if ((low & maskLow) == targetLow) { \\");
-        sb.AppendLine("        STEP(s, word, mix); \\");
-        sb.AppendLine("        uint high = ROTL((s).a, 30u) + 0x10325476u; \\");
-        sb.AppendLine("        if ((high & maskHigh) == targetHigh) { \\");
+        sb.AppendLine("    [branch] if (MATCH_STATE((s).a, maskLow, targetLow)) { \\");
+        sb.AppendLine("        bool highMatches = true; \\");
+        sb.AppendLine("        [branch] if (maskHigh != 0u) { \\");
+        sb.AppendLine("            STEP(s, word, mix); \\");
+        sb.AppendLine("            highMatches = MATCH_STATE((s).a, maskHigh, targetHigh); \\");
+        sb.AppendLine("        } \\");
+        sb.AppendLine("        [branch] if (highMatches) { \\");
         sb.AppendLine("            uint slot = (lane) * (capacity + 1u); \\");
         sb.AppendLine("            uint idx; \\");
         sb.AppendLine("            if (resultMode != 0u) { \\");

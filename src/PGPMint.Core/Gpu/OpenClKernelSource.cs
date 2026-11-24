@@ -5,7 +5,7 @@ namespace PGPMint.Core.Gpu;
 
 public static class OpenClKernelSource
 {
-    public const string KernelVersion = "opencl-sha1-four-v2";
+    public const string KernelVersion = "opencl-sha1-four-v3";
 
     private static readonly string[] PhaseMixExpressions =
     {
@@ -31,12 +31,15 @@ public static class OpenClKernelSource
         sb.AppendLine("    (s).b = (s).a; (s).a = next; \\");
         sb.AppendLine("} while (0)");
         sb.AppendLine();
+        sb.AppendLine("#define MATCH_STATE(a, m, t) ((m) == 0xffffffffu ? (a) == (t) : (((a) & (m)) == (t)))");
         sb.AppendLine("#define CHECK_LAST(s, word, mix, lane) do { \\");
-        sb.AppendLine("    const uint low = rotate((s).a, 30u) + 0xc3d2e1f0u; \\");
-        sb.AppendLine("    if ((low & (uint)mask) == (uint)target) { \\");
-        sb.AppendLine("        STEP(s, word, mix); \\");
-        sb.AppendLine("        const uint high = rotate((s).a, 30u) + 0x10325476u; \\");
-        sb.AppendLine("        if (((((ulong)high << 32) | low) & mask) == target) { \\");
+        sb.AppendLine("    if (MATCH_STATE((s).a, maskLow, targetLow)) { \\");
+        sb.AppendLine("        bool highMatches = true; \\");
+        sb.AppendLine("        if (maskHigh != 0u) { \\");
+        sb.AppendLine("            STEP(s, word, mix); \\");
+        sb.AppendLine("            highMatches = MATCH_STATE((s).a, maskHigh, targetHigh); \\");
+        sb.AppendLine("        } \\");
+        sb.AppendLine("        if (highMatches) { \\");
         sb.AppendLine("            __global uint *out = matches + (lane) * (capacity + 1u); \\");
         sb.AppendLine("            const uint index = resultMode != 0u ? atomic_cmpxchg(out, 0u, 1u) : atomic_inc(out); \\");
         sb.AppendLine("            if (index < capacity) out[1u + index] = timestamp; \\");
@@ -45,7 +48,7 @@ public static class OpenClKernelSource
         sb.AppendLine("} while (0)");
         sb.AppendLine();
         sb.AppendLine("__kernel void search(__constant uint *blocks, __global uint *matches,");
-        sb.AppendLine("                     uint first, uint count, ulong mask, ulong target, uint capacity, uint resultMode) {");
+        sb.AppendLine("                     uint first, uint count, uint maskLow, uint targetLow, uint maskHigh, uint targetHigh, uint capacity, uint resultMode) {");
         sb.AppendLine("    const uint stride = get_global_size(0);");
         sb.AppendLine("    #pragma unroll 2");
         sb.AppendLine("    for (uint offset = get_global_id(0); offset < count; offset += stride) {");

@@ -143,16 +143,18 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
             return SearchBatchResult.CancelledBeforeDispatch(FourKeyCount);
         }
 
+        PatternPlan plan = PatternPlan.From(pattern);
         UploadKeySchedulesIfNeeded(publicKeys);
         EnsureResultsBuffer(resultCapacity);
-        return GpuSearchBatch.Run(FourKeyCount, startTimestamp, timestampCount, resultCapacity, resultMode, cancellationToken,
-            (first, count) => Dispatch(first, count, pattern, resultCapacity, resultMode));
+        int distinctKeys = GpuSearchBatch.CountDistinctKeys(publicKeys);
+        return GpuSearchBatch.Run(FourKeyCount, distinctKeys, startTimestamp, timestampCount, resultCapacity, resultMode, cancellationToken,
+            (first, count) => Dispatch(first, count, plan, resultCapacity, resultMode));
     }
 
     private uint[] Dispatch(
         uint startTimestamp,
         uint timestampCount,
-        KeyIdPattern pattern,
+        PatternPlan plan,
         int capacity,
         SearchResultMode resultMode)
     {
@@ -190,8 +192,10 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
         nint resultsArg = _resultsBuffer;
         uint firstArg = startTimestamp;
         uint countArg = timestampCount;
-        ulong maskArg = pattern.Mask;
-        ulong targetArg = pattern.Target;
+        uint lowMaskArg = plan.LowMask;
+        uint lowTargetArg = plan.LowTarget;
+        uint highMaskArg = plan.HighMask;
+        uint highTargetArg = plan.HighTarget;
         uint capArg = (uint)capacity;
         uint modeArg = (uint)resultMode;
 
@@ -199,10 +203,12 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
         CheckCl(OpenClNative.clSetKernelArg(_kernel, 1, (nuint)sizeof(nint), &resultsArg), "clSetKernelArg(1)");
         CheckCl(OpenClNative.clSetKernelArg(_kernel, 2, sizeof(uint), &firstArg), "clSetKernelArg(2)");
         CheckCl(OpenClNative.clSetKernelArg(_kernel, 3, sizeof(uint), &countArg), "clSetKernelArg(3)");
-        CheckCl(OpenClNative.clSetKernelArg(_kernel, 4, sizeof(ulong), &maskArg), "clSetKernelArg(4)");
-        CheckCl(OpenClNative.clSetKernelArg(_kernel, 5, sizeof(ulong), &targetArg), "clSetKernelArg(5)");
-        CheckCl(OpenClNative.clSetKernelArg(_kernel, 6, sizeof(uint), &capArg), "clSetKernelArg(6)");
-        CheckCl(OpenClNative.clSetKernelArg(_kernel, 7, sizeof(uint), &modeArg), "clSetKernelArg(7)");
+        CheckCl(OpenClNative.clSetKernelArg(_kernel, 4, sizeof(uint), &lowMaskArg), "clSetKernelArg(4)");
+        CheckCl(OpenClNative.clSetKernelArg(_kernel, 5, sizeof(uint), &lowTargetArg), "clSetKernelArg(5)");
+        CheckCl(OpenClNative.clSetKernelArg(_kernel, 6, sizeof(uint), &highMaskArg), "clSetKernelArg(6)");
+        CheckCl(OpenClNative.clSetKernelArg(_kernel, 7, sizeof(uint), &highTargetArg), "clSetKernelArg(7)");
+        CheckCl(OpenClNative.clSetKernelArg(_kernel, 8, sizeof(uint), &capArg), "clSetKernelArg(8)");
+        CheckCl(OpenClNative.clSetKernelArg(_kernel, 9, sizeof(uint), &modeArg), "clSetKernelArg(9)");
 
         ulong groups = Math.Max(1UL, ((ulong)timestampCount + _candidatesPerGroup - 1UL) / _candidatesPerGroup);
         nuint globalSize = (nuint)(groups * _groupSize);

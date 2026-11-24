@@ -227,6 +227,105 @@ public class DirectComputeGpuTests
     }
 
     [Fact]
+    public void AllSuffixClassesMatchTheIndependentOracleAfterLaneReordering()
+    {
+        byte[] first = Convert.FromHexString(Rfc8032PublicHex);
+        byte[] second = (byte[])first.Clone();
+        second[^1] = 1;
+        byte[] third = (byte[])first.Clone();
+        third[^1] = 3;
+        byte[][] keys = [third, second, third, first];
+        const uint start = uint.MaxValue - 132;
+        const uint count = 133;
+        string keyId = OpenPgpFingerprintOracle.Compute(third, uint.MaxValue)[^16..];
+
+        foreach (IGpuBackend backend in new IGpuBackend[] { new HybridGpuBackend(), new DirectComputeBackend() })
+        {
+            using IGpuSearchDevice device = backend.CreateDevice(backend.EnumerateHardwareGpus()[0]);
+            _output.WriteLine($"GPU: {device.Info.Name}, backend={device.Info.BackendName}, kernel={device.KernelVersion}");
+            for (int length = 1; length <= 16; length++)
+            {
+                string suffix = keyId[^length..];
+                KeyIdPattern pattern = KeyIdPattern.Parse(suffix);
+                SearchBatchResult all = device.ScanBatch(keys, start, count, pattern, capacity: 2);
+                SearchBatchResult one = device.ScanBatch(keys, start, count, pattern, resultMode: SearchResultMode.FindOne);
+                Assert.Equal((long)count * 3, all.UniqueCandidatesCompleted);
+                Assert.Equal((long)count * 3, one.UniqueCandidatesCompleted);
+                Assert.Equal((long)count * 4, one.HashEvaluations);
+                Assert.Equal(0L, one.RescanEvaluations);
+                Assert.Equal(1L, one.ReturnedHits);
+
+                for (int lane = 0; lane < keys.Length; lane++)
+                {
+                    uint[] expected = Enumerable.Range(0, (int)count).Select(offset => start + (uint)offset)
+                        .Where(timestamp => OpenPgpFingerprintOracle.Compute(keys[lane], timestamp).EndsWith(suffix, StringComparison.Ordinal))
+                        .ToArray();
+                    Assert.Equal(expected, all.Hits[lane].Order());
+                    Assert.All(one.Hits[lane], timestamp => Assert.Contains(timestamp, expected));
+                }
+
+                Assert.Contains(uint.MaxValue, all.Hits[0]);
+                Assert.Contains(uint.MaxValue, all.Hits[2]);
+
+                if (length is 8 or 9 or 15 or 16)
+                {
+                    ulong fingerprintId = Convert.ToUInt64(keyId, 16);
+                    ulong flipped = fingerprintId ^ (1UL << (length > 8 ? 32 : 0));
+                    string otherSuffix = flipped.ToString("X16")[^length..];
+                    SearchBatchResult other = device.ScanBatch(keys, start, count, KeyIdPattern.Parse(otherSuffix));
+                    Assert.DoesNotContain(uint.MaxValue, other.Hits[0]);
+                    for (int lane = 0; lane < keys.Length; lane++)
+                    {
+                        uint[] expected = Enumerable.Range(0, (int)count).Select(offset => start + (uint)offset)
+                            .Where(timestamp => OpenPgpFingerprintOracle.Compute(keys[lane], timestamp).EndsWith(otherSuffix, StringComparison.Ordinal))
+                            .ToArray();
+                        Assert.Equal(expected, other.Hits[lane].Order());
+                    }
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void TimestampAndDispatchBoundariesMatchTheCpuOracle()
+    {
+        byte[][] keys = Enumerable.Range(0, 4).Select(lane =>
+        {
+            byte[] key = Convert.FromHexString(Rfc8032PublicHex);
+            key[^1] = (byte)lane;
+            return key;
+        }).ToArray();
+        uint[] counts = [1, 2, 3, 127, 128, 129, 255, 256, 257, 4095, 4096, 4097];
+        (uint Start, uint Count)[] boundaries = [(0u, 1u), (1u, 1u), (uint.MaxValue, 1u), (0xFFFFFFF0u, 16u)];
+
+        foreach (IGpuBackend backend in new IGpuBackend[] { new HybridGpuBackend(), new DirectComputeBackend() })
+        {
+            using IGpuSearchDevice device = backend.CreateDevice(backend.EnumerateHardwareGpus()[0]);
+            foreach (var (start, count) in boundaries.Concat(counts.Select(count => (0x80000000u - count / 2, count))))
+            {
+                uint last = start + (count - 1);
+                string suffix = OpenPgpFingerprintOracle.Compute(keys[0], last)[^16..];
+                SearchBatchResult result = device.ScanBatch(keys, start, count, KeyIdPattern.Parse(suffix), capacity: 1);
+                Assert.Equal((long)count * keys.Length, result.UniqueCandidatesCompleted);
+                Assert.Equal((long)count * keys.Length, result.HashEvaluations);
+                Assert.Equal(last, Assert.Single(result.Hits[0]));
+
+                for (int lane = 0; lane < keys.Length; lane++)
+                {
+                    uint[] expected = Enumerable.Range(0, (int)count).Select(offset => start + (uint)offset)
+                        .Where(timestamp => OpenPgpFingerprintOracle.Compute(keys[lane], timestamp).EndsWith(suffix, StringComparison.Ordinal))
+                        .ToArray();
+                    Assert.Equal(expected, result.Hits[lane].Order());
+                }
+            }
+
+            var pattern = KeyIdPattern.Parse("0");
+            Assert.Throws<ArgumentOutOfRangeException>(() => device.ScanBatch(keys, 0, 0, pattern));
+            Assert.Throws<ArgumentOutOfRangeException>(() => device.ScanBatch(keys, uint.MaxValue, 2, pattern));
+        }
+    }
+
+    [Fact]
     public void HybridLiveGpuSustainedThroughputMeetsHighPerformanceBaseline()
     {
         var backend = new HybridGpuBackend();

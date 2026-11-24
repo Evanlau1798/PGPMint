@@ -410,7 +410,8 @@ public sealed partial class MultiGpuCoordinator
             {
                 UniqueCandidatesCompleted = _sessionWork.UniqueCandidatesCompleted + batch.UniqueCandidatesCompleted,
                 HashEvaluations = _sessionWork.HashEvaluations + batch.HashEvaluations,
-                ReturnedHits = _sessionWork.ReturnedHits + returnedHits
+                ReturnedHits = _sessionWork.ReturnedHits + returnedHits,
+                ReportedRescanEvaluations = _sessionWork.RescanEvaluations + batch.RescanEvaluations
             };
         }
 
