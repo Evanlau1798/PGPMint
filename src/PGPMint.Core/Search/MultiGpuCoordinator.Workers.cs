@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Security.Cryptography;
 using PGPMint.Core.Crypto;
 using PGPMint.Core.Storage;
 
@@ -7,6 +6,8 @@ namespace PGPMint.Core.Search;
 
 public sealed partial class MultiGpuCoordinator
 {
+    internal const uint MinimumCreationTimestamp = 946_684_800u; // 2000-01-01T00:00:00Z
+
     private CalibrationRecord? RunZeroWasteCalibrationOnOpenDevice(
         IGpuSearchDevice device,
         KeyIdPattern pattern,
@@ -17,10 +18,12 @@ public sealed partial class MultiGpuCoordinator
         rt.Error = null;
         var batchSizer = new AdaptiveBatchSizer(device.MaxCandidatesPerBatch, device.KeysPerBatch, pattern.FixedHexLength);
         rt.BatchSizer = batchSizer;
-        Ed25519KeyPair[] keys = GenerateKeyGroup(device.KeysPerBatch);
-        byte[][] pubKeys = keys.Select(k => k.PublicKey).ToArray();
-        uint cursor = 1u;
+        using var keyPool = new KeySchedulePool(device.KeysPerBatch);
+        PreparedKeyGroup initialGroup = keyPool.TakeNext(ct);
+        Ed25519KeyPair[] keys = initialGroup.Keys;
+        byte[][] pubKeys = initialGroup.PublicKeys;
         uint end = CurrentTimestampUpperBound();
+        uint cursor = InitialTimestampCursor(end);
 
         try
         {
@@ -53,10 +56,12 @@ public sealed partial class MultiGpuCoordinator
                 if (cursor >= end)
                 {
                     ZeroKeyGroup(keys);
-                    keys = GenerateKeyGroup(device.KeysPerBatch);
-                    pubKeys = keys.Select(k => k.PublicKey).ToArray();
-                    cursor = 1u;
+                    keys = Array.Empty<Ed25519KeyPair>();
+                    PreparedKeyGroup nextGroup = keyPool.TakeNext(ct);
+                    keys = nextGroup.Keys;
+                    pubKeys = nextGroup.PublicKeys;
                     end = CurrentTimestampUpperBound();
+                    cursor = InitialTimestampCursor(end);
                 }
 
                 uint stamps = RateControl.ComputeBatchTimestamps(
@@ -122,10 +127,12 @@ public sealed partial class MultiGpuCoordinator
         var batchSizer = new AdaptiveBatchSizer(device.MaxCandidatesPerBatch, device.KeysPerBatch, pattern.FixedHexLength);
         rt.BatchSizer = batchSizer;
 
-        Ed25519KeyPair[] keys = GenerateKeyGroup(device.KeysPerBatch);
-        byte[][] pubKeys = keys.Select(k => k.PublicKey).ToArray();
-        uint cursor = 1u;
+        using var keyPool = new KeySchedulePool(device.KeysPerBatch);
+        PreparedKeyGroup initialGroup = keyPool.TakeNext(ct);
+        Ed25519KeyPair[] keys = initialGroup.Keys;
+        byte[][] pubKeys = initialGroup.PublicKeys;
         uint end = CurrentTimestampUpperBound();
+        uint cursor = InitialTimestampCursor(end);
 
         double readyTimeSec = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
         long sampleStart = Stopwatch.GetTimestamp();
@@ -214,10 +221,12 @@ public sealed partial class MultiGpuCoordinator
                 if (cursor >= end)
                 {
                     ZeroKeyGroup(keys);
-                    keys = GenerateKeyGroup(device.KeysPerBatch);
-                    pubKeys = keys.Select(k => k.PublicKey).ToArray();
-                    cursor = 1u;
+                    keys = Array.Empty<Ed25519KeyPair>();
+                    PreparedKeyGroup nextGroup = keyPool.TakeNext(ct);
+                    keys = nextGroup.Keys;
+                    pubKeys = nextGroup.PublicKeys;
                     end = CurrentTimestampUpperBound();
+                    cursor = InitialTimestampCursor(end);
                 }
 
                 uint stamps = RateControl.ComputeBatchTimestamps(
@@ -455,34 +464,11 @@ public sealed partial class MultiGpuCoordinator
         return end;
     }
 
-    private static Ed25519KeyPair[] GenerateKeyGroup(int count)
-    {
-        var group = new Ed25519KeyPair[count];
-        try
-        {
-            for (int i = 0; i < count; i++)
-            {
-                group[i] = Ed25519KeyGenerator.Generate();
-            }
-            return group;
-        }
-        catch
-        {
-            ZeroKeyGroup(group);
-            throw;
-        }
-    }
+    private static uint InitialTimestampCursor(uint upperBound) =>
+        upperBound > MinimumCreationTimestamp ? MinimumCreationTimestamp : 1u;
 
-    private static void ZeroKeyGroup(Ed25519KeyPair[] keys)
-    {
-        foreach (Ed25519KeyPair pair in keys)
-        {
-            if (pair.PrivateSeed is not null)
-            {
-                CryptographicOperations.ZeroMemory(pair.PrivateSeed);
-            }
-        }
-    }
+    private static void ZeroKeyGroup(Ed25519KeyPair[] keys) =>
+        KeySchedulePool.ZeroKeys(keys);
 
     private static uint CurrentTimestampUpperBound()
     {

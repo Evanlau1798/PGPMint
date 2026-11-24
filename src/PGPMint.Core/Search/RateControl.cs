@@ -109,8 +109,13 @@ public static class CalibrationValidator
         GpuKernelConfiguration? configuration = device.KernelConfiguration;
         string shape = configuration is null ? "legacy-shape" : FormattableString.Invariant(
             $"{configuration.KeysPerWorkItem}x{configuration.WorkgroupSize}/unroll-{configuration.OuterLoopUnroll}/{configuration.ScheduleVariant}");
+        string suffixGroup = pattern.FixedHexLength <= 4
+            ? FormattableString.Invariant($"exact-short-{pattern.FixedHexLength}")
+            : pattern.FixedHexLength <= 8
+                ? "exact-low32-5-8"
+                : "exact-high64-9-16";
         return FormattableString.Invariant(
-            $"v1/{device.BackendName}/{device.BackendDriverVersion ?? device.DriverVersion}/{shape}/exact-suffix-{pattern.FixedHexLength}/find-one-1/effective");
+            $"v1/{device.BackendName}/{device.BackendDriverVersion ?? device.DriverVersion}/{shape}/{suffixGroup}/find-one-1/effective");
     }
 
     internal static string ProfileKey(string deviceKey, string workloadIdentity) => $"{deviceKey}|{workloadIdentity}";

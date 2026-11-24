@@ -1,7 +1,14 @@
 using System.Buffers.Binary;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 namespace PGPMint.Core.Crypto;
+
+internal readonly record struct TimestampXorStep(uint ResultMask, uint LeftMask, uint RightMask);
+
+internal sealed record TimestampXorPlan(
+    int[] RequiredRotations,
+    TimestampXorStep[] Steps);
 
 public static class Sha1ScheduleHelper
 {
@@ -15,11 +22,112 @@ public static class Sha1ScheduleHelper
         0xCA62C1D6u
     };
 
+    private static readonly ConditionalWeakTable<byte[], uint[]> ScheduleCache = new();
+
     // Linearity under XOR: bit k of TimestampMasks[t] indicates rotl32(timestamp, k) enters W[t].
     public static uint[] TimestampMasks { get; } = BuildTimestampMasks();
 
     // Fixed schedule for the template header with zero public key (rounds 0..4, 14, 15 are key-independent).
     public static uint[] TemplateFixedSchedule { get; } = ComputeFixedSchedule(new byte[Ed25519KeyGenerator.KeyByteLength]);
+
+    internal static TimestampXorPlan SharedXorPlan { get; } = BuildTimestampXorPlan();
+
+    public static uint[] GetOrComputeFixedSchedule(byte[] publicKey)
+    {
+        ArgumentNullException.ThrowIfNull(publicKey);
+        if (publicKey.Length != Ed25519KeyGenerator.KeyByteLength)
+        {
+            throw new ArgumentException("Ed25519 public key must be 32 bytes.", nameof(publicKey));
+        }
+
+        return ScheduleCache.GetValue(publicKey, static key => ComputeFixedSchedule(key));
+    }
+
+    private static TimestampXorPlan BuildTimestampXorPlan()
+    {
+        uint[] masks = TimestampMasks;
+        var requiredShifts = new SortedSet<int>();
+        for (int t = 5; t < ScheduleRounds; t++)
+        {
+            uint mask = masks[t];
+            while (mask != 0u)
+            {
+                int shift = BitOperations.TrailingZeroCount(mask);
+                if (shift > 0)
+                {
+                    requiredShifts.Add(shift);
+                }
+                mask &= mask - 1u;
+            }
+        }
+
+        var built = new HashSet<uint> { 1u };
+        foreach (int shift in requiredShifts)
+        {
+            built.Add(1u << shift);
+        }
+
+        var steps = new List<TimestampXorStep>();
+        for (int t = 5; t < ScheduleRounds; t++)
+        {
+            uint mask = masks[t];
+            if (mask == 0u || built.Contains(mask))
+            {
+                continue;
+            }
+
+            // First check if mask equals XOR of any two already-materialized masks.
+            bool paired = false;
+            foreach (uint existing in built)
+            {
+                uint complement = mask ^ existing;
+                if (complement != existing && built.Contains(complement))
+                {
+                    steps.Add(new TimestampXorStep(mask, existing, complement));
+                    built.Add(mask);
+                    paired = true;
+                    break;
+                }
+            }
+
+            if (paired)
+            {
+                continue;
+            }
+
+            // Otherwise extend the largest already-built bit-subset of mask one bit at a time.
+            uint bestSub = 0u;
+            int bestBits = 0;
+            foreach (uint candidate in built)
+            {
+                if ((candidate & mask) == candidate)
+                {
+                    int bits = BitOperations.PopCount(candidate);
+                    if (bits > bestBits)
+                    {
+                        bestSub = candidate;
+                        bestBits = bits;
+                    }
+                }
+            }
+
+            uint current = bestSub;
+            uint remaining = mask ^ current;
+            while (remaining != 0u)
+            {
+                uint lsb = remaining & (~remaining + 1u);
+                remaining ^= lsb;
+                uint next = current | lsb;
+                if (built.Add(next))
+                {
+                    steps.Add(new TimestampXorStep(next, current, lsb));
+                }
+                current = next;
+            }
+        }
+
+        return new TimestampXorPlan(requiredShifts.ToArray(), steps.ToArray());
+    }
 
     private static uint[] BuildTimestampMasks()
     {

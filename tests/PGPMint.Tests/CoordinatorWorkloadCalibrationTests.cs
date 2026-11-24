@@ -79,6 +79,57 @@ public sealed class CoordinatorWorkloadCalibrationTests
         }
     }
 
+    [Fact]
+    public async Task LengthsWithinSameExecutionGroupReuseCalibrationWhileDistinctGroupsIsolate()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "pm-workload-groups-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var backend = new CalibrationBackend();
+            var stateStore = new AppStateStore(directory);
+            using var coordinator = new MultiGpuCoordinator(backend, stateStore, new DpapiVaultStore(directory),
+                new CoordinatorOptions { FullCalibrationDuration = TimeSpan.FromMilliseconds(75), CalibrationWindow = TimeSpan.FromMilliseconds(25) });
+            coordinator.Initialize();
+
+            // Group 1..4: isolated per length
+            var len1 = KeyIdPattern.Parse("A");
+            var len2 = KeyIdPattern.Parse("AB");
+            await CalibrateAsync(coordinator, len1);
+            Assert.False(coordinator.NeedsFullCalibration());
+            coordinator.SetTargetPattern(len2);
+            Assert.True(coordinator.NeedsFullCalibration());
+
+            // Group 5..8: share low32 execution profile
+            var len5 = KeyIdPattern.Parse("12345");
+            var len8 = KeyIdPattern.Parse("DEADBEEF");
+            await CalibrateAsync(coordinator, len5);
+            Assert.False(coordinator.NeedsFullCalibration());
+            coordinator.SetTargetPattern(len8);
+            Assert.False(coordinator.NeedsFullCalibration());
+
+            // Transition 8 -> 9 crosses into high64 group
+            var len9 = KeyIdPattern.Parse("123456789");
+            coordinator.SetTargetPattern(len9);
+            Assert.True(coordinator.NeedsFullCalibration());
+
+            // Group 9..16: share high64 execution profile across 9, 12, 14, 16 hex
+            await CalibrateAsync(coordinator, len9);
+            Assert.False(coordinator.NeedsFullCalibration());
+            foreach (string suffix in new[] { "676767676767", "0123456789ABCD", "0123456789ABCDEF" })
+            {
+                coordinator.SetTargetPattern(KeyIdPattern.Parse(suffix));
+                Assert.False(coordinator.NeedsFullCalibration());
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
     private static async Task CalibrateAsync(MultiGpuCoordinator coordinator, KeyIdPattern pattern)
     {
         var running = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
