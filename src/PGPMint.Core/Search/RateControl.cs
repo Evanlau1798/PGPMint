@@ -104,6 +104,17 @@ public static class RateControl
 
 public static class CalibrationValidator
 {
+    internal static string WorkloadIdentity(GpuDeviceInfo device, KeyIdPattern pattern)
+    {
+        GpuKernelConfiguration? configuration = device.KernelConfiguration;
+        string shape = configuration is null ? "legacy-shape" : FormattableString.Invariant(
+            $"{configuration.KeysPerWorkItem}x{configuration.WorkgroupSize}/unroll-{configuration.OuterLoopUnroll}/{configuration.ScheduleVariant}");
+        return FormattableString.Invariant(
+            $"v1/{device.BackendName}/{device.BackendDriverVersion ?? device.DriverVersion}/{shape}/exact-suffix-{pattern.FixedHexLength}/find-one-1/effective");
+    }
+
+    internal static string ProfileKey(string deviceKey, string workloadIdentity) => $"{deviceKey}|{workloadIdentity}";
+
     public static double GetBaselineHps(CalibrationRecord? record)
     {
         if (record is null)
@@ -122,7 +133,8 @@ public static class CalibrationValidator
         string expectedKernelVersion,
         bool requireFull)
     {
-        if (record is null || GetBaselineHps(record) <= 0.0)
+        double baseline = GetBaselineHps(record);
+        if (record is null || !double.IsFinite(baseline) || baseline <= 0.0)
         {
             return false;
         }

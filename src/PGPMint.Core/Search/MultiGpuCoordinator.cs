@@ -22,7 +22,10 @@ public sealed record GpuTelemetrySnapshot(
     long TargetHps,
     double BaselineHps,
     bool IsFullCalibrated,
-    string? Error);
+    string? Error)
+{
+    public double LastBatchWallMilliseconds { get; init; }
+}
 
 public sealed record CoordinatorTelemetry(
     CoordinatorState State,
@@ -157,11 +160,6 @@ public sealed partial class MultiGpuCoordinator : IDisposable
                 _enabledDevices[_devices[0].DeviceKey] = true;
             }
 
-            if (NeedsFullCalibrationLocked())
-            {
-                _sliderPosition = 1.0;
-                _lastPositiveSliderPosition = 1.0;
-            }
         }
 
         try
@@ -195,17 +193,9 @@ public sealed partial class MultiGpuCoordinator : IDisposable
 
     public bool NeedsFullCalibration()
     {
-        IReadOnlyList<GpuDeviceInfo> enabled = GetEnabledDevices();
-        if (enabled.Count == 0)
-        {
-            return false;
-        }
-
         lock (_lifecycleLock)
         {
-            return enabled.Any(d =>
-                !_calibrations.TryGetValue(d.DeviceKey, out CalibrationRecord? rec) ||
-                !CalibrationValidator.IsValidForDevice(rec, d, ExpectedKernelFor(d), requireFull: true));
+            return NeedsFullCalibrationLocked();
         }
     }
 
@@ -370,8 +360,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
                 continue;
             }
 
-            if (!_calibrations.TryGetValue(d.DeviceKey, out CalibrationRecord? rec) ||
-                !CalibrationValidator.IsValidForDevice(rec, d, ExpectedKernelFor(d), requireFull: true))
+            if (GetValidatedCalibrationLocked(d) is null)
             {
                 return true;
             }
@@ -411,9 +400,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
             var cts = new CancellationTokenSource();
             _activeOpCts = cts;
 
-            bool needsFullCal = enabled.Any(d =>
-                !_calibrations.TryGetValue(d.DeviceKey, out CalibrationRecord? rec) ||
-                !CalibrationValidator.IsValidForDevice(rec, d, ExpectedKernelFor(d), requireFull: true));
+            bool needsFullCal = enabled.Any(d => GetValidatedCalibrationLocked(d) is null);
 
             bool startPaused = _pausedExplicitly || (!needsFullCal && Volatile.Read(ref _sliderPosition) <= 0.0);
             if (!needsFullCal && Volatile.Read(ref _sliderPosition) <= 0.0)

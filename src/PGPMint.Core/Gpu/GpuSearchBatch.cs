@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using PGPMint.Core.Search;
 
 namespace PGPMint.Core.Gpu;
@@ -14,6 +15,7 @@ internal static class GpuSearchBatch
         Func<uint, uint, uint[]> dispatch)
     {
         long evaluations = 0;
+        double dispatchWallMilliseconds = 0;
         bool cancelled = false;
         IReadOnlyList<uint>[] hits = ScanRange(startTimestamp, timestampCount);
         bool rangeCompleted = evaluations != 0;
@@ -21,7 +23,8 @@ internal static class GpuSearchBatch
         {
             HashRangeFullyProcessed = rangeCompleted,
             ResultsComplete = !cancelled,
-            WasCancelled = cancelled
+            WasCancelled = cancelled,
+            DispatchWallMilliseconds = dispatchWallMilliseconds
         };
 
         IReadOnlyList<uint>[] ScanRange(uint first, uint count)
@@ -32,7 +35,9 @@ internal static class GpuSearchBatch
                 return SearchBatchResult.EmptyHits(laneCount);
             }
 
+            long started = Stopwatch.GetTimestamp();
             uint[] readback = dispatch(first, count);
+            dispatchWallMilliseconds += Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             evaluations += (long)count * laneCount;
             int stride = capacity + 1;
             var result = SearchBatchResult.EmptyHits(laneCount);

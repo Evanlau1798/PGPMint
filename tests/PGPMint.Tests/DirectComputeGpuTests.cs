@@ -8,6 +8,10 @@ using Xunit.Abstractions;
 
 namespace PGPMint.Tests;
 
+[CollectionDefinition("Hardware GPU", DisableParallelization = true)]
+public sealed class HardwareGpuCollection { }
+
+[Collection("Hardware GPU")]
 [Trait("Category", "HardwareGpu")]
 public class DirectComputeGpuTests
 {

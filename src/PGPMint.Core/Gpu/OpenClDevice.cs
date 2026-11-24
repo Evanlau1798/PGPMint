@@ -1,4 +1,3 @@
-using System.Text;
 using PGPMint.Core.Crypto;
 using PGPMint.Core.Search;
 
@@ -7,6 +6,7 @@ namespace PGPMint.Core.Gpu;
 public sealed unsafe class OpenClDevice : IGpuSearchDevice
 {
     public const int FourKeyCount = 4;
+    internal const int DefaultWorkgroupSize = 128;
 
     private readonly nint _deviceId;
     private readonly bool _supportsFillBuffer;
@@ -34,13 +34,17 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
     public long MaxCandidatesPerBatch { get; }
     public string KernelVersion => OpenClKernelSource.KernelVersion;
 
-    internal OpenClDevice(nint deviceId, GpuDeviceInfo info, bool supportsFillBuffer = true)
+    internal bool LoadedProgramBinary { get; }
+
+    internal static GpuKernelConfiguration ConfigurationFor(nuint maxWorkgroupSize) =>
+        new(FourKeyCount, (int)Math.Clamp(maxWorkgroupSize, 1, DefaultWorkgroupSize), 2, "fixed-xor");
+
+    internal OpenClDevice(nint deviceId, GpuDeviceInfo info, bool supportsFillBuffer, string programCacheDirectory)
     {
         _deviceId = deviceId;
         _supportsFillBuffer = supportsFillBuffer;
-        Info = info;
 
-        // High-VRAM discrete GPUs use 2^30 candidates per full-speed batch (proven optimal on RTX 3080 ~48ms/batch)
+        // Keep a coarse device ceiling above the adaptive batch limit.
         MaxCandidatesPerBatch = info.DedicatedVideoMemoryBytes >= 6UL * 1024UL * 1024UL * 1024UL
             ? (1L << 30)
             : info.DedicatedVideoMemoryBytes >= 4UL * 1024UL * 1024UL * 1024UL
@@ -63,38 +67,13 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
                 throw new InvalidOperationException($"clCreateCommandQueue failed ({err}).");
             }
 
-            byte[] srcBytes = Encoding.ASCII.GetBytes(OpenClKernelSource.BuildFourKeyOpenCl());
-            nuint srcLen = (nuint)srcBytes.Length;
-            fixed (byte* srcPtr = srcBytes)
-            {
-                byte* p = srcPtr;
-                _program = OpenClNative.clCreateProgramWithSource(_context, 1, &p, &srcLen, &err);
-            }
-            if (err != OpenClNative.ClSuccess || _program == 0)
-            {
-                throw new InvalidOperationException($"clCreateProgramWithSource failed ({err}).");
-            }
+            (_program, _kernel, LoadedProgramBinary) = OpenClProgramCache.Create(_context, deviceId, info, programCacheDirectory);
 
-            err = OpenClNative.clBuildProgram(_program, 1, &dev, null, 0, 0);
-            if (err != OpenClNative.ClSuccess)
-            {
-                string log = ReadBuildLog(_program, deviceId);
-                throw new InvalidOperationException($"OpenCL kernel build failed ({err}): {log}");
-            }
-
-            byte[] nameBytes = Encoding.ASCII.GetBytes("search\0");
-            fixed (byte* namePtr = nameBytes)
-            {
-                _kernel = OpenClNative.clCreateKernel(_program, namePtr, &err);
-            }
-            if (err != OpenClNative.ClSuccess || _kernel == 0)
-            {
-                throw new InvalidOperationException($"clCreateKernel failed ({err}).");
-            }
-
-            nuint kernelMaxGroup = 128;
+            nuint kernelMaxGroup = DefaultWorkgroupSize;
             OpenClNative.clGetKernelWorkGroupInfo(_kernel, deviceId, OpenClNative.ClKernelWorkGroupSize, (nuint)sizeof(nuint), &kernelMaxGroup, null);
-            _groupSize = kernelMaxGroup < 128 ? Math.Max((nuint)1, kernelMaxGroup) : (nuint)128;
+            GpuKernelConfiguration configuration = ConfigurationFor(kernelMaxGroup);
+            _groupSize = (nuint)configuration.WorkgroupSize;
+            Info = info with { KernelConfiguration = configuration };
             _candidatesPerGroup = (ulong)_groupSize * (info.IsDiscrete ? 32UL : 8UL);
 
             nuint blockBytes = (nuint)(FourKeyCount * Sha1ScheduleHelper.ScheduleRounds * sizeof(uint));
@@ -187,7 +166,12 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
             if (_supportsFillBuffer)
             {
                 uint zero = 0;
-                filled = OpenClNative.clEnqueueFillBuffer(_queue, _resultsBuffer, &zero, sizeof(uint), 0, totalBytes, 0, null, null) == OpenClNative.ClSuccess;
+                int status = OpenClNative.clEnqueueFillBuffer(_queue, _resultsBuffer, &zero, sizeof(uint), 0, totalBytes, 0, null, null);
+                if (status == OpenClNative.ClDeviceNotAvailable)
+                {
+                    CheckCl(status, "clEnqueueFillBuffer");
+                }
+                filled = status == OpenClNative.ClSuccess;
             }
 
             if (!filled)
@@ -305,7 +289,8 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
         nuint bytes = (nuint)(totalUints * sizeof(uint));
         int err = 0;
         _resultsBuffer = OpenClNative.clCreateBuffer(_context, OpenClNative.ClMemReadWrite, bytes, null, &err);
-        if (err != OpenClNative.ClSuccess || _resultsBuffer == 0)
+        CheckCl(err, "clCreateBuffer(results)");
+        if (_resultsBuffer == 0)
         {
             throw new InvalidOperationException($"clCreateBuffer(results) failed ({err}).");
         }
@@ -317,28 +302,15 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
 
     private static void CheckCl(int err, string operation)
     {
+        if (err == OpenClNative.ClDeviceNotAvailable)
+        {
+            throw new GpuDeviceLostException($"OpenCL {operation} failed because the GPU is unavailable ({err}).");
+        }
+
         if (err != OpenClNative.ClSuccess)
         {
             throw new InvalidOperationException($"OpenCL {operation} failed with error code {err}.");
         }
-    }
-
-    private static string ReadBuildLog(nint program, nint device)
-    {
-        nuint logSize = 0;
-        if (OpenClNative.clGetProgramBuildInfo(program, device, OpenClNative.ClProgramBuildLog, 0, null, &logSize) != OpenClNative.ClSuccess || logSize == 0)
-        {
-            return "(no build log)";
-        }
-
-        byte[] buf = new byte[(int)Math.Min(logSize, 8192)];
-        fixed (byte* ptr = buf)
-        {
-            OpenClNative.clGetProgramBuildInfo(program, device, OpenClNative.ClProgramBuildLog, (nuint)buf.Length, ptr, null);
-        }
-
-        int len = Array.IndexOf(buf, (byte)0);
-        return Encoding.UTF8.GetString(buf, 0, len >= 0 ? len : buf.Length).Trim();
     }
 
     public void Dispose()

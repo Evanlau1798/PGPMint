@@ -209,9 +209,9 @@ public partial class CoordinatorCalibrationTests
             await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Running, TimeSpan.FromSeconds(5));
 
             var stateAfterCal = stateStore.Load();
-            Assert.True(stateAfterCal.Calibrations[gpu0.DeviceKey].IsFullCalibration);
-            Assert.True(stateAfterCal.Calibrations[gpu1.DeviceKey].IsFullCalibration);
-            Assert.True(stateAfterCal.Calibrations[gpu0.DeviceKey].MedianHashesPerSecond > 0);
+            Assert.True(stateAfterCal.Calibrations.Values.Single(record => record.DeviceKey == gpu0.DeviceKey).IsFullCalibration);
+            Assert.True(stateAfterCal.Calibrations.Values.Single(record => record.DeviceKey == gpu1.DeviceKey).IsFullCalibration);
+            Assert.True(stateAfterCal.Calibrations.Values.Single(record => record.DeviceKey == gpu0.DeviceKey).MedianHashesPerSecond > 0);
             Assert.True(coordinator.LatestTelemetry.TotalBaselineHps > 0);
             Assert.True(vault.LoadMatches().Count > 0);
 
@@ -261,9 +261,15 @@ public partial class CoordinatorCalibrationTests
 
             // Seed with a known valid full calibration from earlier
             var initialTimestamp = DateTimeOffset.UtcNow.AddMinutes(-10);
-            stateStore.Update(s => s.Calibrations[gpu0.DeviceKey] = new CalibrationRecord(
-                gpu0.DeviceKey, gpu0.Name, gpu0.DriverVersion, "fake-kernel-v1",
-                50_000.0, 50_000.0, true, initialTimestamp));
+            var pattern = KeyIdPattern.Parse("FFFFFFFFFFFFFFFF");
+            string workload = CalibrationValidator.WorkloadIdentity(gpu0, pattern);
+            string profileKey = CalibrationValidator.ProfileKey(gpu0.DeviceKey, workload);
+            stateStore.Update(state =>
+            {
+                state.TargetInput = pattern.Suffix;
+                state.Calibrations[profileKey] = new CalibrationRecord(gpu0.DeviceKey, gpu0.Name, gpu0.DriverVersion,
+                    "fake-kernel-v1", 50_000.0, 50_000.0, true, initialTimestamp, workload);
+            });
 
             using var coordinator = new MultiGpuCoordinator(
                 backend,
@@ -280,21 +286,21 @@ public partial class CoordinatorCalibrationTests
             coordinator.Initialize();
             Assert.Equal(1.0, coordinator.SliderPosition, 6);
 
-            await coordinator.StartSearchAsync(KeyIdPattern.Parse("FFFFFFFFFFFFFFFF"));
+            await coordinator.StartSearchAsync(pattern);
             await WaitUntilAsync(() =>
-                stateStore.Load().Calibrations[gpu0.DeviceKey].CalibratedAtUtc > initialTimestamp,
+                stateStore.Load().Calibrations[profileKey].CalibratedAtUtc > initialTimestamp,
                 TimeSpan.FromSeconds(4));
 
             // Dynamic median updated while running in FullSpeed mode
-            DateTimeOffset updatedAtFullSpeed = stateStore.Load().Calibrations[gpu0.DeviceKey].CalibratedAtUtc;
+            DateTimeOffset updatedAtFullSpeed = stateStore.Load().Calibrations[profileKey].CalibratedAtUtc;
             Assert.True(updatedAtFullSpeed > initialTimestamp);
 
             // Move slider to 95% (Capped mode): dynamic median sampling must immediately stop
             coordinator.SetSliderPosition(0.95);
             await Task.Delay(60); // settle in-flight tick
-            DateTimeOffset stampedAfterCap = stateStore.Load().Calibrations[gpu0.DeviceKey].CalibratedAtUtc;
+            DateTimeOffset stampedAfterCap = stateStore.Load().Calibrations[profileKey].CalibratedAtUtc;
             await Task.Delay(320); // well past DynamicMedianInterval (160ms)
-            Assert.Equal(stampedAfterCap, stateStore.Load().Calibrations[gpu0.DeviceKey].CalibratedAtUtc);
+            Assert.Equal(stampedAfterCap, stateStore.Load().Calibrations[profileKey].CalibratedAtUtc);
 
             await coordinator.StopAsync();
         }
@@ -353,7 +359,7 @@ public partial class CoordinatorCalibrationTests
             await coordinator.StartSearchAsync(KeyIdPattern.Parse("0"));
             await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Running, TimeSpan.FromSeconds(5));
             Assert.False(coordinator.NeedsFullCalibration());
-            Assert.True(stateStore.Load().Calibrations[gpu0.DeviceKey].IsFullCalibration);
+            Assert.True(stateStore.Load().Calibrations.Values.Single(record => record.DeviceKey == gpu0.DeviceKey).IsFullCalibration);
 
             await coordinator.StopAsync();
         }

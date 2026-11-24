@@ -11,12 +11,16 @@ namespace PGPMint.Core.Gpu;
 public sealed class HybridGpuBackend : IGpuBackend
 {
     private readonly DirectComputeBackend _directCompute;
+    private readonly string _openClCacheDirectory;
     private readonly object _mapLock = new();
     private readonly Dictionary<string, OpenClAdapterDescriptor> _openClMap = new(StringComparer.Ordinal);
 
     public HybridGpuBackend(string? shaderCacheDirectory = null)
     {
         _directCompute = new DirectComputeBackend(shaderCacheDirectory);
+        string cacheDirectory = shaderCacheDirectory ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PGPMint", "shader-cache");
+        _openClCacheDirectory = Path.Combine(cacheDirectory, "opencl");
     }
 
     public IReadOnlyList<GpuDeviceInfo> EnumerateHardwareGpus()
@@ -41,6 +45,8 @@ public sealed class HybridGpuBackend : IGpuBackend
                     results.Add(hw with
                     {
                         BackendName = "OpenCL",
+                        BackendDriverVersion = matched.DriverVersion,
+                        KernelConfiguration = OpenClDevice.ConfigurationFor(matched.MaxWorkgroupSize),
                         KernelVersion = OpenClKernelSource.KernelVersion
                     });
                 }
@@ -72,7 +78,7 @@ public sealed class HybridGpuBackend : IGpuBackend
         {
             try
             {
-                return new OpenClDevice(openCl.DeviceId, deviceInfo, openCl.SupportsFillBuffer);
+                return new OpenClDevice(openCl.DeviceId, deviceInfo, openCl.SupportsFillBuffer, _openClCacheDirectory);
             }
             catch
             {
@@ -87,6 +93,8 @@ public sealed class HybridGpuBackend : IGpuBackend
         return _directCompute.CreateDevice(deviceInfo with
         {
             BackendName = "DirectCompute",
+            BackendDriverVersion = null,
+            KernelConfiguration = DirectComputeDevice.DefaultConfiguration,
             KernelVersion = DirectComputeShaderSource.KernelVersion
         });
     }

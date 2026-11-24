@@ -5,6 +5,7 @@ namespace PGPMint.Core.Storage;
 
 [JsonSourceGenerationOptions(WriteIndented = true)]
 [JsonSerializable(typeof(AppPersistedState))]
+[JsonSerializable(typeof(CalibrationRecord))]
 [JsonSerializable(typeof(List<MatchedKeyRecord>))]
 internal sealed partial class StorageJsonContext : JsonSerializerContext
 {

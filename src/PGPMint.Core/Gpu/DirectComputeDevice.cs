@@ -12,6 +12,8 @@ namespace PGPMint.Core.Gpu;
 public sealed class DirectComputeDevice : IGpuSearchDevice
 {
     public const int FourKeyCount = 4;
+    internal static readonly GpuKernelConfiguration DefaultConfiguration =
+        new(FourKeyCount, DirectComputeShaderSource.ThreadGroupSize, 0, "fixed-xor");
     private const uint MaxDispatchGroups = 65535u;
     private const int SearchParametersUints = 12;
     private const int ConstantBufferBytes = (SearchParametersUints + Sha1ScheduleHelper.ScheduleRounds * 4) * sizeof(uint);
@@ -44,7 +46,7 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
     internal DirectComputeDevice(IDXGIAdapter1 adapter, GpuDeviceInfo info, string? shaderCacheDirectory)
     {
         _adapter = adapter;
-        Info = info;
+        Info = info with { KernelConfiguration = DefaultConfiguration };
 
         // Larger batch cap for discrete GPUs with >= 4GB VRAM while staying safely under Windows 2s TDR
         MaxCandidatesPerBatch = info.DedicatedVideoMemoryBytes >= 4UL * 1024UL * 1024UL * 1024UL
@@ -145,10 +147,17 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
             return SearchBatchResult.CancelledBeforeDispatch(FourKeyCount);
         }
 
-        UpdateKeySchedulesIfNeeded(publicKeys);
-        EnsureResultsBuffers(resultCapacity);
-        return GpuSearchBatch.Run(FourKeyCount, startTimestamp, timestampCount, resultCapacity, resultMode, cancellationToken,
-            (first, count) => Dispatch(first, count, pattern, resultCapacity, resultMode));
+        try
+        {
+            UpdateKeySchedulesIfNeeded(publicKeys);
+            EnsureResultsBuffers(resultCapacity);
+            return GpuSearchBatch.Run(FourKeyCount, startTimestamp, timestampCount, resultCapacity, resultMode, cancellationToken,
+                (first, count) => Dispatch(first, count, pattern, resultCapacity, resultMode));
+        }
+        catch (SharpGen.Runtime.SharpGenException ex) when (_device.DeviceRemovedReason.Failure)
+        {
+            throw new GpuDeviceLostException($"DirectCompute GPU '{Info.Name}' was lost during search.", ex);
+        }
     }
 
     private uint[] Dispatch(

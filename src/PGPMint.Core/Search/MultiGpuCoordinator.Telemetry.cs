@@ -4,12 +4,27 @@ public sealed partial class MultiGpuCoordinator
 {
     private void SaveCalibrationRecord(CalibrationRecord record)
     {
+        string profileKey = CalibrationValidator.ProfileKey(record.DeviceKey, record.WorkloadIdentity!);
         lock (_lifecycleLock)
         {
-            _calibrations[record.DeviceKey] = record;
+            _calibrations[profileKey] = record;
         }
 
-        _stateStore.Update(s => s.Calibrations[record.DeviceKey] = record);
+        _stateStore.Update(s => s.Calibrations[profileKey] = record);
+    }
+
+    private void InvalidateCalibration(GpuDeviceInfo device, KeyIdPattern pattern)
+    {
+        string profileKey = CalibrationValidator.ProfileKey(device.DeviceKey, CalibrationValidator.WorkloadIdentity(device, pattern));
+        WorkerRuntimeState runtime = GetOrCreateRuntimeState(device.DeviceKey);
+        lock (_lifecycleLock)
+        {
+            _calibrations.Remove(profileKey);
+            Volatile.Write(ref runtime.ActualHps, 0.0);
+            runtime.BatchSizer = null;
+        }
+
+        _stateStore.Update(s => s.Calibrations.Remove(profileKey));
     }
 
     private void PersistTotalChecked()
@@ -76,12 +91,16 @@ public sealed partial class MultiGpuCoordinator
                 if (string.Equals(list[i].DeviceKey, device.Info.DeviceKey, StringComparison.Ordinal))
                 {
                     if (!string.Equals(list[i].BackendName, device.Info.BackendName, StringComparison.Ordinal) ||
-                        !string.Equals(list[i].KernelVersion, device.KernelVersion, StringComparison.Ordinal))
+                        !string.Equals(list[i].KernelVersion, device.KernelVersion, StringComparison.Ordinal) ||
+                        !string.Equals(list[i].BackendDriverVersion, device.Info.BackendDriverVersion, StringComparison.Ordinal) ||
+                        list[i].KernelConfiguration != device.Info.KernelConfiguration)
                     {
                         list[i] = list[i] with
                         {
                             BackendName = device.Info.BackendName,
-                            KernelVersion = device.KernelVersion
+                            KernelVersion = device.KernelVersion,
+                            BackendDriverVersion = device.Info.BackendDriverVersion,
+                            KernelConfiguration = device.Info.KernelConfiguration
                         };
                         _devices = list;
                         changed = true;
@@ -100,26 +119,35 @@ public sealed partial class MultiGpuCoordinator
     private string ExpectedKernelFor(GpuDeviceInfo device) =>
         _options.ExpectedKernelVersionOverride ?? device.KernelVersion;
 
+    private CalibrationRecord? GetValidatedCalibrationLocked(GpuDeviceInfo device)
+    {
+        if (_activePattern is null)
+        {
+            return null;
+        }
+
+        string workload = CalibrationValidator.WorkloadIdentity(device, _activePattern);
+        string key = CalibrationValidator.ProfileKey(device.DeviceKey, workload);
+        return _calibrations.TryGetValue(key, out CalibrationRecord? record)
+            && string.Equals(record.WorkloadIdentity, workload, StringComparison.Ordinal)
+            && CalibrationValidator.IsValidForDevice(record, device, ExpectedKernelFor(device), requireFull: true)
+            ? record
+            : null;
+    }
+
     private double GetValidatedDeviceBaselineHps(GpuDeviceInfo device)
     {
         lock (_lifecycleLock)
         {
-            if (_calibrations.TryGetValue(device.DeviceKey, out CalibrationRecord? rec) &&
-                CalibrationValidator.IsValidForDevice(rec, device, ExpectedKernelFor(device), requireFull: true))
-            {
-                return CalibrationValidator.GetBaselineHps(rec);
-            }
-            return 0.0;
+            return CalibrationValidator.GetBaselineHps(GetValidatedCalibrationLocked(device));
         }
     }
 
-    private double GetStoredDevicePeakHps(string deviceKey)
+    private double GetStoredDevicePeakHps(GpuDeviceInfo device)
     {
         lock (_lifecycleLock)
         {
-            return _calibrations.TryGetValue(deviceKey, out CalibrationRecord? rec)
-                ? rec.PeakHashesPerSecond
-                : 0.0;
+            return GetValidatedCalibrationLocked(device)?.PeakHashesPerSecond ?? 0.0;
         }
     }
 
@@ -143,6 +171,7 @@ public sealed partial class MultiGpuCoordinator
             foreach (WorkerRuntimeState rt in _workerStates.Values)
             {
                 Volatile.Write(ref rt.ActualHps, 0.0);
+                rt.BatchSizer = null;
             }
         }
     }
@@ -179,10 +208,9 @@ public sealed partial class MultiGpuCoordinator
             {
                 bool enabled = _enabledDevices.TryGetValue(dev.DeviceKey, out bool en) && en;
                 _workerStates.TryGetValue(dev.DeviceKey, out WorkerRuntimeState? rt);
-                _calibrations.TryGetValue(dev.DeviceKey, out CalibrationRecord? cal);
-
-                bool fullCal = CalibrationValidator.IsValidForDevice(cal, dev, ExpectedKernelFor(dev), requireFull: true);
-                double baseline = fullCal ? CalibrationValidator.GetBaselineHps(cal) : 0.0;
+                CalibrationRecord? cal = GetValidatedCalibrationLocked(dev);
+                bool fullCal = cal is not null;
+                double baseline = CalibrationValidator.GetBaselineHps(cal);
                 double actual = rt is not null ? Volatile.Read(ref rt.ActualHps) : 0.0;
 
                 RateDirective dir = enabled ? RateControl.FromSlider(slider, baseline) : new RateDirective(RateMode.Paused, 0);
@@ -212,7 +240,10 @@ public sealed partial class MultiGpuCoordinator
                     TargetHps: devTarget,
                     BaselineHps: baseline,
                     IsFullCalibrated: fullCal,
-                    Error: rt?.Error));
+                    Error: rt?.Error)
+                {
+                    LastBatchWallMilliseconds = rt?.BatchSizer?.LastDispatchWallMilliseconds ?? 0.0
+                });
             }
 
             sessionChecked = (ulong)Math.Max(0L, Interlocked.Read(ref _sessionChecked));
@@ -251,6 +282,7 @@ public sealed partial class MultiGpuCoordinator
     private sealed class WorkerRuntimeState
     {
         public double ActualHps;
+        public volatile AdaptiveBatchSizer? BatchSizer;
         public string? Error;
     }
 }

@@ -34,7 +34,7 @@ Unlike command-line tools that require installing Python or the NVIDIA CUDA Tool
 
 - **Single-File Portable Executable** — Self-contained compressed `.exe` for `win-x64` and `win-arm64`. No Python, CUDA Toolkit, .NET Runtime, or Windows App Runtime installation required.
 - **Universal Windows Hardware GPU Engine** — Automatically accelerates via native `OpenCL.dll` (four-key interleaved SHA-1 kernel) on NVIDIA, AMD, and Intel GPUs, and transparently falls back to DirectCompute (`D3D11 cs_5_0`) on GPUs without an OpenCL ICD (including Windows on ARM). Supports multi-GPU parallel search while excluding CPU software renderers and virtual display adapters.
-- **Measured-Only Speed & Two-Stage Throttle** — No guesswork estimates. The first run measures your GPU's real median throughput over 30 seconds on your actual target pattern (zero wasted candidates). Once calibrated, drag smoothly across `1%-99%` to keep your PC responsive, or push past the magnetic detent to uncapped `MAX` full speed.
+- **Measured Speed & Two-Stage Throttle**: PGPMint measures each GPU's throughput while searching and reuses valid calibration for the same suffix length and GPU configuration. Batch sizes adjust to measured dispatch times. Once calibrated, use `1%-99%` to limit speed or select `MAX` for full speed.
 - **Zero-Overhead System Tray & Pure-CPU Floating HUD** — Closing the main window minimizes PGPMint to the notification area so WinUI 3 stops consuming GPU rendering cycles. An optional pure-CPU Direct2D/DirectWrite floating Mini HUD tracks live speed, probability, ETA, and progress (auto-hides during fullscreen apps/games).
 - **Minimalist Dashboard & Separate Settings** — Live hash rate, smooth progress bar, cumulative hit probability (hover for single-hash odds; switches cleanly to `Found` once a matching key is stored), scientific-notation checked count, live ETA, and an adaptive results card that expands for up to 5 saved keys.
 - **DPAPI Encrypted Vault & Signing-Ready `.asc` Export** — Every GPU match is double-verified on CPU, encrypted locally using Windows DPAPI (`CurrentUser`), and exported as RFC 9580 / GnuPG-compatible `.secret.asc` and `.public.asc` files with `Certify | Sign` key flags and optional AES-256-CFB passphrase protection.
@@ -46,8 +46,11 @@ Unlike command-line tools that require installing Python or the NVIDIA CUDA Tool
 
 1. Download the latest single-file executable from [GitHub Releases](https://github.com/Evanlau1798/PGPMint/releases) (`PGPMint-*-win-x64.exe` or `win-arm64.exe`) and run it directly.
 2. **Initial Setup**: Enter your desired 1-16 hex Key ID suffix (`0-9`, `A-F`, e.g. `01 2345 6789`), choose hardware GPU(s), select your language, and click **Start**.
-3. **Automatic Calibration & Search**: On first run, PGPMint runs at full speed for 30 seconds to measure your real GPU speed while actively searching your target. Afterward, adjust the throttle slider (`1%-99%` or `MAX`), press **Stop** anytime (progress is always saved), or close the window to keep running at peak speed in the system tray.
+3. **Automatic Calibration & Search**: Start searching with a small batch. PGPMint runs the 30-second calibration when the current workload needs a new measurement, and can save a match during calibration. Adjust the throttle slider (`1%-99%` or `MAX`) once calibrated. Press **Stop** to finish the active batch and save progress, or close the window to continue in the system tray.
+
 4. **Export Your Key**: When a match appears in the results panel, click `.asc` to export `<KEYID>.secret.asc` and `<KEYID>.public.asc`.
+
+If a GPU becomes unavailable during search, PGPMint tries to reopen it once and starts again with a small batch. Progress includes only batches completed before the loss and after recovery.
 
 ---
 

@@ -72,7 +72,7 @@ public sealed class DirectComputeBackend : IGpuBackend
                     Revision: desc.Revision,
                     DedicatedVideoMemoryBytes: dedicatedBytes,
                     DriverVersion: driverVersion,
-                    IsDiscrete: isDiscrete));
+                    IsDiscrete: isDiscrete) { KernelConfiguration = DirectComputeDevice.DefaultConfiguration });
             }
         }
 

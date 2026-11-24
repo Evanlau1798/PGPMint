@@ -5,6 +5,12 @@ namespace PGPMint.Core.Search;
 
 public sealed partial class MultiGpuCoordinator
 {
+    private sealed class SessionDevice(IGpuSearchDevice device)
+    {
+        public IGpuSearchDevice? Device { get; set; } = device;
+        public bool RecoveryAttempted { get; set; }
+    }
+
     public async Task StopAsync()
     {
         Task? runningTask;
@@ -94,7 +100,7 @@ public sealed partial class MultiGpuCoordinator
         CancellationTokenSource sessionCts)
     {
         CancellationToken ct = sessionCts.Token;
-        var devices = new List<IGpuSearchDevice>(enabled.Count);
+        var devices = new List<SessionDevice>(enabled.Count);
         using var failureLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         using var telemetryCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
@@ -113,8 +119,8 @@ public sealed partial class MultiGpuCoordinator
             foreach (GpuDeviceInfo info in enabled)
             {
                 IGpuSearchDevice created = _backend.CreateDevice(info);
+                devices.Add(new SessionDevice(created));
                 ReconcileActualDeviceInfo(created);
-                devices.Add(created);
             }
 
             telemetryLoop = Task.Run(async () =>
@@ -178,18 +184,9 @@ public sealed partial class MultiGpuCoordinator
                 _state = CoordinatorState.Calibrating;
                 PublishTelemetry();
 
-                var calTasks = devices.Select(dev => Task.Run(() =>
-                {
-                    try
-                    {
-                        return RunZeroWasteCalibrationOnOpenDevice(dev, pattern, failureLinkedCts.Token);
-                    }
-                    catch when (!failureLinkedCts.IsCancellationRequested)
-                    {
-                        failureLinkedCts.Cancel();
-                        throw;
-                    }
-                }, CancellationToken.None)).ToArray();
+                var calTasks = devices.Select(slot => Task.Run(() => RunOnDevice(slot, (device, _) =>
+                    RunZeroWasteCalibrationOnOpenDevice(device, pattern, failureLinkedCts.Token)),
+                    CancellationToken.None)).ToArray();
 
                 CalibrationRecord?[] records = await Task.WhenAll(calTasks).ConfigureAwait(false);
                 Volatile.Write(ref calClockActive, 0);
@@ -222,18 +219,20 @@ public sealed partial class MultiGpuCoordinator
                 PublishTelemetry();
 
                 // Phase 2: Continuous multi-GPU search (dynamic median updates only while in FullSpeed mode)
-                var workerTasks = devices.Select(dev => Task.Run(() =>
+                var workerTasks = devices.Select(slot => Task.Run(() => RunOnDevice(slot, (device, recovered) =>
                 {
-                    try
+                    if (recovered && GetValidatedDeviceBaselineHps(device.Info) <= 0)
                     {
-                        RunSearchWorkerLoop(dev, pattern, failureLinkedCts.Token);
+                        CalibrationRecord? record = RunZeroWasteCalibrationOnOpenDevice(device, pattern, failureLinkedCts.Token);
+                        if (record is not null)
+                        {
+                            SaveCalibrationRecord(record);
+                        }
                     }
-                    catch when (!failureLinkedCts.IsCancellationRequested)
-                    {
-                        failureLinkedCts.Cancel();
-                        throw;
-                    }
-                }, CancellationToken.None)).ToArray();
+
+                    RunSearchWorkerLoop(device, pattern, failureLinkedCts.Token);
+                    return true;
+                }), CancellationToken.None)).ToArray();
 
                 await Task.WhenAll(workerTasks).ConfigureAwait(false);
             }
@@ -260,9 +259,9 @@ public sealed partial class MultiGpuCoordinator
                 try { await telemetryLoop.ConfigureAwait(false); } catch { }
             }
 
-            foreach (IGpuSearchDevice dev in devices)
+            foreach (SessionDevice slot in devices)
             {
-                try { dev.Dispose(); } catch { }
+                try { slot.Device?.Dispose(); } catch { }
             }
 
             FlushSessionCheckedIntoPersisted();
@@ -291,6 +290,47 @@ public sealed partial class MultiGpuCoordinator
             if (publishIdle)
             {
                 PublishTelemetry();
+            }
+        }
+
+        T RunOnDevice<T>(SessionDevice slot, Func<IGpuSearchDevice, bool, T> run)
+        {
+            CancellationToken workerToken = failureLinkedCts.Token;
+            bool recovered = false;
+            try
+            {
+                while (true)
+                {
+                    workerToken.ThrowIfCancellationRequested();
+                    IGpuSearchDevice device = slot.Device!;
+                    try
+                    {
+                        return run(device, recovered);
+                    }
+                    catch (GpuDeviceLostException)
+                    {
+                        workerToken.ThrowIfCancellationRequested();
+                        InvalidateCalibration(device.Info, pattern);
+                        if (slot.RecoveryAttempted)
+                        {
+                            throw;
+                        }
+
+                        slot.RecoveryAttempted = true;
+                        slot.Device = null;
+                        device.Dispose();
+                        workerToken.ThrowIfCancellationRequested();
+                        IGpuSearchDevice replacement = _backend.CreateDevice(device.Info);
+                        slot.Device = replacement;
+                        ReconcileActualDeviceInfo(replacement);
+                        recovered = true;
+                    }
+                }
+            }
+            catch when (!failureLinkedCts.IsCancellationRequested)
+            {
+                failureLinkedCts.Cancel();
+                throw;
             }
         }
     }

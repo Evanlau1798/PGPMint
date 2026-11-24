@@ -1,5 +1,7 @@
 namespace PGPMint.Core.Search;
 
+public sealed record GpuKernelConfiguration(int KeysPerWorkItem, int WorkgroupSize, int OuterLoopUnroll, string ScheduleVariant);
+
 public sealed record GpuDeviceInfo(
     string DeviceKey,
     long AdapterLuid,
@@ -12,7 +14,11 @@ public sealed record GpuDeviceInfo(
     string DriverVersion,
     bool IsDiscrete,
     string BackendName = "DirectCompute",
-    string KernelVersion = Gpu.DirectComputeShaderSource.KernelVersion);
+    string KernelVersion = Gpu.DirectComputeShaderSource.KernelVersion)
+{
+    public string? BackendDriverVersion { get; init; }
+    public GpuKernelConfiguration? KernelConfiguration { get; init; }
+}
 
 public sealed record CalibrationRecord(
     string DeviceKey,
@@ -22,7 +28,8 @@ public sealed record CalibrationRecord(
     double PeakHashesPerSecond,
     double MedianHashesPerSecond,
     bool IsFullCalibration,
-    DateTimeOffset CalibratedAtUtc);
+    DateTimeOffset CalibratedAtUtc,
+    string? WorkloadIdentity = null);
 
 public sealed record MatchedKeyRecord(
     string Id,
@@ -49,6 +56,7 @@ public readonly record struct SearchBatchResult(
     public bool HashRangeFullyProcessed { get; init; } = true;
     public bool ResultsComplete { get; init; } = true;
     public bool WasCancelled { get; init; }
+    public double? DispatchWallMilliseconds { get; init; }
     public long? RescanEvaluations => HashEvaluations - UniqueCandidatesCompleted;
     public long ReturnedHits => Hits.Sum(lane => (long)lane.Count);
 

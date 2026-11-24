@@ -7,8 +7,6 @@ namespace PGPMint.Core.Search;
 
 public sealed partial class MultiGpuCoordinator
 {
-    private const long SmallBatchCandidateLimit = 1L << 18;
-
     private CalibrationRecord? RunZeroWasteCalibrationOnOpenDevice(
         IGpuSearchDevice device,
         KeyIdPattern pattern,
@@ -16,6 +14,8 @@ public sealed partial class MultiGpuCoordinator
     {
         WorkerRuntimeState rt = GetOrCreateRuntimeState(device.Info.DeviceKey);
         rt.Error = null;
+        var batchSizer = new AdaptiveBatchSizer(device.MaxCandidatesPerBatch, device.KeysPerBatch, pattern.FixedHexLength);
+        rt.BatchSizer = batchSizer;
         Ed25519KeyPair[] keys = GenerateKeyGroup(device.KeysPerBatch);
         byte[][] pubKeys = keys.Select(k => k.PublicKey).ToArray();
         uint cursor = 1u;
@@ -27,12 +27,12 @@ public sealed partial class MultiGpuCoordinator
             if (!ct.IsCancellationRequested && !IsCurrentlyPaused())
             {
                 uint warmupStamps = RateControl.ComputeBatchTimestamps(
-                    Math.Min(device.MaxCandidatesPerBatch, SmallBatchCandidateLimit),
+                    batchSizer.NextCandidateLimit,
                     device.KeysPerBatch,
                     new RateDirective(RateMode.FullSpeed, RateControl.FullSpeedSentinel),
                     end - cursor);
 
-                ScanSearchBatch(device, keys, pubKeys, cursor, warmupStamps, pattern, ct, out bool retired);
+                ScanSearchBatch(device, keys, pubKeys, cursor, warmupStamps, pattern, batchSizer, ct, out bool retired);
                 cursor = AdvanceKeyGroupCursor(keys, cursor, warmupStamps, end, retired);
             }
 
@@ -59,12 +59,12 @@ public sealed partial class MultiGpuCoordinator
                 }
 
                 uint stamps = RateControl.ComputeBatchTimestamps(
-                    SearchBatchLimit(device, pattern),
+                    batchSizer.NextCandidateLimit,
                     device.KeysPerBatch,
                     new RateDirective(RateMode.FullSpeed, RateControl.FullSpeedSentinel),
                     end - cursor);
 
-                long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, ct, out bool retired);
+                long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, batchSizer, ct, out bool retired);
 
                 cursor = AdvanceKeyGroupCursor(keys, cursor, stamps, end, retired);
                 windowChecked += batchCandidates;
@@ -97,7 +97,7 @@ public sealed partial class MultiGpuCoordinator
                 return null;
             }
 
-            return BuildCalibrationRecordFromSamples(device, samples, priorPeakHps: 0.0);
+            return BuildCalibrationRecordFromSamples(device, pattern, samples, priorPeakHps: 0.0);
         }
         catch (Exception ex)
         {
@@ -114,6 +114,8 @@ public sealed partial class MultiGpuCoordinator
     {
         WorkerRuntimeState rt = GetOrCreateRuntimeState(device.Info.DeviceKey);
         rt.Error = null;
+        var batchSizer = new AdaptiveBatchSizer(device.MaxCandidatesPerBatch, device.KeysPerBatch, pattern.FixedHexLength);
+        rt.BatchSizer = batchSizer;
 
         Ed25519KeyPair[] keys = GenerateKeyGroup(device.KeysPerBatch);
         byte[][] pubKeys = keys.Select(k => k.PublicKey).ToArray();
@@ -130,7 +132,6 @@ public sealed partial class MultiGpuCoordinator
         var fullSpeedSamples = new List<double>();
         long dynamicMedianStart = Stopwatch.GetTimestamp();
         int minMedianSamples = Math.Max(1, _options.MinDynamicMedianSamples);
-        bool firstBatch = true;
 
         try
         {
@@ -181,8 +182,8 @@ public sealed partial class MultiGpuCoordinator
                             if (Stopwatch.GetElapsedTime(dynamicMedianStart) >= _options.DynamicMedianInterval &&
                                 fullSpeedSamples.Count >= minMedianSamples)
                             {
-                                double priorPeak = GetStoredDevicePeakHps(device.Info.DeviceKey);
-                                CalibrationRecord updated = BuildCalibrationRecordFromSamples(device, fullSpeedSamples, priorPeak);
+                                double priorPeak = GetStoredDevicePeakHps(device.Info);
+                                CalibrationRecord updated = BuildCalibrationRecordFromSamples(device, pattern, fullSpeedSamples, priorPeak);
                                 SaveCalibrationRecord(updated);
                                 fullSpeedSamples.Clear();
                                 dynamicMedianStart = Stopwatch.GetTimestamp();
@@ -214,16 +215,13 @@ public sealed partial class MultiGpuCoordinator
                     end = CurrentTimestampUpperBound();
                 }
 
-                long batchLimit = firstBatch ? Math.Min(device.MaxCandidatesPerBatch, SmallBatchCandidateLimit)
-                    : SearchBatchLimit(device, pattern);
                 uint stamps = RateControl.ComputeBatchTimestamps(
-                    batchLimit,
+                    batchSizer.NextCandidateLimit,
                     device.KeysPerBatch,
                     directive,
                     end - cursor);
 
-                long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, ct, out bool retired);
-                firstBatch = false;
+                long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, batchSizer, ct, out bool retired);
                 sampleChecked += batchCandidates;
                 cursor = AdvanceKeyGroupCursor(keys, cursor, stamps, end, retired);
 
@@ -252,6 +250,7 @@ public sealed partial class MultiGpuCoordinator
 
     private static CalibrationRecord BuildCalibrationRecordFromSamples(
         IGpuSearchDevice device,
+        KeyIdPattern pattern,
         List<double> samples,
         double priorPeakHps)
     {
@@ -270,7 +269,8 @@ public sealed partial class MultiGpuCoordinator
             PeakHashesPerSecond: peak,
             MedianHashesPerSecond: median,
             IsFullCalibration: true,
-            CalibratedAtUtc: DateTimeOffset.UtcNow);
+            CalibratedAtUtc: DateTimeOffset.UtcNow,
+            WorkloadIdentity: CalibrationValidator.WorkloadIdentity(device.Info, pattern));
     }
 
     private bool HandleVerifiedHits(
@@ -385,10 +385,6 @@ public sealed partial class MultiGpuCoordinator
     private bool IsCurrentlyPaused() =>
         _pausedExplicitly || _pausedByZeroSlider || Volatile.Read(ref _autoPauseTriggered) != 0;
 
-    private static long SearchBatchLimit(IGpuSearchDevice device, KeyIdPattern pattern) =>
-        pattern.FixedHexLength <= 4 ? Math.Min(device.MaxCandidatesPerBatch, SmallBatchCandidateLimit)
-            : device.MaxCandidatesPerBatch;
-
     private long ScanSearchBatch(
         IGpuSearchDevice device,
         Ed25519KeyPair[] keys,
@@ -396,12 +392,16 @@ public sealed partial class MultiGpuCoordinator
         uint start,
         uint count,
         KeyIdPattern pattern,
+        AdaptiveBatchSizer batchSizer,
         CancellationToken cancellationToken,
         out bool retired)
     {
         retired = false;
+        long batchStarted = Stopwatch.GetTimestamp();
         SearchBatchResult batch = device.ScanBatch(publicKeys, start, count, pattern,
             resultMode: SearchResultMode.FindOne, cancellationToken: cancellationToken);
+        batchSizer.Observe((uint)(batch.UniqueCandidatesCompleted / device.KeysPerBatch),
+            batch.DispatchWallMilliseconds ?? Stopwatch.GetElapsedTime(batchStarted).TotalMilliseconds);
         long returnedHits = batch.ReturnedHits;
         lock (_lifecycleLock)
         {

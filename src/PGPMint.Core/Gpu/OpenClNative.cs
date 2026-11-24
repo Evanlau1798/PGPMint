@@ -5,6 +5,7 @@ namespace PGPMint.Core.Gpu;
 internal static unsafe class OpenClNative
 {
     public const int ClSuccess = 0;
+    public const int ClDeviceNotAvailable = -2;
     public const ulong ClDeviceTypeGpu = 1UL << 2;
 
     public const uint ClDeviceVendorId = 0x1001;
@@ -17,6 +18,8 @@ internal static unsafe class OpenClNative
     public const uint ClDeviceLuidKhr = 0x106D;
     public const uint ClDeviceLuidValidKhr = 0x106C;
 
+    public const uint ClProgramBinarySizes = 0x1165;
+    public const uint ClProgramBinaries = 0x1166;
     public const uint ClProgramBuildLog = 0x1183;
     public const uint ClKernelWorkGroupSize = 0x11B0;
 
@@ -55,6 +58,14 @@ internal static unsafe class OpenClNative
 
     [DllImport("OpenCL.dll", CallingConvention = CallingConvention.StdCall)]
     public static extern nint clCreateProgramWithSource(nint context, uint count, byte** strings, nuint* lengths, int* errcodeRet);
+
+    [DllImport("OpenCL.dll", CallingConvention = CallingConvention.StdCall)]
+    public static extern nint clCreateProgramWithBinary(nint context, uint numDevices, nint* devices, nuint* lengths,
+        byte** binaries, int* binaryStatus, int* errcodeRet);
+
+    [DllImport("OpenCL.dll", CallingConvention = CallingConvention.StdCall)]
+    public static extern int clGetProgramInfo(nint program, uint paramName, nuint paramValueSize, void* paramValue,
+        nuint* paramValueSizeRet);
 
     [DllImport("OpenCL.dll", CallingConvention = CallingConvention.StdCall)]
     public static extern int clBuildProgram(nint program, uint numDevices, nint* deviceList, byte* options, nint pfnNotify, nint userData);
