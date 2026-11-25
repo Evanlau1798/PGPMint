@@ -32,6 +32,7 @@
     "Recalibrating": "Recalibrating",
     "PowerTooltipFormat": "{0} · {1}",
     "GpuLoadTooltipFormat": "GPU Load {0}%",
+    "YieldingBadge": "Yielding",
     "YieldingSuffix": "Yielding to active GPU app",
     "Paused": "PAUSED",
     "Idle": "IDLE",

@@ -7,6 +7,7 @@ namespace PGPMint.Core.Search;
 public sealed partial class MultiGpuCoordinator
 {
     internal const uint MinimumCreationTimestamp = 946_684_800u; // 2000-01-01T00:00:00Z
+    private const double ContendedOtherGpuUtilThreshold = 10.0;
 
     private CalibrationRecord? RunZeroWasteCalibrationOnOpenDevice(
         IGpuSearchDevice device,
@@ -337,11 +338,15 @@ public sealed partial class MultiGpuCoordinator
         double sensorPollIntervalSec = Math.Max(0.05, _options.SensorPollInterval.TotalSeconds);
         bool sensorPrimed = false;
 
-        // Dynamic median tracking: active ONLY while tier is continuously at Max (FullSpeed).
+        // Dynamic median tracking: active ONLY while tier is continuously at Max (FullSpeed)
+        // and no other process is contending for the GPU.
         var fullSpeedSamples = new List<double>();
         var fullSpeedWattSamples = new List<double>();
         long dynamicMedianStart = Stopwatch.GetTimestamp();
         int minMedianSamples = Math.Max(1, _options.MinDynamicMedianSamples);
+        bool lastSampleContended = false;
+        bool windowHadGpuContention = false;
+        bool lastPublishedHpsContended = false;
 
         IDisposable? qosScope = null;
         try
@@ -355,22 +360,51 @@ public sealed partial class MultiGpuCoordinator
                 double deviceBaseline = CalibrationValidator.GetBaselineHps(calRecord);
                 int epochAfter = Volatile.Read(ref _rateEpoch);
 
-                if (epochBefore != seenRateEpoch || epochAfter != epochBefore)
+                if (epochAfter != epochBefore)
+                {
+                    continue;
+                }
+
+                bool rateEpochChanged = epochBefore != seenRateEpoch;
+                if (rateEpochChanged)
                 {
                     yieldController.Reset();
                     Volatile.Write(ref rt.IsOverloadYielding, 0);
+                    if (!userPaused)
+                    {
+                        // Re-anchor sensor baseline on tier switch without consuming the post-switch
+                        // grace window using pre-switch elapsed time or residual watts.
+                        GpuSensorSample prime = _telemetrySensor.Sample(device.Info);
+                        UpdateRuntimeSensor(rt, prime);
+                        lastSampleContended = prime.HasGpuUtil && prime.OtherProcessGpuUtil >= ContendedOtherGpuUtilThreshold;
+                        Volatile.Write(ref rt.IsGpuContended, (lastSampleContended || lastPublishedHpsContended) ? 1 : 0);
+                        sensorPrimed = true;
+                        lastSensorPollTs = Stopwatch.GetTimestamp();
+                    }
                 }
 
                 // Poll GPU power & engine utilization sensor periodically (for live MH/W badge + overload yield)
                 double sensorDtSec = Stopwatch.GetElapsedTime(lastSensorPollTs).TotalSeconds;
-                if (!userPaused && (!sensorPrimed || sensorDtSec >= sensorPollIntervalSec))
+                if (!userPaused && !rateEpochChanged && (!sensorPrimed || sensorDtSec >= sensorPollIntervalSec))
                 {
                     GpuSensorSample sensor = _telemetrySensor.Sample(device.Info);
                     UpdateRuntimeSensor(rt, sensor);
-                    if (activeTier == PowerTier.Max && sensor.HasPowerWatts && sensor.PowerWatts > 0.0)
+                    bool contended = sensor.HasGpuUtil && sensor.OtherProcessGpuUtil >= ContendedOtherGpuUtilThreshold;
+                    lastSampleContended = contended;
+                    Volatile.Write(ref rt.IsGpuContended, (lastSampleContended || lastPublishedHpsContended) ? 1 : 0);
+
+                    if (contended)
+                    {
+                        windowHadGpuContention = true;
+                        fullSpeedSamples.Clear();
+                        fullSpeedWattSamples.Clear();
+                        dynamicMedianStart = Stopwatch.GetTimestamp();
+                    }
+                    else if (activeTier == PowerTier.Max && sensor.HasPowerWatts && sensor.PowerWatts > 0.0)
                     {
                         fullSpeedWattSamples.Add(sensor.PowerWatts);
                     }
+
                     if (sensorPrimed)
                     {
                         yieldController.Update(activeTier, calRecord?.EfficiencyProfile, sensor, sensorDtSec);
@@ -394,9 +428,9 @@ public sealed partial class MultiGpuCoordinator
 
                 double nowSec = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
 
-                if (epochBefore != seenRateEpoch || epochAfter != epochBefore || directive.Mode != lastMode)
+                if (rateEpochChanged || directive.Mode != lastMode)
                 {
-                    seenRateEpoch = epochAfter;
+                    seenRateEpoch = epochBefore;
                     lastMode = directive.Mode;
                     readyTimeSec = nowSec;
                     sampleStart = Stopwatch.GetTimestamp();
@@ -404,10 +438,13 @@ public sealed partial class MultiGpuCoordinator
                     fullSpeedSamples.Clear();
                     fullSpeedWattSamples.Clear();
                     dynamicMedianStart = Stopwatch.GetTimestamp();
+                    windowHadGpuContention = lastSampleContended;
 
                     if (directive.Mode == RateMode.Paused)
                     {
                         Volatile.Write(ref rt.ActualHps, 0.0);
+                        lastPublishedHpsContended = false;
+                        Volatile.Write(ref rt.IsGpuContended, lastSampleContended ? 1 : 0);
                     }
                 }
                 else
@@ -427,7 +464,12 @@ public sealed partial class MultiGpuCoordinator
                         sampleStart = Stopwatch.GetTimestamp();
                         sampleChecked = 0;
 
-                        if (directive.Mode == RateMode.FullSpeed && hps > 0.0)
+                        bool thisWindowContended = windowHadGpuContention;
+                        windowHadGpuContention = lastSampleContended;
+                        lastPublishedHpsContended = directive.Mode != RateMode.Paused && thisWindowContended;
+                        Volatile.Write(ref rt.IsGpuContended, (lastSampleContended || lastPublishedHpsContended) ? 1 : 0);
+
+                        if (directive.Mode == RateMode.FullSpeed && hps > 0.0 && !thisWindowContended && !lastSampleContended)
                         {
                             fullSpeedSamples.Add(hps);
                             if (Stopwatch.GetElapsedTime(dynamicMedianStart) >= _options.DynamicMedianInterval &&
@@ -464,8 +506,14 @@ public sealed partial class MultiGpuCoordinator
                 {
                     qosScope?.Dispose();
                     qosScope = null;
+                    lastSampleContended = false;
+                    windowHadGpuContention = false;
+                    lastPublishedHpsContended = false;
+                    sensorPrimed = false;
+                    lastSensorPollTs = Stopwatch.GetTimestamp();
                     Volatile.Write(ref rt.ActualHps, 0.0);
                     Volatile.Write(ref rt.IsOverloadYielding, 0);
+                    Volatile.Write(ref rt.IsGpuContended, 0);
                     Thread.Sleep(25);
                     continue;
                 }

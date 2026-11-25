@@ -1,22 +1,29 @@
 namespace PGPMint.Core.Search;
 
 /// <summary>
-/// Smoothly yields PGPMint's GPU rate in Eco / Balanced / Efficiency tiers only when another process
-/// drives total GPU power or engine utilization above the tier budget, then recovers after
-/// a calm hysteresis window. Max tier never yields.
+/// Smoothly adapts PGPMint's GPU rate in Eco / Balanced / Efficiency tiers when another process
+/// shares the GPU: trims rate when total GPU power or engine utilization exceeds the tier ceiling,
+/// holds steady inside a deadband, and gently fills spare headroom (even while another app remains
+/// active) instead of latching at zero. Max tier never yields.
 /// </summary>
 public sealed class OverloadYieldController
 {
-    private const double SettleGraceSeconds = 3.0;
-    private const double OverloadTriggerHoldSeconds = 0.75;
+    private const double PowerCooldownGraceSeconds = 3.0;
+    private const double OtherAppSwitchGraceSeconds = 1.0;
+    private const double OverloadTriggerHoldSeconds = 0.50;
     private const double CalmRecoveryHoldSeconds = 2.0;
-    private const double RecoverySlopePerSecond = 0.80;
-    private const double DecayBasePerSecond = 0.15;
-    private const double SnapToZeroThreshold = 0.12;
+    private const double SharedRecoveryHoldSeconds = 1.5;
+    private const double SharedWakeHoldSeconds = 3.0;
+    private const double FullCalmRecoverySlopePerSecond = 0.80;
+    private const double SharedRecoverySlopePerSecond = 0.25;
+    private const double DecayBasePerSecond = 0.38;
+    private const double SnapToZeroThreshold = 0.08;
+    private const double MinWakeYieldScale = 0.10;
 
-    private double _graceRemainingSeconds = SettleGraceSeconds;
+    private double _powerGraceRemainingSeconds = PowerCooldownGraceSeconds;
+    private double _otherAppGraceRemainingSeconds = OtherAppSwitchGraceSeconds;
     private double _overloadHoldSeconds;
-    private double _calmSeconds;
+    private double _headroomSeconds;
 
     public double YieldScale { get; private set; } = 1.0;
     public bool IsYielding => YieldScale < 0.99;
@@ -24,9 +31,10 @@ public sealed class OverloadYieldController
     public void Reset()
     {
         YieldScale = 1.0;
-        _graceRemainingSeconds = SettleGraceSeconds;
+        _powerGraceRemainingSeconds = PowerCooldownGraceSeconds;
+        _otherAppGraceRemainingSeconds = OtherAppSwitchGraceSeconds;
         _overloadHoldSeconds = 0.0;
-        _calmSeconds = 0.0;
+        _headroomSeconds = 0.0;
     }
 
     public double Update(
@@ -45,14 +53,21 @@ public sealed class OverloadYieldController
             ? Math.Clamp(elapsedSeconds, 0.01, 2.0)
             : 0.25;
 
-        bool inPowerCooldownGrace = _graceRemainingSeconds > 0.0;
+        bool inPowerCooldownGrace = _powerGraceRemainingSeconds > 0.0;
         if (inPowerCooldownGrace)
         {
-            _graceRemainingSeconds = Math.Max(0.0, _graceRemainingSeconds - dt);
+            _powerGraceRemainingSeconds = Math.Max(0.0, _powerGraceRemainingSeconds - dt);
+        }
+
+        bool inOtherAppGrace = _otherAppGraceRemainingSeconds > 0.0;
+        if (inOtherAppGrace)
+        {
+            _otherAppGraceRemainingSeconds = Math.Max(0.0, _otherAppGraceRemainingSeconds - dt);
         }
 
         bool isOverloaded;
-        bool isCalm;
+        bool hasHeadroom;
+        bool isFullyCalm;
 
         if (sample.HasPowerWatts && profile is { HasPowerSensor: true, FullLoadWatts: > 0.0 })
         {
@@ -83,32 +98,79 @@ public sealed class OverloadYieldController
             double hardPowerCeiling = isUpperMid
                 ? Math.Max(powerCeiling + 20.0, profile.FullLoadWatts * 0.90)
                 : Math.Max(powerCeiling + 20.0, profile.FullLoadWatts * 0.70);
+            double marginAboveTier = Math.Max(0.0, powerCeiling - tierWatts);
+            double powerDeadbandWatts = Math.Min(12.0, Math.Min(powerCeiling * 0.15, Math.Max(2.0, marginAboveTier * 0.5)));
+            double powerRecoveryThreshold = Math.Max(0.0, Math.Min(powerCeiling * 0.92, powerCeiling - powerDeadbandWatts));
+            if (tierWatts < powerCeiling)
+            {
+                // Ensure the shared-GPU recovery threshold never sits below the tier's own calibrated power
+                powerRecoveryThreshold = Math.Max(powerRecoveryThreshold, tierWatts + Math.Min(2.0, marginAboveTier * 0.25));
+            }
+
+            double baseUtilCeiling = tier switch
+            {
+                PowerTier.Eco => 60.0,
+                PowerTier.Balanced => 75.0,
+                PowerTier.Efficiency => 85.0,
+                _ => 100.0
+            };
+            double calibratedUtil = tierPoint is { EstimatedGpuUtil: > 0.0 } ? tierPoint.EstimatedGpuUtil : 0.0;
+            double utilCeiling = calibratedUtil > 0.0
+                ? Math.Min(92.0, Math.Max(baseUtilCeiling, calibratedUtil + 10.0))
+                : baseUtilCeiling;
+            double utilRecoveryThreshold = utilCeiling - 10.0;
 
             if (sample.HasGpuUtil)
             {
-                bool otherAppOverload = sample.OtherProcessGpuUtil >= 20.0 &&
-                                        (sample.PowerWatts > powerCeiling || (isUpperMid && sample.TotalGpuUtil >= 85.0));
+                bool otherAppOverload = !inOtherAppGrace &&
+                                        sample.OtherProcessGpuUtil >= 20.0 &&
+                                        (sample.PowerWatts > powerCeiling || sample.TotalGpuUtil >= utilCeiling);
                 bool hardPowerOverload = !inPowerCooldownGrace && sample.PowerWatts > hardPowerCeiling;
                 isOverloaded = otherAppOverload || hardPowerOverload;
-                isCalm = sample.OtherProcessGpuUtil < 15.0 && sample.PowerWatts < powerCeiling * 0.94;
+                // When no other app is competing (< 15%), allow full recovery up to powerCeiling
+                // (still well below hardPowerCeiling) so warm GPUs and <=90W GPUs never stall below 1.0.
+                isFullyCalm = sample.OtherProcessGpuUtil < 15.0 && sample.PowerWatts < powerCeiling;
+                hasHeadroom = isFullyCalm ||
+                              (sample.PowerWatts < powerRecoveryThreshold && sample.TotalGpuUtil < utilRecoveryThreshold);
             }
             else
             {
+                // Power-only fallback (no D3DKMT util): keep conservative shared-slope recovery so
+                // rate settles into the deadband without oscillating if another app is active.
                 isOverloaded = !inPowerCooldownGrace && sample.PowerWatts > powerCeiling;
-                isCalm = sample.PowerWatts < powerCeiling * 0.92;
+                isFullyCalm = false;
+                hasHeadroom = sample.PowerWatts < powerRecoveryThreshold;
             }
         }
         else if (sample.HasGpuUtil)
         {
-            double utilCeiling = tier switch
+            TierOperatingPoint? tierPoint = tier switch
             {
-                PowerTier.Eco => 40.0,
-                PowerTier.Balanced => 62.0,
-                PowerTier.Efficiency => 78.0,
+                PowerTier.Eco => profile?.Eco,
+                PowerTier.Balanced => profile?.Balanced,
+                PowerTier.Efficiency => profile?.Efficiency,
+                _ => null
+            };
+            double baseUtilCeiling = tier switch
+            {
+                PowerTier.Eco => 45.0,
+                PowerTier.Balanced => 65.0,
+                PowerTier.Efficiency => 82.0,
                 _ => 100.0
             };
-            isOverloaded = sample.OtherProcessGpuUtil >= 25.0 && sample.TotalGpuUtil > utilCeiling;
-            isCalm = sample.OtherProcessGpuUtil < 15.0 && sample.TotalGpuUtil < utilCeiling - 10.0;
+            double calibratedUtil = tierPoint is { EstimatedGpuUtil: > 0.0 } ? tierPoint.EstimatedGpuUtil : 0.0;
+            double utilCeiling = calibratedUtil > 0.0
+                ? Math.Min(92.0, Math.Max(baseUtilCeiling, calibratedUtil + 10.0))
+                : baseUtilCeiling;
+            double utilRecoveryThreshold = utilCeiling - 12.0;
+
+            isOverloaded = !inOtherAppGrace &&
+                           sample.OtherProcessGpuUtil >= 20.0 &&
+                           sample.TotalGpuUtil >= utilCeiling;
+            // When no other app is active (< 15%), isOverloaded is always false, so allow full
+            // recovery up to utilCeiling even as PGPMint's own utilization climbs to its tier target.
+            isFullyCalm = sample.OtherProcessGpuUtil < 15.0 && sample.TotalGpuUtil < utilCeiling;
+            hasHeadroom = isFullyCalm || sample.TotalGpuUtil < utilRecoveryThreshold;
         }
         else
         {
@@ -118,7 +180,7 @@ public sealed class OverloadYieldController
 
         if (isOverloaded)
         {
-            _calmSeconds = 0.0;
+            _headroomSeconds = 0.0;
             _overloadHoldSeconds += dt;
             if (_overloadHoldSeconds >= OverloadTriggerHoldSeconds && YieldScale > 0.0)
             {
@@ -129,22 +191,31 @@ public sealed class OverloadYieldController
         else
         {
             _overloadHoldSeconds = 0.0;
-            if (isCalm && YieldScale < 1.0)
+            if (hasHeadroom && YieldScale < 1.0)
             {
-                _calmSeconds += dt;
-                if (_calmSeconds >= CalmRecoveryHoldSeconds)
+                _headroomSeconds += dt;
+                double requiredHold = isFullyCalm
+                    ? CalmRecoveryHoldSeconds
+                    : (YieldScale <= 0.0 ? SharedWakeHoldSeconds : SharedRecoveryHoldSeconds);
+                double slope = isFullyCalm
+                    ? FullCalmRecoverySlopePerSecond
+                    : SharedRecoverySlopePerSecond;
+                if (_headroomSeconds >= requiredHold)
                 {
-                    YieldScale = Math.Min(1.0, YieldScale + (dt * RecoverySlopePerSecond));
+                    double next = YieldScale <= 0.0
+                        ? Math.Max(MinWakeYieldScale, dt * slope)
+                        : YieldScale + (dt * slope);
+                    YieldScale = Math.Min(1.0, next);
                     if (YieldScale >= 0.995)
                     {
                         YieldScale = 1.0;
-                        _calmSeconds = 0.0;
+                        _headroomSeconds = 0.0;
                     }
                 }
             }
-            else if (YieldScale >= 1.0)
+            else
             {
-                _calmSeconds = 0.0;
+                _headroomSeconds = 0.0;
             }
         }
 

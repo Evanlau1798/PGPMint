@@ -180,6 +180,7 @@ public sealed partial class MultiGpuCoordinator
         Volatile.Write(ref rt.GpuUtilPercent, 0.0);
         Volatile.Write(ref rt.HasGpuUtilSensor, 0);
         Volatile.Write(ref rt.IsOverloadYielding, 0);
+        Volatile.Write(ref rt.IsGpuContended, 0);
         rt.BatchSizer = null;
     }
 
@@ -220,6 +221,7 @@ public sealed partial class MultiGpuCoordinator
         int utilSensorCount = 0;
         double totalUtilPercent = 0.0;
         bool anyYielding = false;
+        bool anyContended = false;
 
         bool isFullSpeed = (_state == CoordinatorState.Calibrating) || (activeTier == PowerTier.Max && !paused);
         ulong sessionChecked;
@@ -242,7 +244,8 @@ public sealed partial class MultiGpuCoordinator
                 bool hasPower = rt is not null && Volatile.Read(ref rt.HasPowerSensor) != 0 && powerWatts > 0.0;
                 double gpuUtil = rt is not null ? Volatile.Read(ref rt.GpuUtilPercent) : 0.0;
                 bool hasUtil = rt is not null && Volatile.Read(ref rt.HasGpuUtilSensor) != 0;
-                bool isYielding = rt is not null && Volatile.Read(ref rt.IsOverloadYielding) != 0;
+                bool isYielding = !paused && activeTier != PowerTier.Max && rt is not null && Volatile.Read(ref rt.IsOverloadYielding) != 0;
+                bool isContended = !paused && rt is not null && Volatile.Read(ref rt.IsGpuContended) != 0;
 
                 RateDirective dir = enabled && !paused
                     ? RateControl.FromTier(activeTier, baseline, cal?.EfficiencyProfile)
@@ -279,6 +282,11 @@ public sealed partial class MultiGpuCoordinator
                     {
                         anyYielding = true;
                     }
+
+                    if (isContended)
+                    {
+                        anyContended = true;
+                    }
                 }
 
                 deviceSnaps.Add(new GpuTelemetrySnapshot(
@@ -299,7 +307,8 @@ public sealed partial class MultiGpuCoordinator
                     HasPowerSensor = hasPower,
                     GpuUtilPercent = gpuUtil,
                     HasGpuUtilSensor = hasUtil,
-                    IsOverloadYielding = isYielding
+                    IsOverloadYielding = isYielding,
+                    IsGpuContended = isContended
                 });
             }
 
@@ -343,7 +352,8 @@ public sealed partial class MultiGpuCoordinator
             HasPowerSensor = allEnabledHavePower,
             AggregateGpuUtilPercent = aggregateUtil,
             HasGpuUtilSensor = anyEnabledHasUtil,
-            IsOverloadYielding = anyYielding
+            IsOverloadYielding = anyYielding,
+            IsGpuContended = anyContended
         };
     }
 
@@ -356,6 +366,7 @@ public sealed partial class MultiGpuCoordinator
         public double GpuUtilPercent;
         public int HasGpuUtilSensor;
         public int IsOverloadYielding;
+        public int IsGpuContended;
         public volatile AdaptiveBatchSizer? BatchSizer;
         public string? Error;
     }

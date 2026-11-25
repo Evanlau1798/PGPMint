@@ -38,6 +38,7 @@ public sealed record GpuTelemetrySnapshot(
     public double GpuUtilPercent { get; init; }
     public bool HasGpuUtilSensor { get; init; }
     public bool IsOverloadYielding { get; init; }
+    public bool IsGpuContended { get; init; }
 }
 
 public sealed record CoordinatorTelemetry(
@@ -65,6 +66,7 @@ public sealed record CoordinatorTelemetry(
     public double AggregateGpuUtilPercent { get; init; }
     public bool HasGpuUtilSensor { get; init; }
     public bool IsOverloadYielding { get; init; }
+    public bool IsGpuContended { get; init; }
 }
 
 public sealed class CoordinatorOptions

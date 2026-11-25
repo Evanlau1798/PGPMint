@@ -192,6 +192,26 @@ public sealed partial class MainViewModel
 
         if (t.State is CoordinatorState.Running or CoordinatorState.Calibrating)
         {
+            if (t.State == CoordinatorState.Running && t.IsOverloadYielding && t.TotalActualHps <= 0.0)
+            {
+                EfficiencyBadgeText = Loc.YieldingBadge;
+                if (t.HasPowerSensor && t.TotalPowerWatts > 0.0)
+                {
+                    string wattsText = FormattingHelpers.FormatWatts(t.TotalPowerWatts);
+                    EfficiencyBadgeTooltip = Loc.FormatPowerTooltip(wattsText, Loc.YieldingSuffix);
+                }
+                else if (t.HasGpuUtilSensor)
+                {
+                    int utilPct = (int)Math.Clamp(Math.Round(t.AggregateGpuUtilPercent, MidpointRounding.AwayFromZero), 0.0, 100.0);
+                    EfficiencyBadgeTooltip = $"{Loc.FormatGpuLoadTooltip(utilPct)} ({Loc.YieldingSuffix})";
+                }
+                else
+                {
+                    EfficiencyBadgeTooltip = Loc.YieldingSuffix;
+                }
+                return;
+            }
+
             if (t.HasPowerSensor && t.TotalPowerWatts > 0.0)
             {
                 double hpw = t.TotalActualHps > 0.0 ? t.TotalActualHps / t.TotalPowerWatts : 0.0;
@@ -240,7 +260,8 @@ public sealed partial class MainViewModel
         UpdateShowTraySpeedupHint(t);
 
         bool activeFullSpeed = t.IsFullSpeed &&
-                               t.State is CoordinatorState.Running or CoordinatorState.Calibrating &&
+                               !t.IsGpuContended &&
+                               t.State == CoordinatorState.Running &&
                                t.TotalActualHps > 0.0;
 
         if (activeFullSpeed)
@@ -351,6 +372,9 @@ public sealed partial class MainViewModel
             : Loc.Start;
 
         string rateCompact = FormattingHelpers.FormatHashRateCompact(t.TotalActualHps);
+        string runningRateLabel = (t.IsOverloadYielding && t.TotalActualHps <= 0.0)
+            ? Loc.YieldingBadge
+            : rateCompact;
         string probCompact = FormattingHelpers.FormatProbability(t.CumulativeProbability);
         bool hasRate = t.TotalActualHps > 0.0;
         int remainSec = (int)Math.Ceiling(t.CalibrationRemainingSeconds);
@@ -358,7 +382,7 @@ public sealed partial class MainViewModel
 
         string summaryLine1 = t.State switch
         {
-            CoordinatorState.Running => $"{rateCompact}  |  {ProbabilityText}  |  {LiveEtaText}",
+            CoordinatorState.Running => $"{runningRateLabel}  |  {ProbabilityText}  |  {LiveEtaText}",
             CoordinatorState.Calibrating => hasRate
                 ? $"{hudMeasuring}  |  {rateCompact}"
                 : hudMeasuring,
@@ -408,8 +432,8 @@ public sealed partial class MainViewModel
             string tip = t.State switch
             {
                 CoordinatorState.Running => string.IsNullOrEmpty(ActiveTargetSuffix)
-                    ? $"PGPMint  {rateCompact}\n{ProbabilityText} | {LiveEtaText} | {CheckedCountText}"
-                    : $"PGPMint  {rateCompact}\n{ProbabilityText} | {LiveEtaText} | {CheckedCountText}\n{ActiveFormattedPreview}",
+                    ? $"PGPMint  {runningRateLabel}\n{ProbabilityText} | {LiveEtaText} | {CheckedCountText}"
+                    : $"PGPMint  {runningRateLabel}\n{ProbabilityText} | {LiveEtaText} | {CheckedCountText}\n{ActiveFormattedPreview}",
                 CoordinatorState.Calibrating => hasRate
                     ? $"PGPMint  {hudMeasuring}\n{rateCompact}"
                     : $"PGPMint  {hudMeasuring}",
@@ -426,7 +450,7 @@ public sealed partial class MainViewModel
 
         string hudPrimary = t.State switch
         {
-            CoordinatorState.Running => rateCompact,
+            CoordinatorState.Running => runningRateLabel,
             CoordinatorState.Calibrating => hasRate ? rateCompact : hudMeasuring,
             CoordinatorState.Stopping => Loc.Stopping,
             CoordinatorState.Faulted => Loc.Error,
