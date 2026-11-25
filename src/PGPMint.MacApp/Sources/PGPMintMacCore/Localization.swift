@@ -18,9 +18,18 @@ public final class LocalizationStore {
 
     public var isChinese: Bool { effectiveLanguage == "zh-Hant" }
 
-    public init(bundle: Bundle = .module) {
-        loadCatalogs(from: bundle)
+    public init(bundle: Bundle? = nil) {
+        let resolved = bundle ?? Self.resolveResourceBundle()
+        loadCatalogs(from: resolved)
         applySetting(Self.autoCode)
+    }
+
+    private static func resolveResourceBundle() -> Bundle {
+        if let resUrl = Bundle.main.resourceURL?.appendingPathComponent("PGPMintMacApp_PGPMintMacCore.bundle"),
+           let appBundle = Bundle(url: resUrl) {
+            return appBundle
+        }
+        return .module
     }
 
     public func applySetting(_ code: String) {

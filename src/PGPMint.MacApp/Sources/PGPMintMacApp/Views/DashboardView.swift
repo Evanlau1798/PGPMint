@@ -28,7 +28,7 @@ struct DashboardView: View {
                 HStack(spacing: 6) {
                     Image(systemName: model.sleepProtected ? "moon.zzz.fill" : "exclamationmark.circle")
                         .font(.system(size: 11))
-                        .foregroundStyle(model.sleepProtected ? .secondary : .orange)
+                        .foregroundStyle(model.sleepProtected ? Color.secondary : Color.orange)
                     Text(model.loc.text(model.sleepProtected ? "SleepProtected" : "SleepUnavailable"))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)

@@ -1,43 +1,48 @@
-import XCTest
+import Foundation
+import Testing
 @testable import PGPMintMacCore
 
-final class PGPMintMacCoreTests: XCTestCase {
-    func testFormattingParityMatchesCoreHelpers() {
-        XCTAssertEqual(Formatting.formatHashRateValue(0), "0.00")
-        XCTAssertEqual(Formatting.formatHashRateUnit(0), "GH/s")
-        XCTAssertEqual(Formatting.formatHashRateValue(2_242_700_000), "2.24")
-        XCTAssertEqual(Formatting.formatHashRateUnit(2_242_700_000), "GH/s")
-        XCTAssertEqual(Formatting.formatHashRateCompact(5_400_000), "5.4 MH/s")
-        XCTAssertEqual(Formatting.formatCheckedCount(9_999), "9,999 H")
-        XCTAssertEqual(Formatting.formatCheckedCount(10_000), "1.00 \u{00D7} 10^4 H")
-        XCTAssertEqual(Formatting.formatProbability(0.12345), "12.35%")
-        XCTAssertEqual(Formatting.formatEta(seconds: nil, isChinese: false), "\u{2014}")
-        XCTAssertEqual(Formatting.formatEta(seconds: 42.3, isChinese: false), "~42.3s")
-        XCTAssertEqual(Formatting.formatEta(seconds: 42.3, isChinese: true), "~42.3 \u{79D2}")
-        XCTAssertEqual(Formatting.formatKeyIdSpaced("0123456789ABCDEF"), "0123 4567 89AB CDEF")
+@Suite("PGPMintMacCore")
+struct PGPMintMacCoreTests {
+    @Test
+    func formattingParityMatchesCoreHelpers() {
+        #expect(Formatting.formatHashRateValue(0) == "0.00")
+        #expect(Formatting.formatHashRateUnit(0) == "GH/s")
+        #expect(Formatting.formatHashRateValue(2_242_700_000) == "2.24")
+        #expect(Formatting.formatHashRateUnit(2_242_700_000) == "GH/s")
+        #expect(Formatting.formatHashRateCompact(5_400_000) == "5.4 MH/s")
+        #expect(Formatting.formatCheckedCount(9_999) == "9,999 H")
+        #expect(Formatting.formatCheckedCount(10_000) == "1.00 \u{00D7} 10^4 H")
+        #expect(Formatting.formatProbability(0.12345) == "12.35%")
+        #expect(Formatting.formatEta(seconds: nil, isChinese: false) == "\u{2014}")
+        #expect(Formatting.formatEta(seconds: 42.3, isChinese: false) == "~42.3s")
+        #expect(Formatting.formatEta(seconds: 42.3, isChinese: true) == "~42.3 \u{79D2}")
+        #expect(Formatting.formatKeyIdSpaced("0123456789ABCDEF") == "0123 4567 89AB CDEF")
 
-        XCTAssertEqual(
-            Formatting.validateKeyIdSuffix("dead beef"),
-            .valid(suffix: "DEADBEEF", canonicalMask: "********DEADBEEF", formattedDisplay: "**** **** DEAD BEEF", fixedHexLength: 8)
+        #expect(
+            Formatting.validateKeyIdSuffix("dead beef")
+                == .valid(suffix: "DEADBEEF", canonicalMask: "********DEADBEEF", formattedDisplay: "**** **** DEAD BEEF", fixedHexLength: 8)
         )
-        XCTAssertEqual(Formatting.validateKeyIdSuffix("XYZ"), .invalidCharacters)
-        XCTAssertEqual(Formatting.validateKeyIdSuffix("0123456789ABCDEF0"), .tooLong)
+        #expect(Formatting.validateKeyIdSuffix("XYZ") == .invalidCharacters)
+        #expect(Formatting.validateKeyIdSuffix("0123456789ABCDEF0") == .tooLong)
     }
 
+    @Test
     @MainActor
-    func testLocalizationLoadsEnglishAndTraditionalChinese() {
+    func localizationLoadsEnglishAndTraditionalChinese() {
         let loc = LocalizationStore()
         loc.applySetting("en-US")
-        XCTAssertEqual(loc.text("Start"), "Start")
-        XCTAssertEqual(loc.text("SystemVaultHint").contains("login keychain"), true)
+        #expect(loc.text("Start") == "Start")
+        #expect(loc.text("SystemVaultHint").contains("login keychain"))
 
         loc.applySetting("zh-Hant")
-        XCTAssertEqual(loc.text("Start"), "\u{958B}\u{59CB}")
-        XCTAssertTrue(loc.isChinese)
+        #expect(loc.text("Start") == "\u{958B}\u{59CB}")
+        #expect(loc.isChinese)
     }
 
+    @Test
     @MainActor
-    func testAppModelHonestPowerBadgeAndMenuBarOneHzThrottle() async {
+    func appModelHonestPowerBadgeAndMenuBarOneHzThrottle() async {
         let mock = MockHostTransport()
         let power = NullPowerActivityManager()
         let loc = LocalizationStore()
@@ -45,13 +50,13 @@ final class PGPMintMacCoreTests: XCTestCase {
         let model = AppModel(transport: mock, loc: loc, powerManager: power)
 
         await model.bootstrap()
-        XCTAssertTrue(model.isUnlocked)
-        XCTAssertTrue(model.showSetupWizard)
+        #expect(model.isUnlocked)
+        #expect(model.showSetupWizard)
 
         model.draftTargetInput = "CAFE"
-        XCTAssertTrue(model.canFinishSetup)
+        #expect(model.canFinishSetup)
         await model.completeSetupAndStart()
-        XCTAssertFalse(model.showSetupWizard)
+        #expect(!model.showSetupWizard)
 
         let t0 = Date(timeIntervalSince1970: 1000)
         let runningNoSensor = HostTelemetryDto(
@@ -64,9 +69,8 @@ final class PGPMintMacCoreTests: XCTestCase {
             hasPowerSensor: false
         )
         model.updateMenuBarTitle(runningNoSensor, now: t0)
-        XCTAssertEqual(model.menuBarTitle, "2.24 GH/s")
+        #expect(model.menuBarTitle == "2.24 GH/s")
 
-        // Within 1 second window, rate change should be throttled
         let runningFaster = HostTelemetryDto(
             state: "Running",
             totalActualHps: 2_500_000_000,
@@ -77,17 +81,15 @@ final class PGPMintMacCoreTests: XCTestCase {
             hasPowerSensor: false
         )
         model.updateMenuBarTitle(runningFaster, now: t0.addingTimeInterval(0.3))
-        XCTAssertEqual(model.menuBarTitle, "2.24 GH/s")
+        #expect(model.menuBarTitle == "2.24 GH/s")
 
-        // After 1 second, menu bar updates
         model.updateMenuBarTitle(runningFaster, now: t0.addingTimeInterval(1.1))
-        XCTAssertEqual(model.menuBarTitle, "2.50 GH/s")
+        #expect(model.menuBarTitle == "2.50 GH/s")
 
-        // Without power sensor, badge shows tier label, never fake 0 W
         model.telemetry = runningFaster
-        XCTAssertEqual(model.efficiencyBadgeText, "Max")
-        XCTAssertNil(model.efficiencyBadgeTooltip)
-        XCTAssertFalse(model.efficiencyBadgeText.contains("W"))
+        #expect(model.efficiencyBadgeText == "Max")
+        #expect(model.efficiencyBadgeTooltip == nil)
+        #expect(!model.efficiencyBadgeText.contains("W"))
     }
 }
 

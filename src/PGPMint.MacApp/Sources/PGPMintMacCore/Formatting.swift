@@ -132,10 +132,7 @@ public enum Formatting {
 
     public static func formatCheckedCount(_ count: UInt64) -> String {
         if count < 10_000 {
-            let formatter = NumberFormatter()
-            formatter.numberStyle = .decimal
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            return "\(formatter.string(from: NSNumber(value: count)) ?? "\(count)") H"
+            return "\(formatDecimalInteger(count)) H"
         }
         var exp = Int(floor(log10(Double(count))))
         var mantissa = Double(count) / pow(10.0, Double(exp))
@@ -147,10 +144,17 @@ public enum Formatting {
     }
 
     public static func formatCheckedCountExact(_ count: UInt64) -> String {
+        "\(formatDecimalInteger(count)) H"
+    }
+
+    private static func formatDecimalInteger(_ count: UInt64) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        return "\(formatter.string(from: NSNumber(value: count)) ?? "\(count)") H"
+        formatter.usesGroupingSeparator = true
+        formatter.groupingSeparator = ","
+        formatter.groupingSize = 3
+        formatter.locale = Locale(identifier: "en_US")
+        return formatter.string(from: NSNumber(value: count)) ?? "\(count)"
     }
 
     public static func formatProbability(_ probability: Double) -> String {

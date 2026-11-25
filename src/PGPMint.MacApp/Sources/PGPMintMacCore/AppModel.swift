@@ -70,13 +70,13 @@ public final class AppModel {
     public var onMatchNotification: ((String) -> Void)?
 
     public init(
-        transport: HostTransport = ProcessHostTransport(),
-        loc: LocalizationStore = LocalizationStore(),
-        powerManager: PowerActivityManaging = NullPowerActivityManager()
+        transport: HostTransport? = nil,
+        loc: LocalizationStore? = nil,
+        powerManager: PowerActivityManaging? = nil
     ) {
-        self.transport = transport
-        self.loc = loc
-        self.powerManager = powerManager
+        self.transport = transport ?? ProcessHostTransport()
+        self.loc = loc ?? LocalizationStore()
+        self.powerManager = powerManager ?? NullPowerActivityManager()
     }
 
     public var hasHardwareGpu: Bool { !devices.isEmpty }
@@ -244,7 +244,8 @@ public final class AppModel {
     public func updateMenuBarTitle(_ t: HostTelemetryDto, now: Date) {
         let stateChanged = t.state != lastMenuBarState
         let active = t.state == "Running" || t.state == "Calibrating"
-        if active && !stateChanged && now.timeIntervalSince(lastMenuBarUpdate) < 1.0 {
+        let delta = now.timeIntervalSince(lastMenuBarUpdate)
+        if active && !stateChanged && delta >= 0 && delta < 1.0 {
             return
         }
         lastMenuBarState = t.state

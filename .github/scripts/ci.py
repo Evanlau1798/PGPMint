@@ -27,7 +27,7 @@ def build(platform):
     for name in TESTS:
         run(["dotnet", "build", f"tests/{name}/{name}.csproj", *common])
     if sys.platform == "darwin":
-        run(["swift", "build", "--package-path", str(MACAPP_DIR), "--build-tests"])
+        run(["swift", "build", "--package-path", str(MACAPP_DIR), "--build-tests", "--disable-xctest"])
 
 
 def test(platform, diagnostics):
@@ -42,7 +42,7 @@ def test(platform, diagnostics):
             failed.append(name)
     if sys.platform == "darwin":
         try:
-            run(["swift", "test", "--package-path", str(MACAPP_DIR), "--skip-build"])
+            run(["swift", "test", "--package-path", str(MACAPP_DIR), "--skip-build", "--disable-xctest"])
         except subprocess.CalledProcessError:
             failed.append("PGPMint.MacApp")
     if failed:
