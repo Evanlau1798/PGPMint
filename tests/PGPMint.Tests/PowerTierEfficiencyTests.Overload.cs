@@ -307,7 +307,8 @@ public sealed partial class PowerTierEfficiencyTests
                 vault,
                 new CoordinatorOptions
                 {
-                    FullCalibrationDuration = TimeSpan.FromMilliseconds(420),
+                    // Leave room for six ramp bins under hosted-runner scheduling.
+                    FullCalibrationDuration = TimeSpan.FromSeconds(2),
                     CalibrationWindow = TimeSpan.FromMilliseconds(50),
                     TelemetryInterval = TimeSpan.FromMilliseconds(30),
                     SensorPollInterval = TimeSpan.FromMilliseconds(50),
@@ -334,7 +335,8 @@ public sealed partial class PowerTierEfficiencyTests
             CalibrationRecord rec = Assert.Single(persisted.Calibrations.Values);
             Assert.NotNull(rec.EfficiencyProfile);
             Assert.True(rec.EfficiencyProfile!.HasPowerSensor);
-            Assert.True(rec.EfficiencyProfile.Samples.Count >= 6);
+            Assert.True(rec.EfficiencyProfile.Samples.Count >= 6,
+                $"Expected at least six calibration bins, got {rec.EfficiencyProfile.Samples.Count}.");
             Assert.True(rec.EfficiencyProfile.Samples.Max(s => s.RateFraction) > 0.65);
             Assert.True(rec.EfficiencyProfile.Samples.Min(s => s.RateFraction) < 0.20);
             Assert.StartsWith("v3/", rec.WorkloadIdentity, StringComparison.Ordinal);

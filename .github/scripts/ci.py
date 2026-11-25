@@ -81,7 +81,7 @@ def main():
         source = diagnostics / "PGPMint.metal"
         result = run([*cli(args.platform), "metal-source"], capture_output=True, text=True)
         source.write_text(result.stdout, encoding="utf-8")
-        run(["xcrun", "-sdk", "macosx", "metal", "-std=metal2.3", "-c", source,
+        run(["xcrun", "-sdk", "macosx", "metal", "-std=macos-metal2.3", "-c", source,
              "-o", diagnostics / "PGPMint.air"])
     message = "Hardware GPU acceptance: NOT VERIFIED. HardwareGpu excluded; inventory/shader compilation are not GPU correctness or performance validation.\n"
     print(message)

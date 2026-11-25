@@ -22,6 +22,15 @@ class PackagingTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
+    def test_metal_compiler_uses_the_macos_language_standard(self):
+        import ci
+        with patch.dict(os.environ, {"RUNNER_TEMP": str(self.root)}), \
+             patch.object(sys, "argv", ["ci.py", "metal", "--platform", "x64"]), \
+             patch.object(ci, "run", return_value=subprocess.CompletedProcess([], 0, stdout="// MSL")) as run:
+            ci.main()
+        command = run.call_args_list[-1].args[0]
+        self.assertEqual(command[:5], ["xcrun", "-sdk", "macosx", "metal", "-std=macos-metal2.3"])
+
     def test_version_and_target_validation(self):
         self.assertEqual(self.package.version_numbers("v1.2.3-rc.1"), ("1.2.3-rc.1", "1.2.3.0"))
         for value in ("../../bad", "v1.0", "v1.2.3;bad", "v1.2.3\n"):
