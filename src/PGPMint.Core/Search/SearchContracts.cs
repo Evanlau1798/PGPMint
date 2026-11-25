@@ -18,6 +18,9 @@ public sealed record GpuDeviceInfo(
 {
     public string? BackendDriverVersion { get; init; }
     public GpuKernelConfiguration? KernelConfiguration { get; init; }
+    public string? DeviceUuid { get; init; }
+    public string? PciAddress { get; init; }
+    public ulong? MetalRegistryId { get; init; }
 }
 
 public sealed record CalibrationRecord(
@@ -128,4 +131,9 @@ public interface IGpuBackend
 {
     IReadOnlyList<GpuDeviceInfo> EnumerateHardwareGpus();
     IGpuSearchDevice CreateDevice(GpuDeviceInfo deviceInfo);
+}
+
+public interface IWorkloadGpuBackend
+{
+    void SetWorkload(KeyIdPattern pattern);
 }

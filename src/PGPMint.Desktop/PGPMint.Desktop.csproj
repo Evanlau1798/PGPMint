@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>PGPMint.Desktop</RootNamespace>
+    <PublishTrimmed>false</PublishTrimmed>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" Version="12.2.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.2.0" />
+    <ProjectReference Include="../PGPMint.Core/PGPMint.Core.csproj" />
+    <EmbeddedResource Include="../PGPMint.App/Strings/*.json" Link="Strings/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Strings/*.json" WithCulture="false" />
+    <InternalsVisibleTo Include="PGPMint.Desktop.Tests" />
+    <Compile Remove="**/obj/**/*.cs;**/bin/**/*.cs" />
+  </ItemGroup>
+</Project>

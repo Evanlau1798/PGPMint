@@ -4,11 +4,16 @@ namespace PGPMint.Core.Gpu;
 
 internal static unsafe class OpenClNative
 {
+    static OpenClNative() => NativeGpuLibraries.Initialize();
     public const int ClSuccess = 0;
     public const int ClDeviceNotAvailable = -2;
     public const ulong ClDeviceTypeGpu = 1UL << 2;
 
     public const uint ClDeviceVendorId = 0x1001;
+    public const uint ClDeviceType = 0x1000;
+    public const uint ClDeviceHostUnifiedMemory = 0x1035;
+    public const uint ClDeviceUuidKhr = 0x106A;
+    public const uint ClDevicePciBusInfoKhr = 0x410F;
     public const uint ClDeviceMaxWorkGroupSize = 0x1004;
     public const uint ClDeviceMaxParameterSize = 0x1017;
     public const uint ClDeviceGlobalMemSize = 0x101F;
@@ -28,8 +33,7 @@ internal static unsafe class OpenClNative
     public const ulong ClMemReadOnly = 1UL << 2;
     public const ulong ClMemAllocHostPtr = 1UL << 4;
 
-    private static readonly Lazy<nint> LibraryHandle = new(() =>
-        NativeLibrary.TryLoad("OpenCL.dll", out nint handle) ? handle : 0);
+    private static readonly Lazy<nint> LibraryHandle = new(() => NativeGpuLibraries.Handle("OpenCL.dll"));
 
     private static readonly Lazy<bool> HasFillBufferExport = new(() =>
         LibraryHandle.Value != 0 && NativeLibrary.TryGetExport(LibraryHandle.Value, "clEnqueueFillBuffer", out _));

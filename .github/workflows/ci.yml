@@ -2,38 +2,84 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: Version label for downloadable test packages
+        type: string
+        default: v0.0.0-ci
 
 permissions:
   contents: read
 
 jobs:
   build-and-test:
-    name: Build & Test (${{ matrix.platform }})
+    name: Build, test and package (${{ matrix.target }}; no GPU acceptance)
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
+        # Official standard labels: https://docs.github.com/en/actions/reference/runners/github-hosted-runners
         include:
-          - platform: x64
+          - target: windows-x64
+            rid: win-x64
+            platform: x64
             runner: windows-latest
-          - platform: ARM64
+          - target: windows-arm64
+            rid: win-arm64
+            platform: ARM64
             runner: windows-11-arm
+          - target: linux-x64
+            rid: linux-x64
+            platform: x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            rid: linux-arm64
+            platform: ARM64
+            runner: ubuntu-24.04-arm
+          - target: macos-arm64
+            rid: osx-arm64
+            platform: ARM64
+            runner: macos-15
+          - target: macos-x64
+            rid: osx-x64
+            platform: x64
+            runner: macos-15-intel
+    defaults:
+      run:
+        shell: bash
+    env:
+      BUILD_PLATFORM: ${{ matrix.platform }}
+      BUILD_RID: ${{ matrix.rid }}
+      PACKAGE_TAG: ${{ inputs.version || 'v0.0.0-ci' }}
+      PYTHONDONTWRITEBYTECODE: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET 8
-        uses: actions/setup-dotnet@v4
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '10.0.x'
+
+      - name: Setup packaging Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Select runner-local packaging scratch
+        run: echo "PACKAGE_SCRATCH=$RUNNER_TEMP/pgpmint-packaging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
 
       - name: Verify no emojis in tracked files
-        if: matrix.platform == 'x64'
+        if: matrix.target == 'windows-x64'
         shell: pwsh
         run: |
           $hits = @()
@@ -50,20 +96,107 @@ jobs:
             exit 1
           }
 
-      - name: Restore (${{ matrix.platform }})
-        env:
-          BUILD_PLATFORM: ${{ matrix.platform }}
-        shell: pwsh
-        run: dotnet restore PGPMint.sln "-p:Platform=$env:BUILD_PLATFORM"
+      - name: Install Linux integration and desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git gnupg xvfb libx11-6 libice6 libsm6 libfontconfig1 \
+            libxrender1 libxrandr2 libxi6 libxcursor1 libxinerama1 libgl1 libegl1 \
+            libglib2.0-0t64 libicu74 libssl3t64 libvulkan1 ocl-icd-libopencl1
+          git --version
+          gpg --version
 
-      - name: Build Solution (Release ${{ matrix.platform }})
-        env:
-          BUILD_PLATFORM: ${{ matrix.platform }}
+      - name: Ensure real Git and GnuPG on Windows
+        if: runner.os == 'Windows'
         shell: pwsh
-        run: dotnet build PGPMint.sln "-p:Platform=$env:BUILD_PLATFORM" -c Release --no-restore
+        run: |
+          git --version
+          $gitRoot = Split-Path (Split-Path (Get-Command git).Source)
+          $candidates = @((Join-Path $gitRoot 'usr/bin'), "${env:ProgramFiles(x86)}/GnuPG/bin", "$env:ProgramFiles/GnuPG/bin")
+          foreach ($directory in $candidates) {
+            if (Test-Path (Join-Path $directory 'gpg.exe')) {
+              $env:PATH = "$directory;$env:PATH"
+              $directory | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+              break
+            }
+          }
+          if (-not (Get-Command gpg -ErrorAction SilentlyContinue)) {
+            choco install gnupg --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $directory = "${env:ProgramFiles(x86)}/GnuPG/bin"
+            $env:PATH = "$directory;$env:PATH"
+            $directory | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+          }
+          gpg --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Run Automated Tests (${{ matrix.platform }})
+      - name: Ensure real Git, GnuPG and Metal compiler on macOS
+        if: runner.os == 'macOS'
         env:
-          BUILD_PLATFORM: ${{ matrix.platform }}
-        shell: pwsh
-        run: dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj "-p:Platform=$env:BUILD_PLATFORM" -c Release --no-build --filter "Category!=HardwareGpu" --verbosity normal
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: |
+          command -v git >/dev/null || brew install git
+          command -v gpg >/dev/null || brew install gnupg
+          git --version
+          gpg --version
+          if ! xcrun -sdk macosx metal --version; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun -sdk macosx metal --version
+
+      - name: Check packaging contracts (offline)
+        run: python .github/scripts/test_packaging.py
+
+      - name: Build applications and all three test projects
+        id: build
+        run: python .github/scripts/ci.py build --platform "$BUILD_PLATFORM"
+
+      - name: Run all three test suites without building (exclude HardwareGpu)
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a python .github/scripts/ci.py test --platform "$BUILD_PLATFORM"
+          else
+            python .github/scripts/ci.py test --platform "$BUILD_PLATFORM"
+          fi
+
+      - name: Record device diagnostics (not GPU acceptance)
+        if: always() && steps.build.outcome == 'success'
+        run: python .github/scripts/ci.py inventory --platform "$BUILD_PLATFORM"
+
+      - name: Compile generated MSL with Metal 2.3 (not GPU execution)
+        if: runner.os == 'macOS'
+        run: python .github/scripts/ci.py metal --platform "$BUILD_PLATFORM"
+
+      - name: Publish self-contained test software and SHA256
+        run: |
+          python scripts/packaging/package.py --rid "$BUILD_RID" --tag "$PACKAGE_TAG" \
+            --scratch "$PACKAGE_SCRATCH" --platform "$BUILD_PLATFORM"
+
+      - name: Smoke test the packaged CLI and record diagnostics
+        run: |
+          suffix=''
+          if [ "$RUNNER_OS" = Windows ]; then suffix='.exe'; fi
+          python .github/scripts/ci.py inventory --platform "$BUILD_PLATFORM" \
+            --packaged-cli "$PACKAGE_SCRATCH/$BUILD_RID/PGPMint-$PACKAGE_TAG-$BUILD_RID/cli/pgpmint$suffix"
+
+      - name: Upload downloadable test packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgpmint-${{ matrix.rid }}
+          path: ${{ env.PACKAGE_SCRATCH }}/dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload test results and GPU diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-${{ matrix.rid }}
+          path: ${{ runner.temp }}/diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: State the GPU acceptance limit
+        if: always()
+        run: |
+          echo 'Hardware GPU acceptance: NOT VERIFIED. HardwareGpu tests excluded. Device enumeration and MSL compilation do not prove GPU correctness or throughput.' >> "$GITHUB_STEP_SUMMARY"

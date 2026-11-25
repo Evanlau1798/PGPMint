@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
-    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <TargetFramework Condition="$([MSBuild]::IsOSPlatform('Windows')) and '$(PGPMintPortableTests)' != 'true'">net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetFramework Condition="!$([MSBuild]::IsOSPlatform('Windows')) or '$(PGPMintPortableTests)' == 'true'">net10.0</TargetFramework>
+    <TargetPlatformMinVersion Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">10.0.19041.0</TargetPlatformMinVersion>
     <Platforms>x64;ARM64</Platforms>
-    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <RootNamespace>PGPMint.Tests</RootNamespace>
@@ -20,5 +20,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\PGPMint.Core\PGPMint.Core.csproj" />
+    <Content Include="../../src/PGPMint.App/Strings/*.json" Link="Fixtures/Strings/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <Compile Remove="WindowsComputeQoSTests.cs;DirectComputeGpuTests.cs;CoordinatorAdaptiveGpuTests.cs;OpenClProgramCacheTests.cs;HardwarePowerEfficiencyTests.cs" />
   </ItemGroup>
 </Project>

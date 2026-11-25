@@ -1,4 +1,5 @@
 using System.Text;
+using PGPMint.Core.Search;
 
 namespace PGPMint.Core.Gpu;
 
@@ -11,15 +12,33 @@ internal sealed record OpenClAdapterDescriptor(
     long? Luid,
     bool SupportsFillBuffer,
     nuint MaxWorkgroupSize,
-    nuint MaxParameterSize);
+    nuint MaxParameterSize)
+{
+    public string? DeviceUuid { get; init; }
+    public string? PciAddress { get; init; }
+    public bool IsDiscrete { get; init; }
+
+    internal GpuDeviceInfo ToDeviceInfo(int workgroupSize = 128)
+    {
+        string key = GpuDeviceIdentity.Key(DeviceUuid, PciAddress, Luid);
+        return new GpuDeviceInfo(key.Length == 0 ? $"opencl-session:{DeviceId:x}" : key,
+            Luid ?? 0, Name, VendorId, 0, 0, 0, IsDiscrete ? GlobalMemoryBytes : 0, DriverVersion, IsDiscrete,
+            "OpenCL", OpenClKernelSource.KernelVersion)
+        {
+            DeviceUuid = DeviceUuid, PciAddress = PciAddress, BackendDriverVersion = DriverVersion,
+            KernelConfiguration = OpenClDevice.ConfigurationFor(MaxWorkgroupSize, MaxParameterSize >= OpenClDevice.ScheduleParamBytes, workgroupSize)
+        };
+    }
+}
 
 internal static unsafe class OpenClEnumerator
 {
-    public static IReadOnlyList<OpenClAdapterDescriptor> TryEnumerateGpuAdapters()
+    public static IReadOnlyList<OpenClAdapterDescriptor> TryEnumerateGpuAdapters(Action<string>? report = null)
     {
         var results = new List<OpenClAdapterDescriptor>();
         if (!OpenClNative.IsAvailable())
         {
+            report?.Invoke("OpenCL loader is unavailable; install the platform OpenCL loader and a hardware GPU ICD.");
             return results;
         }
 
@@ -64,6 +83,9 @@ internal static unsafe class OpenClEnumerator
                     string driver = GetDeviceString(dev, OpenClNative.ClDriverVersion).Trim();
                     string version = GetDeviceString(dev, OpenClNative.ClDeviceVersion).Trim();
                     string extensions = GetDeviceString(dev, OpenClNative.ClDeviceExtensions);
+                    ulong deviceType = 0;
+                    if (OpenClNative.clGetDeviceInfo(dev, OpenClNative.ClDeviceType, sizeof(ulong), &deviceType, null) != 0 ||
+                        (deviceType & OpenClNative.ClDeviceTypeGpu) == 0 || (deviceType & 2UL) != 0 || IsSoftware(name)) continue;
 
                     uint vendorId = 0;
                     OpenClNative.clGetDeviceInfo(dev, OpenClNative.ClDeviceVendorId, (nuint)sizeof(uint), &vendorId, null);
@@ -84,16 +106,45 @@ internal static unsafe class OpenClEnumerator
 
                     long? luid = TryReadLuid(dev, extensions);
                     bool supportsFill = OpenClNative.SupportsFillBufferExport() && IsOpenCl12OrNewer(version);
-                    results.Add(new OpenClAdapterDescriptor(dev, name, vendorId, driver, globalMem, luid, supportsFill, maxWorkgroupSize, maxParameterSize));
+                    uint unifiedMemory = 1;
+                    OpenClNative.clGetDeviceInfo(dev, OpenClNative.ClDeviceHostUnifiedMemory, sizeof(uint), &unifiedMemory, null);
+                    results.Add(new OpenClAdapterDescriptor(dev, name, vendorId, driver, globalMem, luid, supportsFill, maxWorkgroupSize, maxParameterSize)
+                    {
+                        DeviceUuid = TryReadUuid(dev, extensions), PciAddress = TryReadPci(dev, extensions),
+                        IsDiscrete = unifiedMemory == 0
+                    });
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // OpenCL is optional accelerator; fail softly and allow DirectCompute fallback
+            report?.Invoke($"OpenCL enumeration failed: {ex.Message}");
         }
 
         return results;
+    }
+
+    internal static bool IsSoftware(string name) =>
+        new[] { "llvmpipe", "lavapipe", "swiftshader", "software rasterizer" }
+            .Any(marker => name.Contains(marker, StringComparison.OrdinalIgnoreCase));
+
+    private static bool HasExtension(string extensions, string extension) =>
+        extensions.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains(extension, StringComparer.Ordinal);
+
+    private static string? TryReadUuid(nint device, string extensions)
+    {
+        if (!HasExtension(extensions, "cl_khr_device_uuid")) return null;
+        byte* bytes = stackalloc byte[16];
+        return OpenClNative.clGetDeviceInfo(device, OpenClNative.ClDeviceUuidKhr, 16, bytes, null) == 0
+            ? GpuDeviceIdentity.NormalizeUuid(new ReadOnlySpan<byte>(bytes, 16)) : null;
+    }
+
+    private static string? TryReadPci(nint device, string extensions)
+    {
+        if (!HasExtension(extensions, "cl_khr_pci_bus_info")) return null;
+        uint* pci = stackalloc uint[4];
+        if (OpenClNative.clGetDeviceInfo(device, OpenClNative.ClDevicePciBusInfoKhr, 16, pci, null) != 0) return null;
+        return $"{pci[0]:x4}:{pci[1]:x2}:{pci[2]:x2}.{pci[3]:x}";
     }
 
     private static string GetDeviceString(nint device, uint paramName)
@@ -119,7 +170,7 @@ internal static unsafe class OpenClEnumerator
 
     private static long? TryReadLuid(nint device, string extensions)
     {
-        if (!extensions.Contains("cl_khr_device_uuid", StringComparison.OrdinalIgnoreCase))
+        if (!HasExtension(extensions, "cl_khr_device_uuid"))
         {
             return null;
         }

@@ -12,7 +12,7 @@ public static class AtomicFileStore
         string? directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(directory))
         {
-            Directory.CreateDirectory(directory);
+            PrivateFileSystem.CreateDirectory(directory);
         }
 
         string tempPath = Path.Combine(
@@ -21,7 +21,7 @@ public static class AtomicFileStore
 
         try
         {
-            using (var fs = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            using (var fs = PrivateFileSystem.CreateNew(tempPath))
             using (var writer = new StreamWriter(fs, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
             {
                 writer.Write(content);

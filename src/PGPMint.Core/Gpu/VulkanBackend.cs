@@ -4,14 +4,15 @@ namespace PGPMint.Core.Gpu;
 
 public sealed class VulkanBackend : IGpuBackend
 {
-    private readonly DirectComputeBackend _dxgiEnumerator;
     private readonly string _cacheDirectory;
+    private readonly int _workgroupSize;
     private readonly object _mapLock = new();
     private readonly Dictionary<string, VulkanAdapterDescriptor> _adapterMap = new(StringComparer.Ordinal);
+    public IReadOnlyList<string> Diagnostics { get; private set; } = [];
 
-    public VulkanBackend(string? shaderCacheDirectory = null)
+    public VulkanBackend(string? shaderCacheDirectory = null, int workgroupSize = 128)
     {
-        _dxgiEnumerator = new DirectComputeBackend(shaderCacheDirectory);
+        _workgroupSize = GpuDeviceIdentity.ValidateWorkgroup(workgroupSize);
         _cacheDirectory = shaderCacheDirectory ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "PGPMint", "shader-cache", "vulkan");
@@ -19,37 +20,28 @@ public sealed class VulkanBackend : IGpuBackend
 
     public IReadOnlyList<GpuDeviceInfo> EnumerateHardwareGpus()
     {
-        IReadOnlyList<GpuDeviceInfo> dxgiHardware = _dxgiEnumerator.EnumerateHardwareGpus();
-        IReadOnlyList<VulkanAdapterDescriptor> vulkanAdapters = VulkanEnumerator.TryEnumerateGpuAdapters();
-
-        var claimed = new HashSet<int>();
-        var results = new List<GpuDeviceInfo>(dxgiHardware.Count);
+        var diagnostics = new List<string>();
+        IReadOnlyList<VulkanAdapterDescriptor> vulkanAdapters = VulkanEnumerator.TryEnumerateGpuAdapters(diagnostics.Add);
+        var results = new List<GpuDeviceInfo>(vulkanAdapters.Count);
 
         lock (_mapLock)
         {
             _adapterMap.Clear();
 
-            foreach (GpuDeviceInfo hw in dxgiHardware)
+            foreach (VulkanAdapterDescriptor adapter in vulkanAdapters)
             {
-                int matchedIndex = FindMatchingAdapterIndex(hw, vulkanAdapters, claimed);
-                if (matchedIndex < 0)
+                GpuDeviceInfo hw = adapter.ToDeviceInfo(_workgroupSize);
+                if (hw.DeviceKey.Length == 0)
                 {
+                    diagnostics.Add($"Vulkan '{adapter.Name}' has no reliable hardware identity (UUID, PCI or LUID); cannot safely reopen this GPU.");
                     continue;
                 }
-
-                claimed.Add(matchedIndex);
-                VulkanAdapterDescriptor adapter = vulkanAdapters[matchedIndex];
+                if (_adapterMap.ContainsKey(hw.DeviceKey)) continue;
                 _adapterMap[hw.DeviceKey] = adapter;
 
-                uint wg = Math.Clamp(Math.Min(adapter.MaxWorkgroupSizeX, adapter.MaxWorkgroupInvocations), 1u, (uint)VulkanSpirvSource.DefaultWorkgroupSize);
-                results.Add(hw with
-                {
-                    BackendName = "Vulkan",
-                    BackendDriverVersion = adapter.DriverVersion,
-                    KernelConfiguration = VulkanDevice.ConfigurationFor(wg),
-                    KernelVersion = VulkanSpirvSource.KernelVersion
-                });
+                results.Add(hw);
             }
+            Diagnostics = diagnostics;
         }
 
         return results;
@@ -79,7 +71,7 @@ public sealed class VulkanBackend : IGpuBackend
             throw new InvalidOperationException($"Vulkan GPU '{deviceInfo.Name}' is not available.");
         }
 
-        return new VulkanDevice(adapter, deviceInfo, _cacheDirectory);
+        return new VulkanDevice(adapter, deviceInfo, _cacheDirectory, _workgroupSize);
     }
 
     internal static int FindMatchingAdapterIndex(
@@ -109,6 +101,10 @@ public sealed class VulkanBackend : IGpuBackend
             }
 
             VulkanAdapterDescriptor c = candidates[i];
+            if (c.Luid.HasValue && c.Luid.Value != hw.AdapterLuid)
+            {
+                continue;
+            }
             if (c.VendorId != 0 && c.VendorId != hw.VendorId)
             {
                 continue;

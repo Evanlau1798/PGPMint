@@ -51,8 +51,8 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
 
     internal bool LoadedProgramBinary { get; }
 
-    internal static GpuKernelConfiguration ConfigurationFor(nuint maxWorkgroupSize, bool useByValueSchedule = true) =>
-        new(FourKeyCount, (int)Math.Clamp(maxWorkgroupSize, 1, DefaultWorkgroupSize), 1,
+    internal static GpuKernelConfiguration ConfigurationFor(nuint maxWorkgroupSize, bool useByValueSchedule = true, int workgroupSize = 128) =>
+        new(FourKeyCount, (int)Math.Clamp(maxWorkgroupSize, 1, (nuint)workgroupSize), 1,
             useByValueSchedule ? "cmem0-v4" : "constptr-v4");
 
     internal OpenClDevice(
@@ -60,8 +60,10 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
         GpuDeviceInfo info,
         bool supportsFillBuffer,
         string programCacheDirectory,
-        nuint maxParameterSize = ScheduleParamBytes)
+        nuint maxParameterSize = ScheduleParamBytes,
+        int workgroupSize = 128)
     {
+        GpuDeviceIdentity.ValidateWorkgroup(workgroupSize);
         _deviceId = deviceId;
         _supportsFillBuffer = supportsFillBuffer;
         _useByValueSchedule = maxParameterSize >= ScheduleParamBytes;
@@ -98,11 +100,13 @@ public sealed unsafe class OpenClDevice : IGpuSearchDevice
             };
 
             (_program, _kernel, LoadedProgramBinary) = OpenClProgramCache.Create(
-                _context, deviceId, normalizedInfo, programCacheDirectory, _useByValueSchedule);
+                _context, deviceId, normalizedInfo,
+                workgroupSize == DefaultWorkgroupSize ? programCacheDirectory : Path.Combine(programCacheDirectory, $"wg{workgroupSize}"),
+                _useByValueSchedule);
 
             nuint kernelMaxGroup = DefaultWorkgroupSize;
             OpenClNative.clGetKernelWorkGroupInfo(_kernel, deviceId, OpenClNative.ClKernelWorkGroupSize, (nuint)sizeof(nuint), &kernelMaxGroup, null);
-            GpuKernelConfiguration configuration = ConfigurationFor(kernelMaxGroup, _useByValueSchedule);
+            GpuKernelConfiguration configuration = ConfigurationFor(kernelMaxGroup, _useByValueSchedule, workgroupSize);
             _groupSize = (nuint)configuration.WorkgroupSize;
             Info = normalizedInfo with { KernelConfiguration = configuration };
             _candidatesPerGroup = (ulong)_groupSize * (info.IsDiscrete ? 32UL : 8UL);

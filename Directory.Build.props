@@ -3,6 +3,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>12.0</LangVersion>
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**</DefaultItemExcludes>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <Authors>PGPMint Contributors</Authors>
     <Product>PGPMint</Product>

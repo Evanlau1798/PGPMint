@@ -122,7 +122,7 @@ public class StorageAtomicRetryTests
     public void DpapiVaultCorruptJsonCreatesBackupAndRefusesToOverwrite()
     {
         string tempDir = Path.Combine(Path.GetTempPath(), "pm-corrupt-" + Guid.NewGuid().ToString("N")[..8]);
-        Directory.CreateDirectory(tempDir);
+        PrivateFileSystem.CreateDirectory(tempDir);
         try
         {
             var vault = new DpapiVaultStore(tempDir);

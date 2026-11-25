@@ -1,22 +1,39 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
-    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <TargetFrameworks>net10.0;net10.0-windows10.0.19041.0</TargetFrameworks>
+    <TargetPlatformMinVersion Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">10.0.19041.0</TargetPlatformMinVersion>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Platforms>x64;ARM64</Platforms>
-    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>PGPMint.Core</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="PGPMint.Tests" />
+    <Compile Remove="Native/**/*.cs;**/obj/**/*.cs;**/bin/**/*.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.5.1" />
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.6.2" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
     <PackageReference Include="Vortice.DXGI" Version="3.6.2" />
   </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <Compile Remove="Gpu/DirectComputeBackend.cs;Gpu/DirectComputeDevice.cs;Gpu/HybridGpuBackend.cs;Storage/SingleInstanceGuard.cs" />
+  </ItemGroup>
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <MetalBridgePath>$(IntermediateOutputPath)native/libpgpmint_metal.dylib</MetalBridgePath>
+  </PropertyGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <Content Include="$(MetalBridgePath)" Link="libpgpmint_metal.dylib" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="BuildMetalBridge" BeforeTargets="CoreCompile" Condition="$([MSBuild]::IsOSPlatform('OSX'))"
+          Inputs="Native/PGPMintMetal.mm;Native/PGPMintMetal.h;Native/build-metal.sh" Outputs="$(MetalBridgePath)">
+    <Exec Command="sh &quot;$(MSBuildProjectDirectory)/Native/build-metal.sh&quot; &quot;$([System.IO.Path]::GetDirectoryName('$(MetalBridgePath)'))&quot;" />
+  </Target>
 </Project>

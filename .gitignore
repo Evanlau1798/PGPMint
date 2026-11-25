@@ -1,4 +1,6 @@
 # Build outputs
+tmp/
+__pycache__/
 bin/
 obj/
 out/

@@ -35,7 +35,7 @@ public sealed class CoordinatorReservationTests
                 await Task.WhenAll(backend.WinnerReadbackPending.Task, backend.FollowerReadbackPending.Task)
                     .WaitAsync(TimeSpan.FromSeconds(5));
 
-                object vaultGate = typeof(DpapiVaultStore)
+                object vaultGate = typeof(VaultStore)
                     .GetField("VaultAccessGate", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
                 object submissionGate = typeof(MultiGpuCoordinator)
                     .GetField("_submissionGate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(coordinator)!;

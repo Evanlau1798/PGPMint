@@ -5,7 +5,6 @@ using Xunit;
 
 // MultiGpuCoordinator and WindowsComputeQoSTests exercise process-wide Win32 priority and
 // ProcessPowerThrottling state, so disable cross-collection parallel test execution to prevent races.
-[assembly: CollectionBehavior(DisableTestParallelization = true)]
 
 namespace PGPMint.Tests;
 

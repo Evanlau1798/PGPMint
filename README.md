@@ -2,13 +2,13 @@
 
 # PGPMint
 
-**Native Windows GPU generator for custom OpenPGP v4 (`Ed25519`) vanity Key IDs.**
+**GPU generator for custom OpenPGP v4 (`Ed25519`) vanity Key IDs, with a native Windows app and Linux/macOS test builds.**
 
 [![CI](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Evanlau1798/PGPMint?label=Release&color=0078D6)](https://github.com/Evanlau1798/PGPMint/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Windows-10%2F11%20(x64%20%7C%20ARM64)-0078D6.svg)](#system-requirements)
-[![.NET 8 WinUI 3](https://img.shields.io/badge/.NET%208-WinUI%203-512BD4.svg)](#building-from-source)
+[![.NET 10 WinUI 3](https://img.shields.io/badge/.NET%2010-WinUI%203-512BD4.svg)](#building-from-source)
 
 [Download](#download--quick-start) · [Features](#features) · [Git Signing](#using-exported-keys-with-git) · [Benchmarks](#benchmarks) · [Build from Source](#building-from-source)
 
@@ -31,6 +31,70 @@ Unlike command-line tools that require installing Python or the NVIDIA CUDA Tool
 ---
 
 ## Features
+
+### Linux and macOS test builds
+
+The Windows WinUI application remains available. Linux and macOS use a shared
+Avalonia desktop application and the same search coordinator, CPU verification,
+OpenPGP export and GPU algorithms. Linux uses native Vulkan/OpenCL; macOS uses
+Metal or MoltenVK. Software CPU renderers are excluded. WSL is a Linux testing
+environment, not a separately supported GPU backend.
+
+Download the platform test packages from the successful **CI** run on `main` in
+[GitHub Actions](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml).
+These are test artifacts, not a published release. Each package contains a
+self-contained CLI; Linux/macOS packages also contain the desktop app. The Mac
+package includes its Metal bridge and MoltenVK. macOS test apps are ad-hoc signed,
+not Developer ID signed or notarized.
+
+Linux desktop builds require X11 or XWayland and the native libraries listed in
+the package instructions. CLI testing does not require a desktop session. A
+working hardware Vulkan/OpenCL driver is required; bundling .NET does not replace
+GPU drivers. macOS GPU availability depends on the host, including on CI runners.
+
+```sh
+# Use the pgpmint executable in the extracted CLI directory.
+./pgpmint devices --json
+./pgpmint verify --backend vulkan       # Linux, or MoltenVK on macOS
+./pgpmint verify --backend metal        # macOS
+./pgpmint benchmark --backend vulkan --seconds 60 --rounds 3
+./pgpmint search --pattern BEEF
+./pgpmint export --key YOUR_KEY_ID --name "Your Name" --output ./exported
+```
+
+The CLI prompts for passwords without echoing them. For automation,
+`--password-stdin` reads the vault password from standard input; export reads a
+second line for the OpenPGP passphrase. Never pass a password as an argument or
+print it in a script log. Search stops after its first saved match by default;
+Ctrl+C stops safely and saves progress.
+
+Linux/macOS vaults use password-derived Argon2id and AES-256-GCM protection and
+user-only file permissions. Keep both `hits.vault.json` and `vault.key.json` when
+backing up a vault. Use a dedicated vault directory. On Unix, an existing directory
+must already have mode `0700`; PGPMint refuses broader permissions without changing
+the directory. Explicitly secure your dedicated vault directory before reopening it.
+On macOS, private vault and export paths with explicit or inherited ACL entries
+are refused; choose a dedicated location without ACLs. Parent ACLs are never changed.
+The desktop and CLI exclude simultaneous sessions using the
+same data directory. Windows WinUI keeps its existing DPAPI vault; it is not
+silently converted into a password vault. The cross-platform CLI uses a password
+vault and refuses to initialize over an existing vault missing its password header.
+On Windows, the CLI and Avalonia validation app default to
+`%LOCALAPPDATA%\PGPMint-Portable`, separately from the WinUI DPAPI directory.
+
+`verify` checks GPU results against CPU SHA-1. `devices` only reports discovery;
+it does not claim GPU correctness. Standard CI builds and unit tests do not prove
+hardware throughput. Benchmark reports microbenchmarks separately from full
+coordinator measurements, uses disposable isolated data, and does not open the
+user's vault. Compare identical devices, workloads, modes and UI states.
+
+The new desktop supports English/Traditional Chinese, encrypted results, export,
+GPU selection, calibration, four power tiers and background operation where a
+working tray/menu bar is available. The floating Mini HUD remains Windows-only.
+Hardware validation and sustained performance on each Mac/GPU family remain
+separate acceptance checks.
+
+### Windows application
 
 - **Single-File Portable Executable** — Self-contained compressed `.exe` for `win-x64` and `win-arm64`. No Python, CUDA Toolkit, .NET Runtime, or Windows App Runtime installation required.
 - **Universal Windows Hardware GPU Engine** — Zero-dependency three-tier compute cascade: runs via native Vulkan Compute (`vulkan-1.dll` + programmatic SPIR-V 1.3, `vulkan-sha1-four-v4`) when a Vulkan 1.1+ compute GPU is present for peak sustained throughput, cascades to native `OpenCL.dll` (`opencl-sha1-four-v4`) when Vulkan is unavailable, and falls back transparently to DirectCompute (`D3D11 cs_5_0`, `d3d11-sha1-four-v4`) on any Direct3D 11 Feature Level 11.0+ GPU (including Windows on ARM). Supports multi-GPU parallel search while excluding CPU software renderers and virtual display adapters.
@@ -169,7 +233,7 @@ PGPMint loads built-in locales from embedded resources and automatically merges 
 ## Building from Source
 
 Prerequisites:
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 - Windows 10/11 SDK (`10.0.26100.0`)
 
 ```powershell

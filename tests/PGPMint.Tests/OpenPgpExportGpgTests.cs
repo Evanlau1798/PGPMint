@@ -100,6 +100,7 @@ public class OpenPgpExportGpgTests
 
     private static string? FindGitExecutable()
     {
+        if (!OperatingSystem.IsWindows()) return FindExecutableOnPath("git");
         string[] candidates =
         {
             @"C:\Program Files\Git\cmd\git.exe",
@@ -111,6 +112,7 @@ public class OpenPgpExportGpgTests
 
     private static string? FindGpgExecutable()
     {
+        if (!OperatingSystem.IsWindows()) return FindExecutableOnPath("gpg");
         var candidates = new List<string>
         {
             @"C:\Program Files\Git\usr\bin\gpg.exe",
@@ -326,7 +328,7 @@ public class OpenPgpExportGpgTests
 
     private static void TryKillGpgAgent(string gpgPath, string workDir, string gpgHome)
     {
-        string gpgconf = Path.Combine(Path.GetDirectoryName(gpgPath)!, "gpgconf.exe");
+        string gpgconf = Path.Combine(Path.GetDirectoryName(gpgPath)!, OperatingSystem.IsWindows() ? "gpgconf.exe" : "gpgconf");
         string gpgHomeEnv = FormatGpgHomeEnv(gpgPath, gpgHome);
         if (File.Exists(gpgconf))
         {

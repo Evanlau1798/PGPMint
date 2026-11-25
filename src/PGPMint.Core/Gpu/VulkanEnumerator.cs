@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using PGPMint.Core.Search;
 
 namespace PGPMint.Core.Gpu;
 
@@ -14,95 +15,51 @@ internal sealed record VulkanAdapterDescriptor(
     uint MaxWorkgroupCountX,
     ulong NonCoherentAtomSize,
     long? Luid,
-    byte[] PipelineCacheUuid);
+    byte[] PipelineCacheUuid)
+{
+    public string? DeviceUuid { get; init; }
+    public string? PciAddress { get; init; }
+    public ulong? MetalRegistryId { get; init; }
+    public ulong LocalMemoryBytes { get; init; }
+    public bool IsDiscrete { get; init; }
+    public bool RequiresPortabilitySubset { get; init; }
+
+    internal GpuDeviceInfo ToDeviceInfo(int workgroupSize = 128) => new(
+        GpuDeviceIdentity.Key(DeviceUuid, PciAddress, Luid), Luid ?? 0, Name, VendorId, DeviceId,
+        0, 0, IsDiscrete ? LocalMemoryBytes : 0, DriverVersion, IsDiscrete, "Vulkan", VulkanSpirvSource.KernelVersion)
+    {
+        DeviceUuid = DeviceUuid,
+        PciAddress = PciAddress,
+        MetalRegistryId = MetalRegistryId,
+        BackendDriverVersion = DriverVersion,
+        KernelConfiguration = VulkanDevice.ConfigurationFor(Math.Min(MaxWorkgroupSizeX, MaxWorkgroupInvocations), workgroupSize)
+    };
+}
 
 internal static unsafe class VulkanEnumerator
 {
-    public static IReadOnlyList<VulkanAdapterDescriptor> TryEnumerateGpuAdapters()
+    public static IReadOnlyList<VulkanAdapterDescriptor> TryEnumerateGpuAdapters(Action<string>? report = null)
     {
         var results = new List<VulkanAdapterDescriptor>();
         if (!VulkanNative.IsAvailable())
         {
+            report?.Invoke("Vulkan 1.1 loader is unavailable; install the platform Vulkan loader and a hardware GPU ICD.");
             return results;
         }
-
         try
         {
-            uint instanceVersion = 0;
-            if (VulkanNative.vkEnumerateInstanceVersion(&instanceVersion) != VulkanNative.VkSuccess ||
-                instanceVersion < VulkanNative.VkApiVersion11)
-            {
-                return results;
-            }
-
-            uint targetApi = instanceVersion >= VulkanNative.VkApiVersion12
-                ? VulkanNative.VkApiVersion12
-                : VulkanNative.VkApiVersion11;
-
-            nint appNamePtr = Marshal.StringToHGlobalAnsi("PGPMint");
-            nint instance = 0;
+            nint instance = VulkanInstance.Create(out uint apiVersion);
             try
             {
-                var appInfo = new VulkanNative.VkApplicationInfo
+                foreach (nint physical in VulkanInstance.PhysicalDevices(instance))
                 {
-                    SType = VulkanNative.VkStructureTypeApplicationInfo,
-                    PApplicationName = appNamePtr,
-                    ApplicationVersion = 1,
-                    PEngineName = appNamePtr,
-                    EngineVersion = 1,
-                    ApiVersion = targetApi
-                };
-
-                var ici = new VulkanNative.VkInstanceCreateInfo
-                {
-                    SType = VulkanNative.VkStructureTypeInstanceCreateInfo,
-                    PApplicationInfo = (nint)(&appInfo)
-                };
-
-                if (VulkanNative.vkCreateInstance(&ici, 0, &instance) != VulkanNative.VkSuccess || instance == 0)
-                {
-                    return results;
-                }
-
-                uint devCount = 0;
-                if (VulkanNative.vkEnumeratePhysicalDevices(instance, &devCount, null) != VulkanNative.VkSuccess || devCount == 0)
-                {
-                    return results;
-                }
-
-                nint[] physicalDevices = new nint[devCount];
-                fixed (nint* pDevs = physicalDevices)
-                {
-                    if (VulkanNative.vkEnumeratePhysicalDevices(instance, &devCount, pDevs) != VulkanNative.VkSuccess)
-                    {
-                        return results;
-                    }
-                }
-
-                foreach (nint phys in physicalDevices)
-                {
-                    VulkanAdapterDescriptor? desc = InspectPhysicalDevice(phys, targetApi);
-                    if (desc is not null)
-                    {
-                        results.Add(desc);
-                    }
+                    var adapter = InspectPhysicalDevice(physical, apiVersion);
+                    if (adapter is not null) results.Add(adapter);
                 }
             }
-            finally
-            {
-                if (instance != 0)
-                {
-                    VulkanNative.vkDestroyInstance(instance, 0);
-                }
-
-                Marshal.FreeHGlobal(appNamePtr);
-            }
+            finally { VulkanNative.vkDestroyInstance(instance, 0); }
         }
-        catch
-        {
-            // Vulkan is an optional zero-dependency accelerator; fall back cleanly to DirectCompute on error.
-        }
-
+        catch (Exception ex) { report?.Invoke($"Vulkan enumeration failed: {ex.Message}"); }
         return results;
     }
 
@@ -121,7 +78,7 @@ internal static unsafe class VulkanEnumerator
 
         VulkanNative.vkGetPhysicalDeviceProperties2(physicalDevice, &props2);
 
-        if (props2.Properties.DeviceType == VulkanNative.VkPhysicalDeviceTypeCpu ||
+        if (props2.Properties.DeviceType is not (1 or 2) ||
             props2.Properties.ApiVersion < VulkanNative.VkApiVersion11)
         {
             return null;
@@ -157,8 +114,27 @@ internal static unsafe class VulkanEnumerator
         }
 
         string name = ReadFixedAscii(props2.Properties.DeviceName, 256).Trim();
+        if (OpenClEnumerator.IsSoftware(name)) return null;
+        string[] extensions = VulkanInstance.Extensions(physicalDevice);
+        string? pciAddress = null;
+        if (extensions.Contains("VK_EXT_pci_bus_info"))
+        {
+            var pci = new VulkanNative.VkPhysicalDevicePciBusInfoProperties { SType = 1000212000 };
+            var pciProperties = new VulkanNative.VkPhysicalDeviceProperties2
+            {
+                SType = VulkanNative.VkStructureTypePhysicalDeviceProperties2, PNext = (nint)(&pci)
+            };
+            VulkanNative.vkGetPhysicalDeviceProperties2(physicalDevice, &pciProperties);
+            pciAddress = $"{pci.PciDomain:x4}:{pci.PciBus:x2}:{pci.PciDevice:x2}.{pci.PciFunction:x}";
+        }
+
+        VulkanNative.VkPhysicalDeviceMemoryProperties memory;
+        VulkanNative.vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memory);
+        ulong localMemory = 0;
+        for (int i = 0; i < memory.MemoryHeapCount && i < 16; i++)
+            if ((memory.MemoryHeaps[i * 2 + 1] & 1UL) != 0) localMemory += memory.MemoryHeaps[i * 2];
         long? luid = null;
-        if (idProps.DeviceLuidValid != 0)
+        if (OperatingSystem.IsWindows() && idProps.DeviceLuidValid != 0)
         {
             uint low = *(uint*)idProps.DeviceLuid;
             int high = *(int*)(idProps.DeviceLuid + 4);
@@ -205,7 +181,14 @@ internal static unsafe class VulkanEnumerator
             MaxWorkgroupCountX: props2.Properties.MaxComputeWorkGroupCount[0],
             NonCoherentAtomSize: Math.Max(1UL, props2.Properties.NonCoherentAtomSize),
             Luid: luid,
-            PipelineCacheUuid: uuid);
+            PipelineCacheUuid: uuid)
+        {
+            DeviceUuid = GpuDeviceIdentity.NormalizeUuid(new ReadOnlySpan<byte>(idProps.DeviceUuid, 16)),
+            MetalRegistryId = GpuDeviceIdentity.MoltenVkRegistryId(new ReadOnlySpan<byte>(idProps.DeviceLuid, 8),
+                new ReadOnlySpan<byte>(idProps.DriverUuid, 16), OperatingSystem.IsMacOS(), idProps.DeviceLuidValid != 0),
+            PciAddress = pciAddress, LocalMemoryBytes = localMemory, IsDiscrete = props2.Properties.DeviceType == 2,
+            RequiresPortabilitySubset = extensions.Contains(VulkanInstance.PortabilitySubset)
+        };
     }
 
     private static string ReadFixedAscii(byte* buffer, int maxLength)
