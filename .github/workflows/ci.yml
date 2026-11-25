@@ -152,11 +152,11 @@ jobs:
       - name: Check packaging contracts (offline)
         run: python .github/scripts/test_packaging.py
 
-      - name: Build applications and all three test projects
+      - name: Build applications and all test projects
         id: build
         run: python .github/scripts/ci.py build --platform "$BUILD_PLATFORM"
 
-      - name: Run all three test suites without building (exclude HardwareGpu)
+      - name: Run all test suites without building (exclude HardwareGpu)
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
             xvfb-run -a python .github/scripts/ci.py test --platform "$BUILD_PLATFORM"

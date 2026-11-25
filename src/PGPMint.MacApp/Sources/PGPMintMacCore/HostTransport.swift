@@ -76,10 +76,15 @@ public final class ProcessHostTransport: HostTransport, @unchecked Sendable {
            FileManager.default.isExecutableFile(atPath: envPath) {
             return URL(fileURLWithPath: envPath)
         }
-        let bundleHelper = Bundle.main.bundleURL
+        let directHelper = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/pgpmint-host")
+        if FileManager.default.isExecutableFile(atPath: directHelper.path) {
+            return directHelper
+        }
+        let nestedHelper = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Helpers/pgpmint-host/pgpmint-host")
-        if FileManager.default.isExecutableFile(atPath: bundleHelper.path) {
-            return bundleHelper
+        if FileManager.default.isExecutableFile(atPath: nestedHelper.path) {
+            return nestedHelper
         }
         let sibling = Bundle.main.executableURL?
             .deletingLastPathComponent()

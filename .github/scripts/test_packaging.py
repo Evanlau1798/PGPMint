@@ -37,29 +37,39 @@ class PackagingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.package.version_numbers(value)
 
-    def test_macos_bundle_places_managed_data_outside_code_and_preserves_relative_links(self):
-        published = self.root / "published"
-        published.mkdir()
-        (published / "PGPMint.Desktop").write_bytes(b"\xcf\xfa\xed\xfeapphost")
-        (published / "libpgpmint_metal.dylib").write_bytes(b"\xcf\xfa\xed\xfelibrary")
-        (published / "Microsoft.CSharp.dll").write_bytes(b"MZmanaged")
-        (published / "PGPMint.Desktop.runtimeconfig.json").write_text("{}")
-        app = self.package.macos_app(published, self.root / "bundle", "v1.2.3")
+    def test_macos_bundle_isolates_native_app_and_sidecar_host_with_relative_links(self):
+        native_bin = self.root / "PGPMint"
+        native_bin.write_bytes(b"\xcf\xfa\xed\xfeswiftapp")
+        res_bundle = self.root / "PGPMintMacApp_PGPMintMacCore.bundle"
+        res_bundle.mkdir()
+        (res_bundle / "en-US.json").write_text("{}")
+
+        host_published = self.root / "host-published"
+        host_published.mkdir()
+        (host_published / "pgpmint-host").write_bytes(b"\xcf\xfa\xed\xfeapphost")
+        (host_published / "libpgpmint_metal.dylib").write_bytes(b"\xcf\xfa\xed\xfelibrary")
+        (host_published / "Microsoft.CSharp.dll").write_bytes(b"MZmanaged")
+        (host_published / "pgpmint-host.runtimeconfig.json").write_text("{}")
+
+        app = self.package.macos_app(native_bin, [res_bundle], host_published, self.root / "bundle", "v1.2.3")
         contents = app / "Contents"
-        self.assertTrue((contents / "Resources/Microsoft.CSharp.dll").is_file())
-        self.assertEqual((contents / "Resources/Microsoft.CSharp.dll").read_bytes(), b"MZmanaged")
+        self.assertTrue((contents / "MacOS/PGPMint").is_file())
+        self.assertEqual(sorted(p.name for p in (contents / "MacOS").iterdir()), ["PGPMint"])
+        self.assertTrue((contents / "Helpers/pgpmint-host").is_file())
         self.assertTrue((contents / "Frameworks/libpgpmint_metal.dylib").is_file())
-        self.assertTrue((contents / "Resources/libpgpmint_metal.dylib").is_file())
-        for name in ("Microsoft.CSharp.dll", "PGPMint.Desktop.runtimeconfig.json", "libpgpmint_metal.dylib"):
-            link = contents / "MacOS" / name
+        self.assertTrue((contents / "Resources/PGPMintMacApp_PGPMintMacCore.bundle/en-US.json").is_file())
+        self.assertTrue((contents / "Resources/pgpmint-host/Microsoft.CSharp.dll").is_file())
+        self.assertTrue((contents / "Resources/pgpmint-host/libpgpmint_metal.dylib").is_symlink())
+        for name in ("Microsoft.CSharp.dll", "pgpmint-host.runtimeconfig.json", "libpgpmint_metal.dylib"):
+            link = contents / "Helpers" / name
             self.assertTrue(link.is_symlink())
             self.assertFalse(link.readlink().is_absolute())
             self.assertTrue(link.resolve().is_relative_to(contents.resolve()))
         output = self.package.archive(app, self.root / "desktop", "osx-arm64")
         with tarfile.open(output) as stream:
-            link = stream.getmember("PGPMint.app/Contents/MacOS/Microsoft.CSharp.dll")
+            link = stream.getmember("PGPMint.app/Contents/Helpers/Microsoft.CSharp.dll")
             self.assertTrue(link.issym())
-            self.assertEqual(link.linkname, "../Resources/Microsoft.CSharp.dll")
+            self.assertEqual(link.linkname, "../Resources/pgpmint-host/Microsoft.CSharp.dll")
 
     def test_single_executable_gate_rejects_extra_files(self):
         (self.root / "PGPMint.exe").write_bytes(b"exe")
@@ -68,28 +78,25 @@ class PackagingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.package.single_executable(self.root)
 
-    def test_macos_bundle_has_launcher_and_versioned_metadata(self):
-        published = self.root / "published"
-        published.mkdir()
-        (published / "PGPMint.Desktop").write_bytes(b"\xcf\xfa\xed\xfeapp")
-        (published / "libpgpmint_metal.dylib").write_bytes(b"\xcf\xfa\xed\xfenative")
+    def test_macos_bundle_has_native_executable_and_versioned_metadata(self):
+        native_bin = self.root / "PGPMint"
+        native_bin.write_bytes(b"\xcf\xfa\xed\xfeswiftapp")
+        host_published = self.root / "host-published"
+        host_published.mkdir()
+        (host_published / "pgpmint-host").write_bytes(b"\xcf\xfa\xed\xfehost")
+        (host_published / "libpgpmint_metal.dylib").write_bytes(b"\xcf\xfa\xed\xfenative")
         chmod = Path.chmod
         with patch.object(Path, "chmod", autospec=True, side_effect=chmod) as modes:
-            app = self.package.macos_app(published, self.root / "bundle", "v1.2.3-rc.1")
+            app = self.package.macos_app(native_bin, [], host_published, self.root / "bundle", "v1.2.3-rc.1")
         with (app / "Contents" / "Info.plist").open("rb") as stream:
             info = plistlib.load(stream)
-        self.assertEqual(info["CFBundleExecutable"], "PGPMint.Desktop")
-        launcher = app / "Contents" / "MacOS" / "PGPMint"
-        self.assertTrue(launcher.is_file())
-        self.assertTrue(launcher.is_symlink())
-        modes.assert_any_call(app / "Contents/MacOS/PGPMint.Desktop", 0o755)
-        if os.name != "nt":
-            self.assertTrue(launcher.stat().st_mode & 0o111)
-        self.assertEqual(launcher.readlink().as_posix(), "PGPMint.Desktop")
+        self.assertEqual(info["CFBundleExecutable"], "PGPMint")
+        modes.assert_any_call(app / "Contents/MacOS/PGPMint", 0o755)
+        modes.assert_any_call(app / "Contents/Helpers/pgpmint-host", 0o755)
         self.assertEqual(info["CFBundleShortVersionString"], "1.2.3")
         self.assertEqual(info["LSMinimumSystemVersion"], "14.0")
         self.assertEqual(info["CFBundlePackageType"], "APPL")
-        self.assertTrue((app / "Contents/MacOS/libpgpmint_metal.dylib").is_file())
+        self.assertTrue((app / "Contents/Helpers/libpgpmint_metal.dylib").is_file())
 
     def test_cross_built_linux_apphosts_have_execute_bits_even_when_source_has_none(self):
         stage = self.root / "linux"
@@ -124,37 +131,49 @@ class PackagingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "SHA256"):
             moltenvk.unpack(source, self.root / "runtime")
 
-    def test_macos_signs_nested_native_libraries_before_bundle(self):
+    def test_macos_signs_nested_native_libraries_and_helper_before_main_app(self):
         folder = self.root / "PGPMint.app"
-        nested = folder / "Contents/MacOS"
-        nested.mkdir(parents=True)
+        macos = folder / "Contents/MacOS"
+        helpers = folder / "Contents/Helpers"
         frameworks = folder / "Contents/Frameworks"
-        frameworks.mkdir()
+        for d in (macos, helpers, frameworks):
+            d.mkdir(parents=True)
         library = frameworks / "libcoreclr.dylib"
         library.write_bytes(b"\xcf\xfa\xed\xfemacho")
-        (nested / library.name).symlink_to(Path("..") / "Frameworks" / library.name)
-        (nested / "helper").write_bytes(b"\xcf\xfa\xed\xfemacho")
-        (nested / "PGPMint.Desktop").write_bytes(b"\xcf\xfa\xed\xfemacho")
+        (helpers / library.name).symlink_to(Path("..") / "Frameworks" / library.name)
+        (helpers / "pgpmint-host").write_bytes(b"\xcf\xfa\xed\xfemacho")
+        (macos / "PGPMint").write_bytes(b"\xcf\xfa\xed\xfemacho")
         with patch.object(self.package, "run") as run:
             self.package.sign_macos(folder)
         calls = [call.args[0] for call in run.call_args_list]
         self.assertTrue(any("libcoreclr.dylib" in str(arg) for call in calls for arg in call))
         signed = [command[-1] for command in calls[:-2]]
-        self.assertEqual(signed, [library, nested / "helper", nested / "PGPMint.Desktop"])
+        self.assertEqual(signed, [library, helpers / "pgpmint-host", macos / "PGPMint"])
         self.assertEqual(calls[-1], ["codesign", "--verify", "--deep", "--strict", str(folder)])
 
     def test_all_six_bundle_layouts_without_running_dotnet(self):
         def fake_publish(project, output, rid, platform, tag, single=False):
             output.mkdir(parents=True)
-            name = "PGPMint.exe" if single else "pgpmint" if project.endswith("Cli") else "PGPMint.Desktop"
+            name = "PGPMint.exe" if single else "pgpmint" if project.endswith("Cli") else "pgpmint-host" if project.endswith("Host") else "PGPMint.Desktop"
             (output / name).write_bytes(b"\xcf\xfa\xed\xfefixture" if rid.startswith("osx-") else b"fixture")
             if rid.startswith("osx-"):
                 (output / "libpgpmint_metal.dylib").write_bytes(b"\xcf\xfa\xed\xfenative")
+
+        def fake_swift_build(rid, scratch_build):
+            scratch_build.mkdir(parents=True, exist_ok=True)
+            binary = scratch_build / "PGPMint"
+            binary.write_bytes(b"\xcf\xfa\xed\xfeswift")
+            bundle = scratch_build / "PGPMintMacApp_PGPMintMacCore.bundle"
+            bundle.mkdir()
+            (bundle / "en-US.json").write_text("{}")
+            return binary, [bundle]
+
         runtime = self.root / "moltenvk"
         (runtime / "licenses").mkdir(parents=True)
         (runtime / "licenses/LICENSE").write_text("license")
         (runtime / "libMoltenVK.dylib").write_bytes(b"\xca\xfe\xba\xbefixture")
         with patch.object(self.package, "publish", side_effect=fake_publish), \
+             patch.object(self.package, "build_macos_native_app", side_effect=fake_swift_build), \
              patch.object(self.package, "install_moltenvk", return_value=runtime), \
              patch.object(self.package, "sign_macos"):
             for rid in self.package.RIDS:
@@ -163,7 +182,9 @@ class PackagingTests(unittest.TestCase):
                 self.assertTrue((stage / "TESTING.txt").is_file())
                 self.assertIn("NOT VERIFIED", (stage / "TESTING.txt").read_text())
                 if rid.startswith("osx-"):
-                    self.assertTrue((stage / "desktop/PGPMint.app/Contents/MacOS/libMoltenVK.dylib").is_file())
+                    self.assertTrue((stage / "desktop/PGPMint.app/Contents/MacOS/PGPMint").is_file())
+                    self.assertTrue((stage / "desktop/PGPMint.app/Contents/Helpers/pgpmint-host").is_file())
+                    self.assertTrue((stage / "desktop/PGPMint.app/Contents/Helpers/libMoltenVK.dylib").is_file())
                     self.assertTrue((stage / "cli/licenses/LICENSE").is_file())
                 dist = self.root / rid / "dist"
                 manifest = dist / f"SHA256SUMS-{rid}.txt"
@@ -178,17 +199,21 @@ class PackagingTests(unittest.TestCase):
             with patch.object(ci.sys, "platform", host), patch.object(ci, "run") as run:
                 ci.build("ARM64")
                 builds = [call.args[0] for call in run.call_args_list]
-                self.assertTrue(all(command[1] == "build" for command in builds))
-                self.assertEqual("PGPMint.sln" in builds[0], host == "win32")
-                self.assertTrue(all(any(f"tests/{name}/{name}.csproj" in cmd for cmd in builds) for name in ci.TESTS))
-            with patch.object(ci, "run") as run:
+                dotnet_builds = [cmd for cmd in builds if cmd[0] == "dotnet"]
+                self.assertTrue(all(command[1] == "build" for command in dotnet_builds))
+                self.assertEqual("PGPMint.sln" in dotnet_builds[0], host == "win32")
+                self.assertTrue(all(any(f"tests/{name}/{name}.csproj" in cmd for cmd in dotnet_builds) for name in ci.TESTS))
+                self.assertEqual(any(cmd[0] == "swift" for cmd in builds), host == "darwin")
+            with patch.object(ci.sys, "platform", host), patch.object(ci, "run") as run:
                 ci.test("ARM64", self.root)
                 commands = [call.args[0] for call in run.call_args_list]
-                self.assertEqual(len(commands), 3)
-                for command in commands:
+                dotnet_tests = [cmd for cmd in commands if cmd[0] == "dotnet"]
+                self.assertEqual(len(dotnet_tests), len(ci.TESTS))
+                for command in dotnet_tests:
                     self.assertEqual(command[1], "test")
                     self.assertIn("--no-build", command)
                     self.assertIn("Category!=HardwareGpu", command)
+                self.assertEqual(any(cmd[0] == "swift" and cmd[1] == "test" for cmd in commands), host == "darwin")
 
     def test_device_failure_keeps_stdout_and_stderr_for_diagnosis(self):
         import ci
@@ -198,6 +223,17 @@ class PackagingTests(unittest.TestCase):
         self.assertTrue((self.root / "devices.json").is_file(), "Failed CLI inventory must retain stdout")
         self.assertEqual((self.root / "devices.json").read_text(), "partial inventory")
         self.assertEqual((self.root / "devices-stderr.txt").read_text(), "driver failed")
+
+    def test_macapp_localization_resources_match_canonical_strings(self):
+        mac_res = ROOT / "src/PGPMint.MacApp/Sources/PGPMintMacCore/Resources"
+        pairs = [
+            (ROOT / "src/PGPMint.App/Strings/en-US.json", mac_res / "en-US.json"),
+            (ROOT / "src/PGPMint.App/Strings/zh-Hant.json", mac_res / "zh-Hant.json"),
+            (ROOT / "src/PGPMint.Desktop/Strings/Desktop.en-US.json", mac_res / "Desktop.en-US.json"),
+            (ROOT / "src/PGPMint.Desktop/Strings/Desktop.zh-Hant.json", mac_res / "Desktop.zh-Hant.json"),
+        ]
+        for canonical, copy_path in pairs:
+            self.assertEqual(copy_path.read_bytes(), canonical.read_bytes(), f"Drift detected in {copy_path.name}")
 
 
 if __name__ == "__main__":

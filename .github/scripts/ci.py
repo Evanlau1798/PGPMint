@@ -7,7 +7,8 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-TESTS = ("PGPMint.Tests", "PGPMint.Cli.Tests", "PGPMint.Desktop.Tests")
+TESTS = ("PGPMint.Tests", "PGPMint.Cli.Tests", "PGPMint.Host.Tests", "PGPMint.Desktop.Tests")
+MACAPP_DIR = ROOT / "src" / "PGPMint.MacApp"
 
 
 def run(args, **kwargs):
@@ -20,11 +21,13 @@ def build(platform):
     if sys.platform == "win32":
         run(["dotnet", "build", "PGPMint.sln", *common])
     else:
-        for name in ("PGPMint.Core", "PGPMint.Cli", "PGPMint.Desktop"):
+        for name in ("PGPMint.Core", "PGPMint.Cli", "PGPMint.Host", "PGPMint.Desktop"):
             run(["dotnet", "build", f"src/{name}/{name}.csproj", "-f", "net10.0", *common])
     # Build every suite before the separate test step; never let dotnet test build.
     for name in TESTS:
         run(["dotnet", "build", f"tests/{name}/{name}.csproj", *common])
+    if sys.platform == "darwin":
+        run(["swift", "build", "--package-path", str(MACAPP_DIR), "--build-tests"])
 
 
 def test(platform, diagnostics):
@@ -37,6 +40,11 @@ def test(platform, diagnostics):
                  "--logger", f"trx;LogFileName={name}.trx", "--results-directory", diagnostics])
         except subprocess.CalledProcessError:
             failed.append(name)
+    if sys.platform == "darwin":
+        try:
+            run(["swift", "test", "--package-path", str(MACAPP_DIR), "--skip-build"])
+        except subprocess.CalledProcessError:
+            failed.append("PGPMint.MacApp")
     if failed:
         raise RuntimeError("Failed suites: " + ", ".join(failed))
 

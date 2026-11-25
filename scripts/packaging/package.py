@@ -13,6 +13,7 @@ from moltenvk import install as install_moltenvk
 
 ROOT = Path(__file__).resolve().parents[2]
 RIDS = ("win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-arm64", "osx-x64")
+MACAPP_DIR = ROOT / "src" / "PGPMint.MacApp"
 
 
 def run(args, **kwargs):
@@ -52,6 +53,21 @@ def publish(project, output, rid, platform, tag, single=False):
     run(args, cwd=ROOT)
 
 
+def build_macos_native_app(rid, scratch_build):
+    arch = "arm64" if rid == "osx-arm64" else "x86_64"
+    run(["swift", "build", "--package-path", str(MACAPP_DIR), "-c", "release",
+         "--arch", arch, "--scratch-path", str(scratch_build)], cwd=ROOT)
+    bin_result = run(["swift", "build", "--package-path", str(MACAPP_DIR), "-c", "release",
+                      "--arch", arch, "--scratch-path", str(scratch_build), "--show-bin-path"],
+                     cwd=ROOT, capture_output=True, text=True)
+    bin_dir = Path(bin_result.stdout.strip())
+    binary = bin_dir / "PGPMint"
+    if not binary.is_file():
+        raise ValueError(f"Missing built macOS native binary: {binary}")
+    bundles = sorted(bin_dir.glob("*.bundle"))
+    return binary, bundles
+
+
 def is_macho(path):
     if not path.is_file():
         return False
@@ -61,43 +77,66 @@ def is_macho(path):
                      b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca", b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca")
 
 
-def macos_app(published, parent, tag):
+def macos_app(native_binary, resource_bundles, host_published, parent, tag):
     app = parent / "PGPMint.app"
     contents = app / "Contents"
     contents.mkdir(parents=True)
-    for directory in ("MacOS", "Frameworks", "Resources"):
+    for directory in ("MacOS", "Helpers", "Frameworks", "Resources"):
         (contents / directory).mkdir()
-    # Apple code locations require Mach-O; preserve .NET's adjacent-file lookup via relative links.
-    for item in sorted(published.iterdir()):
-        location = "Resources"
+
+    # Pure native SwiftUI executable in Contents/MacOS.
+    target_bin = contents / "MacOS" / "PGPMint"
+    shutil.copy2(native_binary, target_bin)
+    target_bin.chmod(0o755)
+
+    for bundle in resource_bundles:
+        dest = contents / "Resources" / bundle.name
+        if bundle.is_dir():
+            shutil.copytree(bundle, dest)
+        else:
+            shutil.copy2(bundle, dest)
+
+    # Apple code locations require Mach-O; keep managed .NET host payload in Resources/pgpmint-host
+    # and native libraries in Frameworks, linked via relative symlinks beside Contents/Helpers/pgpmint-host.
+    host_resources = contents / "Resources" / "pgpmint-host"
+    host_resources.mkdir()
+    for item in sorted(host_published.iterdir()):
         if is_macho(item):
-            location = "Frameworks" if item.suffix == ".dylib" else "MacOS"
-        destination = contents / location / item.name
-        shutil.move(str(item), destination)
-        if location != "MacOS":
-            (contents / "MacOS" / item.name).symlink_to(Path("..") / location / item.name, target_is_directory=destination.is_dir())
-        if location != "Resources":
-            (contents / "Resources" / item.name).symlink_to(Path("..") / location / item.name)
-    published.rmdir()
+            if item.suffix == ".dylib":
+                dest = contents / "Frameworks" / item.name
+                shutil.move(str(item), dest)
+                (contents / "Helpers" / item.name).symlink_to(Path("..") / "Frameworks" / item.name)
+                (host_resources / item.name).symlink_to(Path("../..") / "Frameworks" / item.name)
+            else:
+                dest = contents / "Helpers" / item.name
+                shutil.move(str(item), dest)
+                dest.chmod(0o755)
+                (host_resources / item.name).symlink_to(Path("../..") / "Helpers" / item.name)
+        else:
+            dest = host_resources / item.name
+            shutil.move(str(item), dest)
+            (contents / "Helpers" / item.name).symlink_to(
+                Path("..") / "Resources" / "pgpmint-host" / item.name,
+                target_is_directory=dest.is_dir(),
+            )
+    host_published.rmdir()
+
     info = {
         "CFBundleIdentifier": "org.pgpmint.desktop", "CFBundleName": "PGPMint",
         "CFBundleDisplayName": "PGPMint", "CFBundlePackageType": "APPL",
-        "CFBundleExecutable": "PGPMint.Desktop", "CFBundleShortVersionString": tag[1:].split("-")[0],
+        "CFBundleExecutable": "PGPMint", "CFBundleShortVersionString": tag[1:].split("-")[0],
         "CFBundleVersion": tag[1:].split("-")[0], "LSMinimumSystemVersion": "14.0",
         "NSHighResolutionCapable": True,
     }
     with (contents / "Info.plist").open("wb") as stream:
         plistlib.dump(info, stream)
-    launcher = contents / "MacOS" / "PGPMint"
-    launcher.symlink_to("PGPMint.Desktop")
-    (contents / "MacOS" / "PGPMint.Desktop").chmod(0o755)
     return app
 
 
 def sign_macos(folder):
-    # Sign inside-out after all payload changes, including every .NET native dylib.
+    # Sign inside-out after all payload changes: dylibs -> helper executables -> main executable -> bundle.
     binaries = [path for path in folder.rglob("*") if not path.is_symlink() and is_macho(path)]
-    for binary in sorted(binaries, key=lambda path: (path.name == "PGPMint.Desktop", path.suffix != ".dylib", str(path))):
+    for binary in sorted(binaries, key=lambda path: (path.name == "PGPMint", path.suffix != ".dylib", str(path))):
         run(["codesign", "--force", "--sign", "-", "--timestamp=none", binary])
     if folder.suffix == ".app":
         run(["codesign", "--force", "--sign", "-", "--timestamp=none", folder])
@@ -118,7 +157,7 @@ def archive(folder, destination, rid):
             if member.issym():
                 member.linkname = Path(member.linkname).as_posix()
             # Windows cross-publishing cannot preserve POSIX apphost mode bits.
-            if member.isfile() and Path(member.name).name in ("pgpmint", "PGPMint.Desktop", "PGPMint"):
+            if member.isfile() and Path(member.name).name in ("pgpmint", "pgpmint-host", "PGPMint.Desktop", "PGPMint"):
                 member.mode = 0o755
             return member
         with tarfile.open(output, "w:gz") as stream:
@@ -162,8 +201,8 @@ def instructions(folder, rid, tag):
               "Save commands, exit codes, devices JSON, stdout/stderr and benchmark mode with results.",
               "SHA256SUMS alongside the archive verifies download integrity."]
     if mac:
-        lines += ["", "GUI: open desktop/PGPMint.app (or its Contents/MacOS/PGPMint launcher).",
-                  "macOS 14+ (.NET 10); CLI/Desktop include MoltenVK v1.4.2 and license notices.",
+        lines += ["", "GUI: open desktop/PGPMint.app (native SwiftUI/AppKit app with bundled self-contained pgpmint-host).",
+                  "macOS 14+ (.NET 10); CLI/Host include MoltenVK v1.4.2 and license notices.",
                   "No Vulkan SDK or global loader setup is required.",
                   "Ad-hoc signed only. No Developer ID signature; NOT NOTARIZED.",
                   "Gatekeeper may require a user-approved Open action in System Settings."]
@@ -203,19 +242,22 @@ def package(rid, tag, scratch, platform):
         output = dist / f"PGPMint-{tag}-{rid}.exe"
         shutil.copy2(exe, output)
         artifacts.append(output)
+    elif rid.startswith("osx-"):
+        host_dir = work / "host-publish"
+        publish("PGPMint.Host", host_dir, rid, platform, tag)
+        runtime = install_moltenvk(scratch / "moltenvk")
+        for destination in (cli, host_dir):
+            if not (destination / "libpgpmint_metal.dylib").is_file():
+                raise ValueError(f"Missing transitive Metal bridge in {destination}")
+            shutil.copy2(runtime / "libMoltenVK.dylib", destination)
+            shutil.copytree(runtime / "licenses", destination / "licenses")
+        native_bin, bundles = build_macos_native_app(rid, work / "swift-build")
+        app = macos_app(native_bin, bundles, host_dir, stage / "desktop", tag)
+        sign_macos(cli)
+        sign_macos(app)
     else:
-        desktop = work / "desktop-publish" if rid.startswith("osx-") else stage / "desktop"
+        desktop = stage / "desktop"
         publish("PGPMint.Desktop", desktop, rid, platform, tag)
-        if rid.startswith("osx-"):
-            runtime = install_moltenvk(scratch / "moltenvk")
-            for destination in (cli, desktop):
-                if not (destination / "libpgpmint_metal.dylib").is_file():
-                    raise ValueError(f"Missing transitive Metal bridge in {destination}")
-                shutil.copy2(runtime / "libMoltenVK.dylib", destination)
-                shutil.copytree(runtime / "licenses", destination / "licenses")
-            app = macos_app(desktop, stage / "desktop", tag)
-            sign_macos(cli)
-            sign_macos(app)
     instructions(stage, rid, tag)
     dist.mkdir(parents=True, exist_ok=True)
     testing = dist / f"TESTING-{rid}.txt"
