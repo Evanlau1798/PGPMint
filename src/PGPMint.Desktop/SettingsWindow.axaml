@@ -1,0 +1,97 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="PGPMint.Desktop.SettingsWindow"
+        Title="PGPMint - Settings"
+        Width="460"
+        MinWidth="400"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource AppWindowBg}">
+  <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="660">
+    <StackPanel Margin="16" Spacing="12">
+      <!-- 1. Language -->
+      <Border Classes="card">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+          <TextBlock x:Name="LanguageHeading" Grid.Column="0" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+          <ComboBox x:Name="LanguageCombo" Grid.Column="1" MinWidth="160" />
+        </Grid>
+      </Border>
+
+      <!-- 2. Target Key ID -->
+      <Border Classes="card">
+        <StackPanel Spacing="10">
+          <TextBlock x:Name="TargetHeading" FontSize="13" FontWeight="SemiBold" />
+          <TextBlock x:Name="DraftPreviewText"
+                     FontFamily="{StaticResource MonoFont}"
+                     FontSize="20"
+                     FontWeight="SemiBold"
+                     LetterSpacing="1.1"
+                     HorizontalAlignment="Center"
+                     Text="**** **** **** ****" />
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <TextBox x:Name="TargetInputBox"
+                     Grid.Column="0"
+                     FontFamily="{StaticResource MonoFont}"
+                     FontSize="14.5"
+                     MaxLength="24"
+                     TextAlignment="Center" />
+            <Button x:Name="ApplyTargetButton"
+                    Grid.Column="1"
+                    Classes="accent"
+                    MinWidth="76"
+                    Height="34"
+                    Click="OnApplyTargetClick" />
+          </Grid>
+          <TextBlock x:Name="TargetValidationText" IsVisible="False" Foreground="#EF4444" FontSize="12" TextWrapping="Wrap" />
+          <TextBlock x:Name="StopToEditText" IsVisible="False" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" />
+          <TextBlock x:Name="TargetRuleHintText" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+
+      <!-- 3. Preferences -->
+      <Border Classes="card">
+        <StackPanel Spacing="8">
+          <TextBlock x:Name="PreferencesHeading" FontSize="13" FontWeight="SemiBold" />
+          <CheckBox x:Name="AutoPauseCheckBox" IsCheckedChanged="OnPreferencesChanged" />
+          <CheckBox x:Name="KeepInTrayCheckBox" IsCheckedChanged="OnPreferencesChanged" />
+          <TextBlock x:Name="NoTrayHintText" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+
+      <!-- 4. Hardware GPUs -->
+      <Border Classes="card">
+        <StackPanel Spacing="10">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <TextBlock x:Name="GpusHeading" Grid.Column="0" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <Button x:Name="RecalibrateButton" Grid.Column="1" FontSize="12" Padding="10,4" Click="OnRecalibrateClick" />
+          </Grid>
+          <StackPanel x:Name="GpusListPanel" Spacing="6" />
+          <TextBlock x:Name="NoGpuText" IsVisible="False" Foreground="#EF4444" FontSize="12.5" TextWrapping="Wrap" />
+          <TextBlock x:Name="GpuDiagnosticsText"
+                     IsVisible="False"
+                     FontFamily="{StaticResource MonoFont}"
+                     FontSize="11"
+                     Foreground="{DynamicResource TextSecondaryBrush}"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+
+      <!-- 5. Vault & Actions -->
+      <Border Classes="card">
+        <StackPanel Spacing="8">
+          <TextBlock x:Name="DataDirHeading" FontSize="13" FontWeight="SemiBold" />
+          <TextBlock x:Name="DataDirValueText"
+                     FontFamily="{StaticResource MonoFont}"
+                     FontSize="11.5"
+                     Foreground="{DynamicResource TextSecondaryBrush}"
+                     TextWrapping="Wrap" />
+          <TextBlock x:Name="SettingsErrorText" IsVisible="False" Foreground="#EF4444" FontSize="12" TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
+            <Button x:Name="LockVaultButton" Click="OnLockClick" />
+            <Button x:Name="QuitAppButton" Click="OnQuitClick" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</Window>

@@ -12,7 +12,8 @@ namespace PGPMint.Desktop.Tests;
 
 public static class UiBootstrap
 {
-    public static AppBuilder BuildAvaloniaApp() => AppBuilder.Configure<Application>().UseHeadless(new AvaloniaHeadlessPlatformOptions());
+    public static AppBuilder BuildAvaloniaApp() =>
+        AppBuilder.Configure<App>().UseHeadless(new AvaloniaHeadlessPlatformOptions());
 }
 
 public sealed class UiTests
@@ -26,27 +27,34 @@ public sealed class UiTests
         {
             await using var session = new DesktopSession(new EmptyBackend(), directory);
             session.Unlock("test password");
-            session.StateStore.Update(s => s.Language = "en-US");
+            session.StateStore.Update(s =>
+            {
+                s.Language = "en-US";
+                s.TargetInput = "AB";
+                s.HasCompletedSetup = true;
+            });
             var strings = new LocalizationService();
             strings.Apply("en-US");
             var window = new MainWindow(session, strings);
             window.Show();
-            var controls = window.GetLogicalDescendants().ToArray();
-            var language = controls.OfType<ComboBox>().Single(c => c.Items.Contains("zh-Hant"));
-            var tier = controls.OfType<ComboBox>().Single(c => c.ItemCount == 4);
+            var settings = new SettingsWindow(window, session, strings);
+            settings.Show(window);
+            var settingsControls = settings.GetLogicalDescendants().ToArray();
+            var language = settingsControls.OfType<ComboBox>().Single(c => c.Items.Contains("zh-Hant"));
+            var autoPause = settingsControls.OfType<CheckBox>().First();
             using (var blocked = new FileStream(session.StateStore.StateFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
                 Assert.Null(Record.Exception(() => language.SelectedItem = "zh-Hant"));
-                Assert.Null(Record.Exception(() => tier.SelectedIndex = (tier.SelectedIndex + 1) % 4));
+                Assert.Null(Record.Exception(() => autoPause.IsChecked = !autoPause.IsChecked));
             }
-            Assert.Contains(controls.OfType<TextBlock>(), t => t.Text == strings["OperationFailed"]);
+            Assert.Contains(settingsControls.OfType<TextBlock>(), t => t.Text == strings["OperationFailed"]);
             await window.QuitAsync();
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
     }
 
     [AvaloniaFact]
-    public async Task UnlockedWindowDiagnosesNoGpuAndShowsFourPowerTiers()
+    public async Task SetupWizardDiagnosesNoGpuAndCompletesIntoDashboard()
     {
         string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "tmp",
             "pgpmint-desktop-tests", Guid.NewGuid().ToString("N"));
@@ -59,10 +67,60 @@ public sealed class UiTests
             var window = new MainWindow(session, strings);
             window.Show();
             window.Refresh();
-            var controls = window.GetLogicalDescendants().ToArray();
-            Assert.Contains(controls.OfType<TextBlock>(), t => t.Text == "No hardware GPU detected");
-            Assert.Contains(controls.OfType<ComboBox>(), c => c.ItemCount == 4);
-            Assert.Contains(controls.OfType<TextBlock>(), t => t.Text?.Contains("CPU-verified hits") == true);
+            var setupPanel = window.FindControl<Border>("SetupWizardPanel")!;
+            var dashboardPanel = window.FindControl<StackPanel>("DashboardPanel")!;
+            var setupBox = window.FindControl<TextBox>("SetupTargetBox")!;
+            var finishBtn = window.FindControl<Button>("SetupStartButton")!;
+            Assert.True(setupPanel.IsVisible);
+            Assert.False(dashboardPanel.IsVisible);
+            Assert.False(finishBtn.IsEnabled);
+            Assert.Contains(window.GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == "No hardware GPU detected");
+
+            setupBox.Text = "CAFE";
+            Assert.True(finishBtn.IsEnabled);
+            finishBtn.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            await Task.Delay(50);
+
+            Assert.False(setupPanel.IsVisible);
+            Assert.True(dashboardPanel.IsVisible);
+            Assert.Equal("CAFE", session.StateStore.Load().TargetInput);
+            Assert.True(session.StateStore.Load().HasCompletedSetup);
+            await window.QuitAsync();
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+    }
+
+    [AvaloniaFact]
+    public async Task DashboardShowsFourPowerTiersWithTooltipsAndHonestBadge()
+    {
+        string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "tmp",
+            "pgpmint-desktop-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            await using var session = new DesktopSession(new EmptyBackend(), directory);
+            session.Unlock("test password");
+            session.StateStore.Update(s =>
+            {
+                s.TargetInput = "DEAD";
+                s.HasCompletedSetup = true;
+            });
+            var strings = new LocalizationService();
+            strings.Apply("en-US");
+            var window = new MainWindow(session, strings);
+            window.Show();
+            window.Refresh();
+
+            string[] tierNames = ["TierEcoButton", "TierBalancedButton", "TierEfficiencyButton", "TierMaxButton"];
+            string[] tooltipKeys = ["TierEcoTooltip", "TierBalancedTooltip", "TierEfficiencyTooltip", "TierMaxTooltip"];
+            for (int i = 0; i < tierNames.Length; i++)
+            {
+                var btn = window.FindControl<Button>(tierNames[i])!;
+                Assert.True(ToolTip.GetShowOnDisabled(btn));
+                Assert.Equal(strings[tooltipKeys[i]], ToolTip.GetTip(btn));
+            }
+            var badge = window.FindControl<TextBlock>("EfficiencyBadgeText")!;
+            Assert.NotEqual("0 W", badge.Text);
+            Assert.Contains(window.GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == "No hardware GPU detected");
             await window.QuitAsync();
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
@@ -131,7 +189,9 @@ public sealed class UiTests
     public async Task TrayHasAMenuBeforeAttachingAndKeepsItsNativeMenuIdentity()
     {
         await using var session = new DesktopSession(new EmptyBackend(), Path.Combine(Path.GetTempPath(), "unused-tray"));
-        var window = new MainWindow(session, new LocalizationService());
+        var strings = new LocalizationService();
+        strings.Apply("en-US");
+        var window = new MainWindow(session, strings);
         bool attachedWithMenu = false;
         var app = Avalonia.Application.Current!;
         void Attached(object? sender, Avalonia.AvaloniaPropertyChangedEventArgs change)
@@ -142,13 +202,21 @@ public sealed class UiTests
         app.PropertyChanged += Attached;
         try
         {
-            await using var platform = new PlatformServices(window, session, new LocalizationService());
+            await using var platform = new PlatformServices(window, session, strings);
             Assert.True(attachedWithMenu);
             var icon = TrayIcon.GetIcons(app)!.Single();
             var menu = icon.Menu;
             typeof(PlatformServices).GetMethod("UpdateMenu", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(platform, null);
             Assert.Same(menu, icon.Menu);
             Assert.Equal(6, icon.Menu!.Items.Count);
+            var labels = icon.Menu.Items.OfType<NativeMenuItem>().Select(i => i.Header).ToArray();
+            Assert.DoesNotContain(strings["Hide"], labels);
+            Assert.Contains(strings["Open"], labels);
+            Assert.Contains(strings["PowerTier"], labels);
+            Assert.Contains(strings["Quit"], labels);
+            var tierSubmenu = icon.Menu.Items.OfType<NativeMenuItem>().Single(i => i.Header == strings["PowerTier"]).Menu;
+            Assert.NotNull(tierSubmenu);
+            Assert.Equal(4, tierSubmenu!.Items.Count);
         }
         finally { app.PropertyChanged -= Attached; await window.QuitAsync(); }
     }

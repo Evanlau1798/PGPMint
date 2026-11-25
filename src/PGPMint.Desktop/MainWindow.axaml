@@ -1,0 +1,286 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="PGPMint.Desktop.MainWindow"
+        Title="PGPMint"
+        Width="400"
+        MinWidth="360"
+        SizeToContent="Height"
+        Background="{DynamicResource AppWindowBg}">
+  <StackPanel Margin="16,14,16,16" Spacing="12">
+    <!-- Top Header Bar -->
+    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+      <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="#808080" VerticalAlignment="Center" />
+        <TextBlock Text="PGPMint" FontSize="13.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+        <TextBlock x:Name="TransientNoticeText"
+                   IsVisible="False"
+                   FontSize="12"
+                   FontWeight="Medium"
+                   Foreground="{DynamicResource AccentButtonBg}"
+                   VerticalAlignment="Center"
+                   Margin="4,0,0,0" />
+      </StackPanel>
+
+      <TextBlock x:Name="SleepStatusText"
+                 Grid.Column="1"
+                 IsVisible="False"
+                 FontSize="11"
+                 Foreground="{DynamicResource TextSecondaryBrush}"
+                 HorizontalAlignment="Right"
+                 VerticalAlignment="Center"
+                 TextTrimming="CharacterEllipsis" />
+
+      <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+        <ComboBox x:Name="UnlockLanguageCombo" MinWidth="132" IsVisible="False" />
+        <Button x:Name="SettingsButton"
+                Classes="icon-ghost"
+                IsVisible="False"
+                Click="OnSettingsClick">
+          <PathIcon x:Name="SettingsIcon" Width="14" Height="14" />
+        </Button>
+      </StackPanel>
+    </Grid>
+
+    <!-- Error Banner -->
+    <Border x:Name="ErrorBanner"
+            IsVisible="False"
+            Background="{DynamicResource ErrorBannerBg}"
+            BorderBrush="{DynamicResource ErrorBannerBorder}"
+            BorderThickness="1"
+            CornerRadius="8"
+            Padding="12,8">
+      <TextBlock x:Name="ErrorBannerText" FontSize="12" TextWrapping="Wrap" />
+    </Border>
+
+    <!-- 1. LOCKED / UNLOCK PANEL -->
+    <StackPanel x:Name="UnlockPanel" Spacing="10" IsVisible="False">
+      <Border Classes="card">
+        <StackPanel Spacing="12">
+          <TextBlock x:Name="UnlockTitleText" FontSize="16" FontWeight="SemiBold" />
+          <TextBlock x:Name="UnlockHintText"
+                     FontSize="12.5"
+                     Foreground="{DynamicResource TextSecondaryBrush}"
+                     TextWrapping="Wrap" />
+          <Button x:Name="UnlockActionButton"
+                  Classes="accent"
+                  Height="38"
+                  HorizontalAlignment="Stretch"
+                  Click="OnUnlockClick" />
+        </StackPanel>
+      </Border>
+      <TextBlock x:Name="UnlockDataDirText"
+                 FontFamily="{StaticResource MonoFont}"
+                 FontSize="11"
+                 Foreground="{DynamicResource TextTertiaryBrush}"
+                 TextWrapping="Wrap" />
+    </StackPanel>
+
+    <!-- 2. FIRST-LAUNCH SETUP WIZARD -->
+    <Border x:Name="SetupWizardPanel" Classes="card" IsVisible="False">
+      <StackPanel Spacing="12">
+        <TextBlock x:Name="SetupTitleText" FontSize="16" FontWeight="SemiBold" />
+
+        <TextBlock x:Name="SetupPreviewText"
+                   FontFamily="{StaticResource MonoFont}"
+                   FontSize="20"
+                   FontWeight="SemiBold"
+                   LetterSpacing="1.1"
+                   HorizontalAlignment="Center"
+                   Text="**** **** **** ****" />
+
+        <StackPanel Spacing="6">
+          <TextBox x:Name="SetupTargetBox"
+                   FontFamily="{StaticResource MonoFont}"
+                   FontSize="14.5"
+                   MaxLength="24"
+                   TextAlignment="Center" />
+          <TextBlock x:Name="SetupValidationText"
+                     IsVisible="False"
+                     Foreground="#EF4444"
+                     FontSize="12"
+                     HorizontalAlignment="Center"
+                     TextAlignment="Center"
+                     TextWrapping="Wrap" />
+          <TextBlock x:Name="SetupRuleHintText"
+                     Foreground="{DynamicResource TextSecondaryBrush}"
+                     FontSize="12"
+                     HorizontalAlignment="Center"
+                     TextAlignment="Center"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+
+        <Border Height="1" Background="{DynamicResource DividerLineBrush}" />
+
+        <StackPanel Spacing="6">
+          <TextBlock x:Name="SetupGpusHeading" FontSize="13" FontWeight="SemiBold" />
+          <StackPanel x:Name="SetupGpusList" Spacing="6" />
+          <TextBlock x:Name="SetupNoGpuText"
+                     IsVisible="False"
+                     Foreground="#EF4444"
+                     FontSize="12.5"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+
+        <Border Height="1" Background="{DynamicResource DividerLineBrush}" />
+
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+          <TextBlock x:Name="SetupLanguageLabel"
+                     Grid.Column="0"
+                     FontSize="13"
+                     FontWeight="SemiBold"
+                     VerticalAlignment="Center" />
+          <ComboBox x:Name="SetupLanguageCombo" Grid.Column="1" MinWidth="148" />
+        </Grid>
+
+        <Button x:Name="SetupStartButton"
+                Classes="accent"
+                Height="38"
+                HorizontalAlignment="Stretch"
+                Click="OnSetupStartClick" />
+      </StackPanel>
+    </Border>
+
+    <!-- 3. MINIMALIST 3-CARD MAIN DASHBOARD -->
+    <StackPanel x:Name="DashboardPanel" Spacing="12" IsVisible="False">
+      <!-- Card 1: Live Speed, Target Preview & 4-Tier Selector -->
+      <Border Classes="card">
+        <StackPanel Spacing="12">
+          <TextBlock x:Name="ActivePreviewText"
+                     FontFamily="{StaticResource MonoFont}"
+                     FontSize="18"
+                     FontWeight="SemiBold"
+                     LetterSpacing="1.1"
+                     Foreground="{DynamicResource TextSecondaryBrush}"
+                     HorizontalAlignment="Center"
+                     Text="**** **** **** ****" />
+
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Bottom">
+              <TextBlock x:Name="RateNumberText"
+                         FontFamily="{StaticResource MonoFont}"
+                         FontSize="38"
+                         FontWeight="SemiBold"
+                         Text="0.00" />
+              <TextBlock x:Name="RateUnitText"
+                         FontFamily="{StaticResource MonoFont}"
+                         FontSize="13.5"
+                         Foreground="{DynamicResource TextSecondaryBrush}"
+                         VerticalAlignment="Bottom"
+                         Margin="0,0,0,6"
+                         Text="GH/s" />
+            </StackPanel>
+
+            <Border x:Name="EfficiencyBadgeBorder"
+                    Grid.Column="1"
+                    Classes="pill"
+                    Padding="9,4"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,0,6">
+              <TextBlock x:Name="EfficiencyBadgeText"
+                         FontFamily="{StaticResource MonoFont}"
+                         FontSize="12"
+                         FontWeight="SemiBold" />
+            </Border>
+          </Grid>
+
+          <!-- 4-Tier Segmented Selector -->
+          <Border Background="{DynamicResource SubtleSurfaceBg}"
+                  BorderBrush="{DynamicResource SubtleSurfaceBorder}"
+                  BorderThickness="1"
+                  CornerRadius="6"
+                  Padding="3">
+            <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="3">
+              <Border x:Name="TierEcoWrap" Grid.Column="0" Background="Transparent">
+                <Button x:Name="TierEcoButton" Classes="tier-ghost" Tag="Eco" ToolTip.ShowOnDisabled="True" Click="OnTierClick" />
+              </Border>
+              <Border x:Name="TierBalancedWrap" Grid.Column="1" Background="Transparent">
+                <Button x:Name="TierBalancedButton" Classes="tier-ghost" Tag="Balanced" ToolTip.ShowOnDisabled="True" Click="OnTierClick" />
+              </Border>
+              <Border x:Name="TierEfficiencyWrap" Grid.Column="2" Background="Transparent">
+                <Button x:Name="TierEfficiencyButton" Classes="tier-ghost" Tag="Efficiency" ToolTip.ShowOnDisabled="True" Click="OnTierClick" />
+              </Border>
+              <Border x:Name="TierMaxWrap" Grid.Column="3" Background="Transparent">
+                <Button x:Name="TierMaxButton" Classes="tier-active" Tag="Max" ToolTip.ShowOnDisabled="True" Click="OnTierClick" />
+              </Border>
+            </Grid>
+          </Border>
+
+          <!-- Single Unified Primary Start / Stop Button -->
+          <Button x:Name="PrimaryActionButton"
+                  Classes="accent"
+                  Height="38"
+                  HorizontalAlignment="Stretch"
+                  Click="OnPrimaryActionClick" />
+        </StackPanel>
+      </Border>
+
+      <!-- Card 2: Progress & Telemetry Strip -->
+      <Border Classes="card" Padding="14,12">
+        <StackPanel Spacing="8">
+          <ProgressBar x:Name="SearchProgressBar" Minimum="0" Maximum="100" Value="0" Height="6" CornerRadius="3" />
+          <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6">
+            <TextBlock x:Name="ProbabilityText"
+                       Grid.Column="0"
+                       FontFamily="{StaticResource MonoFont}"
+                       FontSize="11.5"
+                       HorizontalAlignment="Left" />
+            <TextBlock x:Name="CheckedCountText"
+                       Grid.Column="1"
+                       FontFamily="{StaticResource MonoFont}"
+                       FontSize="11.5"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       HorizontalAlignment="Center" />
+            <TextBlock x:Name="EtaText"
+                       Grid.Column="2"
+                       FontFamily="{StaticResource MonoFont}"
+                       FontSize="11.5"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       HorizontalAlignment="Right" />
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <!-- Card 3: Compact Results Card -->
+      <Border Classes="card" Padding="14,10">
+        <Grid>
+          <StackPanel x:Name="NoMatchesPanel"
+                      Spacing="4"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Center"
+                      MinHeight="50">
+            <TextBlock x:Name="NoMatchesText"
+                       FontSize="13"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       HorizontalAlignment="Center" />
+            <TextBlock x:Name="TrayHintText"
+                       IsVisible="False"
+                       FontSize="11.5"
+                       Foreground="{DynamicResource TextTertiaryBrush}"
+                       HorizontalAlignment="Center"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap" />
+          </StackPanel>
+
+          <StackPanel x:Name="MatchesContentPanel" Spacing="8" IsVisible="False">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock x:Name="MatchesCountText"
+                         Grid.Column="0"
+                         FontFamily="{StaticResource MonoFont}"
+                         FontSize="12"
+                         Foreground="{DynamicResource TextSecondaryBrush}"
+                         VerticalAlignment="Center" />
+              <Button x:Name="ClearAllButton"
+                      Grid.Column="1"
+                      FontSize="12"
+                      Padding="8,3"
+                      Click="OnClearAllClick" />
+            </Grid>
+            <ScrollViewer x:Name="MatchesScroller" VerticalScrollBarVisibility="Auto" MaxHeight="184">
+              <StackPanel x:Name="MatchesListPanel" Spacing="6" />
+            </ScrollViewer>
+          </StackPanel>
+        </Grid>
+      </Border>
+    </StackPanel>
+  </StackPanel>
+</Window>

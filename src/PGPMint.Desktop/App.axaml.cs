@@ -1,7 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Themes.Fluent;
+using Avalonia.Markup.Xaml;
 using PGPMint.Core.Gpu;
 using PGPMint.Core.Storage;
 
@@ -9,14 +9,16 @@ namespace PGPMint.Desktop;
 
 public sealed class App : Application
 {
-    public override void Initialize() => Styles.Add(new FluentTheme());
+    public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
     public override void OnFrameworkInitializationCompleted()
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime lifetime)
         {
             lifetime.ShutdownMode = ShutdownMode.OnExplicitShutdown;
-            string directory = AppDataPaths.PasswordVaultDirectory;
+            string directory = Environment.GetEnvironmentVariable("PGPMINT_DATA_DIR") is { Length: > 0 } customDir
+                ? customDir
+                : AppDataPaths.PasswordVaultDirectory;
             var session = new DesktopSession(GpuBackendFactory.CreateDefault(), directory,
                 OperatingSystem.IsMacOS() ? new MacKeychainSecretStore() : null);
             var strings = new LocalizationService();
