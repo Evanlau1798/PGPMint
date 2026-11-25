@@ -76,17 +76,9 @@ final class MenuBarController: NSObject {
 
         if model.isUnlocked && !model.showSetupWizard {
             menu.addItem(.separator())
-            if model.isSearching || model.isPaused {
-                let pauseKey = model.isPaused ? "Resume" : "Pause"
-                let pauseItem = addItem(title: model.loc.text(pauseKey), action: #selector(handlePauseResume))
-                pauseItem.isEnabled = !model.isBusy && (model.telemetry.state == "Running" || model.telemetry.state == "Paused")
-
-                let stopItem = addItem(title: model.loc.text("Stop"), action: #selector(handleStop))
-                stopItem.isEnabled = !model.isBusy && !model.isStopping
-            } else {
-                let startItem = addItem(title: model.loc.text("Start"), action: #selector(handleStart))
-                startItem.isEnabled = model.canPrimaryAction
-            }
+            let toggleKey = (model.isSearching || model.isPaused) ? "Stop" : "Start"
+            let toggleItem = addItem(title: model.loc.text(toggleKey), action: #selector(handlePrimaryToggle))
+            toggleItem.isEnabled = model.canPrimaryAction
         }
 
         menu.addItem(.separator())
@@ -114,16 +106,5 @@ final class MenuBarController: NSObject {
     @objc private func handleHide() { onHideWindow() }
     @objc private func handleSettings() { onOpenSettings() }
     @objc private func handleQuit() { onQuit() }
-    @objc private func handleStart() { Task { await model.startSearch() } }
-    @objc private func handleStop() { Task { await model.stopSearch() } }
-
-    @objc private func handlePauseResume() {
-        Task {
-            if model.isPaused {
-                await model.resumeSearch()
-            } else {
-                await model.pauseSearch()
-            }
-        }
-    }
+    @objc private func handlePrimaryToggle() { Task { await model.primaryAction() } }
 }

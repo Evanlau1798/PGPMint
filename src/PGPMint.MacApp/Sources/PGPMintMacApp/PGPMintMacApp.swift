@@ -8,13 +8,15 @@ struct PGPMintMacApp: App {
 
     var body: some Scene {
         Window("PGPMint", id: "main") {
-            RootContentView(model: delegate.model)
-                .background(WindowAccessor { window in
-                    delegate.attachMainWindow(window)
-                })
-                .frame(minWidth: 440, idealWidth: 480, minHeight: 580, idealHeight: 700)
+            RootContentView(model: delegate.model) {
+                delegate.adjustWindowHeight()
+            }
+            .background(WindowAccessor { window in
+                delegate.attachMainWindow(window)
+            })
+            .frame(minWidth: 390, idealWidth: 460, minHeight: 320)
         }
-        .defaultSize(width: 480, height: 700)
+        .defaultSize(width: 460, height: 434)
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) {}
@@ -22,13 +24,14 @@ struct PGPMintMacApp: App {
 
         Settings {
             SettingsView(model: delegate.model)
-                .frame(minWidth: 460, idealWidth: 500, minHeight: 500, idealHeight: 580)
+                .frame(minWidth: 440, idealWidth: 480, minHeight: 480, idealHeight: 560)
         }
     }
 }
 
 private struct RootContentView: View {
     @Bindable var model: AppModel
+    let onLayoutStateChanged: () -> Void
 
     var body: some View {
         Group {
@@ -40,8 +43,14 @@ private struct RootContentView: View {
                 DashboardView(model: model)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: model.isUnlocked) { _, _ in onLayoutStateChanged() }
+        .onChange(of: model.showSetupWizard) { _, _ in onLayoutStateChanged() }
+        .onChange(of: model.matches.count) { _, _ in onLayoutStateChanged() }
+        .onChange(of: model.errorText.isEmpty) { _, _ in onLayoutStateChanged() }
+        .onChange(of: model.isSearching) { _, _ in onLayoutStateChanged() }
+        .onChange(of: model.devices.count) { _, _ in onLayoutStateChanged() }
     }
 }
 

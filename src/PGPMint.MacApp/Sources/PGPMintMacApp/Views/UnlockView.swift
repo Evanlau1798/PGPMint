@@ -10,9 +10,8 @@ struct UnlockView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                HStack {
+        VStack(spacing: 14) {
+            HStack {
                     HStack(spacing: 8) {
                         Image(systemName: "key.horizontal.fill")
                             .foregroundStyle(Color.accentColor)
@@ -90,8 +89,7 @@ struct UnlockView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding(20)
-        }
+            .padding(18)
     }
 
     private func submitPassword() {

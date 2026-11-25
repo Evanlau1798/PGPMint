@@ -5,9 +5,8 @@ struct SetupWizardView: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 14) {
-                HStack(spacing: 8) {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
                     StatusDotView(colorName: model.statusIndicatorColorName)
                     Text("PGPMint")
                         .font(.system(size: 14, weight: .semibold))
@@ -118,7 +117,6 @@ struct SetupWizardView: View {
                     }
                 }
             }
-            .padding(18)
-        }
+            .padding(16)
     }
 }

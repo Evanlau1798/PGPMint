@@ -133,36 +133,16 @@ struct DashboardView: View {
                 .disabled(!model.isTierSelectorEnabled)
                 .help(model.loc.tierTooltip(model.displayTier))
 
-                HStack(spacing: 8) {
-                    Button {
-                        Task { await model.primaryAction() }
-                    } label: {
-                        Text(model.primaryButtonText)
-                            .font(.system(size: 13.5, weight: .semibold))
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .disabled(!model.canPrimaryAction)
-
-                    if model.telemetry.state == "Running" || model.telemetry.state == "Paused" {
-                        Button {
-                            Task {
-                                if model.isPaused {
-                                    await model.resumeSearch()
-                                } else {
-                                    await model.pauseSearch()
-                                }
-                            }
-                        } label: {
-                            Text(model.loc.text(model.isPaused ? "Resume" : "Pause"))
-                                .font(.system(size: 13, weight: .medium))
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.large)
-                        .disabled(model.isBusy)
-                    }
+                Button {
+                    Task { await model.primaryAction() }
+                } label: {
+                    Text(model.primaryButtonText)
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(!model.canPrimaryAction)
             }
         }
     }
@@ -195,10 +175,9 @@ struct DashboardView: View {
     }
 
     private var resultsCard: some View {
-        SurfaceCard(padding: 14) {
+        SurfaceCard(padding: 12) {
             if model.matches.isEmpty {
                 VStack(spacing: 4) {
-                    Spacer(minLength: 8)
                     Text(model.loc.text("NoResults"))
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
@@ -208,9 +187,8 @@ struct DashboardView: View {
                             .foregroundStyle(.tertiary)
                             .multilineTextAlignment(.center)
                     }
-                    Spacer(minLength: 8)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 54)
             } else {
                 VStack(spacing: 8) {
                     HStack {
@@ -225,48 +203,60 @@ struct DashboardView: View {
                         .controlSize(.small)
                     }
 
-                    ScrollView {
-                        LazyVStack(spacing: 8) {
+                    if model.matches.count <= 5 {
+                        VStack(spacing: 6) {
                             ForEach(model.matches) { item in
-                                HStack(spacing: 6) {
-                                    Text(item.formattedKeyId)
-                                        .font(.system(size: 13.5, weight: .semibold, design: .monospaced))
-                                        .lineLimit(1)
-                                    Spacer()
-                                    Button {
-                                        copyFingerprint(item.fingerprint)
-                                    } label: {
-                                        Image(systemName: "doc.on.doc")
-                                            .font(.system(size: 12))
-                                    }
-                                    .buttonStyle(.borderless)
-                                    .help(model.loc.text("Copy"))
-
-                                    Button(".asc") {
-                                        exportTarget = item
-                                    }
-                                    .font(.system(size: 11.5, design: .monospaced))
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-
-                                    Button(role: .destructive) {
-                                        pendingDelete = item
-                                    } label: {
-                                        Image(systemName: "trash")
-                                            .font(.system(size: 12))
-                                    }
-                                    .buttonStyle(.borderless)
-                                    .help(model.loc.text("DeleteKeyTooltip"))
-                                }
-                                .padding(.vertical, 2)
+                                matchRow(item)
                             }
                         }
+                    } else {
+                        ScrollView {
+                            LazyVStack(spacing: 6) {
+                                ForEach(model.matches) { item in
+                                    matchRow(item)
+                                }
+                            }
+                        }
+                        .frame(height: 180)
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .frame(maxWidth: .infinity, alignment: .top)
             }
         }
-        .frame(maxHeight: .infinity)
+    }
+
+    private func matchRow(_ item: HostMatchDto) -> some View {
+        HStack(spacing: 6) {
+            Text(item.formattedKeyId)
+                .font(.system(size: 13.5, weight: .semibold, design: .monospaced))
+                .lineLimit(1)
+            Spacer()
+            Button {
+                copyFingerprint(item.fingerprint)
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.borderless)
+            .help(model.loc.text("Copy"))
+
+            Button(".asc") {
+                exportTarget = item
+            }
+            .font(.system(size: 11.5, design: .monospaced))
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Button(role: .destructive) {
+                pendingDelete = item
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.borderless)
+            .help(model.loc.text("DeleteKeyTooltip"))
+        }
+        .frame(minHeight: 28)
     }
 
     private func copyFingerprint(_ fingerprint: String) {

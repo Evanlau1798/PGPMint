@@ -3,6 +3,9 @@ import PGPMintMacCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private static let defaultWidth: CGFloat = 460
+    private static let maxAutoStretchMatches = 5
+
     let powerManager = MacPowerActivityManager()
     let loc = LocalizationStore()
     lazy var model = AppModel(transport: ProcessHostTransport(), loc: loc, powerManager: powerManager)
@@ -10,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var menuBar: MenuBarController?
     private weak var mainWindow: NSWindow?
     private var terminating = false
+    private var lastAutoHeightKey = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -29,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Task {
             await model.bootstrap()
             menuBar?.refresh()
+            adjustWindowHeight(force: true)
         }
     }
 
@@ -39,6 +44,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.title = "PGPMint"
         window.titlebarAppearsTransparent = false
         window.isReleasedWhenClosed = false
+        adjustWindowHeight(force: true)
+    }
+
+    func adjustWindowHeight(force: Bool = false) {
+        guard let window = mainWindow else { return }
+        let visibleRows = min(model.matches.count, Self.maxAutoStretchMatches)
+        let hasError = !model.errorText.isEmpty
+        let mode: String = !model.isUnlocked ? "unlock" : (model.showSetupWizard ? "setup" : "dash")
+        let key = "\(mode)|\(visibleRows)|\(hasError)|\(model.isSearching)|\(model.devices.count)"
+        if !force && key == lastAutoHeightKey { return }
+        lastAutoHeightKey = key
+
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window, let contentView = window.contentView else { return }
+            contentView.layoutSubtreeIfNeeded()
+            let currentWidth = max(Self.defaultWidth, window.contentRect(forFrameRect: window.frame).width)
+            let fittingHeight = contentView.fittingSize.height
+            let screenMax = (window.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
+            let clampedHeight = min(max(fittingHeight, 260), screenMax - 80)
+            let targetFrameSize = window.frameRect(
+                forContentRect: NSRect(origin: .zero, size: NSSize(width: currentWidth, height: clampedHeight))
+            ).size
+
+            var frame = window.frame
+            let topY = frame.maxY
+            frame.size = targetFrameSize
+            frame.origin.y = topY - frame.size.height
+            window.setFrame(frame, display: true, animate: !force)
+        }
     }
 
     func showMainWindow() {
