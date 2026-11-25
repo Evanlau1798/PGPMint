@@ -127,7 +127,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let existing = settingsWindow {
             window = existing
         } else {
-            let hosting = NSHostingController(rootView: SettingsView(model: model))
+            let hosting = NSHostingController(
+                rootView: SettingsView(model: model)
+                    .frame(minWidth: 440, maxWidth: .infinity, minHeight: 480, maxHeight: .infinity)
+                    .background(Color(nsColor: .windowBackgroundColor))
+            )
             hosting.sizingOptions = []
             let win = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 480, height: 560),
@@ -137,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             )
             win.contentViewController = hosting
             win.contentMinSize = NSSize(width: 440, height: 480)
+            win.setContentSize(NSSize(width: 480, height: 560))
             win.title = model.loc.text("Settings")
             win.delegate = self
             win.isReleasedWhenClosed = false
@@ -148,8 +153,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         window.title = model.loc.text("Settings")
+        let size = window.contentRect(forFrameRect: window.frame).size
+        Self.logger.info("Present settings window at \(Int(size.width))x\(Int(size.height))")
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
     }
 
     func requestQuit() {

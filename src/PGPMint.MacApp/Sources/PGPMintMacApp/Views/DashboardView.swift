@@ -23,19 +23,6 @@ struct DashboardView: View {
             progressCard
 
             resultsCard
-
-            if model.isSearching {
-                HStack(spacing: 6) {
-                    Image(systemName: model.sleepProtected ? "moon.zzz.fill" : "exclamationmark.circle")
-                        .font(.system(size: 11))
-                        .foregroundStyle(model.sleepProtected ? Color.secondary : Color.orange)
-                    Text(model.loc.text(model.sleepProtected ? "SleepProtected" : "SleepUnavailable"))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 4)
-            }
         }
         .padding(16)
         .sheet(item: $exportTarget) { match in
@@ -70,13 +57,29 @@ struct DashboardView: View {
             StatusDotView(colorName: model.statusIndicatorColorName)
             Text("PGPMint")
                 .font(.system(size: 13.5, weight: .semibold))
+                .fixedSize()
             if !model.transientNotice.isEmpty {
                 Text(model.transientNotice)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Color.accentColor)
+                    .lineLimit(1)
                     .transition(.opacity)
             }
-            Spacer()
+            Spacer(minLength: 6)
+            if model.isSearching && model.transientNotice.isEmpty {
+                let sleepMessage = model.loc.text(model.sleepProtected ? "SleepProtected" : "SleepUnavailable")
+                HStack(spacing: 4) {
+                    Image(systemName: model.sleepProtected ? "moon.zzz.fill" : "exclamationmark.circle")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(model.sleepProtected ? Color.secondary : Color.orange)
+                    Text(sleepMessage)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+                .help(sleepMessage)
+            }
             Button {
                 onOpenSettings()
             } label: {
