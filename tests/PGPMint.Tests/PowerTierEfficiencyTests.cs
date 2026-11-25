@@ -33,30 +33,169 @@ public sealed class PowerTierEfficiencyTests
     [Fact]
     public void CurveSelectorFindsFourDistinctTiersWithinCardAgnosticPowerBandsOnRtx3080Profile()
     {
-        // Real RTX 3080 (347.4W) curve across [0.60, 0.48, 0.35, 0.22, 0.15, 0.08, 0.05]
+        // Full descending curve on an RTX 3080 (23.5 GH/s @ 349 W) spanning 92% -> 5%
         EfficiencyCurveSample[] samples =
         [
-            new(0.60, 13.00e9, 268.0, 58.0), // 77.1% of 347.4W (> 72% Efficiency cap -> skipped)
-            new(0.48, 10.40e9, 240.0, 48.0), // 69.1% of 347.4W (<= 72%, 43.3 MH/W -> Efficiency!)
-            new(0.35,  7.49e9, 229.0, 35.0), // 65.9% of 347.4W (32.7 MH/W, P0 valley)
-            new(0.22,  4.76e9,  97.9, 28.0), // 28.2% of 347.4W (48.6 MH/W, P3 natural peak -> Balanced!)
-            new(0.15,  3.15e9,  75.2, 26.0),
-            new(0.08,  1.71e9,  53.2, 21.0), // 15.3% of 347.4W (P5 plateau knee -> Eco!)
-            new(0.05,  1.10e9,  47.8, 17.0)
+            new(0.90, 21.15e9, 338.0, 91.0), // 96.8% W (> 88% Efficiency cap)
+            new(0.82, 19.27e9, 326.0, 84.0), // 93.4% W (> 88% Efficiency cap)
+            new(0.76, 17.86e9, 314.0, 77.0), // 90.0% W (> 88% Efficiency cap)
+            new(0.72, 16.92e9, 305.0, 72.0), // 87.4% W (<= 88%, 55.5 MH/W -> Efficiency!)
+            new(0.66, 15.51e9, 296.0, 66.0), // 84.8% W (52.4 MH/W)
+            new(0.60, 14.10e9, 287.0, 58.0), // 82.2% W (49.1 MH/W)
+            new(0.48, 11.28e9, 248.0, 47.0), // 71.1% W (45.5 MH/W, lower P0)
+            new(0.35,  8.23e9, 227.0, 34.0), // 65.0% W (36.3 MH/W, P0 valley)
+            new(0.26,  6.11e9, 103.0, 31.0), // 29.5% W (59.3 MH/W, P3 knee -> Balanced!)
+            new(0.22,  5.17e9,  98.0, 28.0), // 28.1% W (52.8 MH/W)
+            new(0.15,  3.53e9,  60.2, 26.0), // 17.2% W (58.6 MH/W, within 3% of 26% peak -> 26% wins on speed!)
+            new(0.10,  2.35e9,  53.0, 22.0), // 15.2% W (P5 plateau knee -> Eco!)
+            new(0.08,  1.88e9,  51.3, 21.0),
+            new(0.05,  1.18e9,  46.4, 17.0)
         ];
 
-        EfficiencyProfile profile = EfficiencyCurveSelector.Select(21.36e9, 347.4, 84.0, samples);
+        EfficiencyProfile profile = EfficiencyCurveSelector.Select(23.5e9, 349.0, 96.0, samples);
 
         Assert.True(profile.HasPowerSensor);
-        Assert.Equal(0.08, profile.Eco.RateFraction, 6);
+        Assert.Equal(0.15, profile.Eco.RateFraction, 6);
         Assert.Equal("natural-plateau", profile.Eco.SelectionMode);
-        Assert.Equal(0.22, profile.Balanced.RateFraction, 6);
+        Assert.Equal(0.26, profile.Balanced.RateFraction, 6);
         Assert.Equal("natural-peak", profile.Balanced.SelectionMode);
-        Assert.Equal(0.48, profile.Efficiency.RateFraction, 6);
+        Assert.Equal(0.72, profile.Efficiency.RateFraction, 6);
         Assert.Equal("upper-mid-peak", profile.Efficiency.SelectionMode);
-        Assert.InRange(profile.Efficiency.EstimatedWatts, 200.0, 250.0);
+        Assert.InRange(profile.Efficiency.RateFraction, 0.65, 0.78);
+        Assert.True(profile.Efficiency.EstimatedWatts <= 349.0 * 0.88);
+        Assert.True(profile.Efficiency.MeasuredHps / profile.Efficiency.EstimatedWatts > 11.28e9 / 248.0);
         Assert.True(profile.Eco.RateFraction < profile.Balanced.RateFraction);
         Assert.True(profile.Balanced.RateFraction < profile.Efficiency.RateFraction);
+    }
+
+    [Fact]
+    public void CurveSelectorFullRampCapturesHighEfficiencyUpperMidAndConcaveSchedule()
+    {
+        // Concave ramp schedule: 0.92 at u=0 down to 0.05 at u=1, spending > 50% of ramp time below 35%
+        Assert.Equal(0.92, EfficiencyCurveSelector.RampFractionAtProgress(0.0), 6);
+        Assert.Equal(0.05, EfficiencyCurveSelector.RampFractionAtProgress(1.0), 6);
+        double midFrac = EfficiencyCurveSelector.RampFractionAtProgress(0.5);
+        Assert.InRange(midFrac, 0.25, 0.36);
+        Assert.True(EfficiencyCurveSelector.RampFractionAtProgress(0.25) > midFrac);
+        Assert.True(midFrac > EfficiencyCurveSelector.RampFractionAtProgress(0.75));
+
+        // Efficient Ada-class GPU where 70% rate draws only 64% power (peak 85.4 MH/W > Max 78.1 MH/W)
+        EfficiencyCurveSample[] adaSamples =
+        [
+            new(0.86, 21.5e9, 286.0, 86.0),
+            new(0.75, 18.8e9, 224.0, 75.0), // 70.0% W, 83.9 MH/W
+            new(0.70, 17.5e9, 205.0, 70.0), // 64.1% W, 85.4 MH/W -> Efficiency winner!
+            new(0.60, 15.0e9, 182.0, 60.0), // 56.9% W, 82.4 MH/W
+            new(0.45, 11.3e9, 145.0, 45.0),
+            new(0.30,  7.5e9,  95.0, 30.0), // 29.7% W, 78.9 MH/W -> Balanced
+            new(0.10,  2.5e9,  42.0, 12.0), // 13.1% W -> Eco
+            new(0.05,  1.25e9, 36.0,  8.0)
+        ];
+        EfficiencyProfile ada = EfficiencyCurveSelector.Select(25.0e9, 320.0, 97.0, adaSamples);
+        Assert.Equal(0.70, ada.Efficiency.RateFraction, 6);
+        Assert.Equal("upper-mid-peak", ada.Efficiency.SelectionMode);
+
+        // Thermal-wall GPU: 75% (93% W) and 72% (90% W) exceed 88% cap; 65% (76% W) wins cleanly
+        EfficiencyCurveSample[] wallSamples =
+        [
+            new(0.78, 15.6e9, 285.0, 82.0), // 95% W
+            new(0.72, 14.4e9, 270.0, 76.0), // 90% W (> 88% cap)
+            new(0.65, 13.0e9, 228.0, 66.0), // 76% W (57.0 MH/W -> Efficiency!)
+            new(0.58, 11.6e9, 215.0, 60.0), // 71.7% W (54.0 MH/W)
+            new(0.30,  6.0e9, 120.0, 34.0), // 40% W -> Balanced
+            new(0.10,  2.0e9,  62.0, 14.0), // 20.7% W -> Eco
+            new(0.05,  1.0e9,  56.0, 10.0)
+        ];
+        EfficiencyProfile wall = EfficiencyCurveSelector.Select(20.0e9, 300.0, 96.0, wallSamples);
+        Assert.Equal(0.65, wall.Efficiency.RateFraction, 6);
+    }
+
+    [Fact]
+    public void CurveSelectorSmoothsSingleTickPowerSpikeOnDenseContinuousRamp()
+    {
+        // 16-point dense ramp with a single-sample sensor glitch (95 W dip at 62%) AND an artificial
+        // tail short-bin MeasuredHps spike at 5% (5x inflated) — neither may hijack Efficiency or Balanced.
+        EfficiencyCurveSample[] dense =
+        [
+            new(0.90, 18.0e9, 290.0, 90.0),
+            new(0.84, 16.8e9, 276.0, 84.0),
+            new(0.76, 15.2e9, 260.0, 76.0), // 86.7% W, 58.5 MH/W
+            new(0.72, 14.4e9, 248.0, 72.0), // 82.7% W, 58.1 MH/W
+            new(0.68, 13.6e9, 236.0, 68.0), // 78.7% W, 57.6 MH/W
+            new(0.62, 12.4e9,  95.0, 62.0), // Single-tick NVML glitch (neighbors are 236W & 226W -> smoothed to 226W = 54.9 MH/W!)
+            new(0.58, 11.6e9, 226.0, 58.0),
+            new(0.50, 10.0e9, 212.0, 50.0),
+            new(0.40,  8.0e9, 195.0, 40.0),
+            new(0.32,  6.4e9, 140.0, 32.0),
+            new(0.26,  5.2e9,  95.0, 26.0), // 54.7 MH/W -> Balanced
+            new(0.22,  4.4e9,  88.0, 22.0),
+            new(0.16,  3.2e9,  76.0, 16.0),
+            new(0.12,  2.4e9,  56.0, 12.0),
+            new(0.08,  1.6e9,  49.0,  8.0),
+            new(0.05,  5.5e9,  45.0,  5.0)  // Artificial 5.5x tail-bin spike: must be clamped so Balanced stays at 26%
+        ];
+
+        EfficiencyProfile profile = EfficiencyCurveSelector.Select(20.0e9, 300.0, 96.0, dense);
+        Assert.NotEqual(0.62, profile.Efficiency.RateFraction, 6);
+        Assert.Equal(0.76, profile.Efficiency.RateFraction, 6);
+        Assert.Equal(0.26, profile.Balanced.RateFraction, 6);
+        Assert.NotEqual("synthetic-eco", profile.Eco.SelectionMode);
+        Assert.True(profile.Eco.RateFraction < profile.Balanced.RateFraction);
+
+        // Edge case: all samples > MaxBalancedFraction (0.45) must still preserve Eco < Balanced < Efficiency <= 0.85
+        EfficiencyCurveSample[] highOnlyPower =
+        [
+            new(0.90, 18.0e9, 270.0, 90.0),
+            new(0.82, 16.4e9, 245.0, 82.0)
+        ];
+        EfficiencyProfile highPower = EfficiencyCurveSelector.Select(20.0e9, 300.0, 95.0, highOnlyPower);
+        Assert.True(highPower.Eco.RateFraction < highPower.Balanced.RateFraction);
+        Assert.True(highPower.Balanced.RateFraction < highPower.Efficiency.RateFraction);
+        Assert.True(highPower.Efficiency.RateFraction <= EfficiencyCurveSelector.MaxSubFullFraction);
+
+        EfficiencyCurveSample[] highOnlyUtil =
+        [
+            new(0.90, 18.0e9, 0.0, 90.0),
+            new(0.82, 16.4e9, 0.0, 82.0)
+        ];
+        EfficiencyProfile highUtil = EfficiencyCurveSelector.Select(20.0e9, 0.0, 95.0, highOnlyUtil);
+        Assert.True(highUtil.Eco.RateFraction < highUtil.Balanced.RateFraction);
+        Assert.True(highUtil.Balanced.RateFraction < highUtil.Efficiency.RateFraction);
+        Assert.True(highUtil.Efficiency.RateFraction <= EfficiencyCurveSelector.MaxSubFullFraction);
+    }
+
+    [Fact]
+    public void WddmNodeMetadataStructMatchesWdkPack1LayoutOf78Bytes()
+    {
+        // WDK d3dkmdt.h wraps _DXGK_NODEMETADATA and _D3DKMT_NODEMETADATA under #pragma pack(push, 1):
+        // 4 (NodeOrdinalAndAdapterIndex) + 4 (EngineType) + 64 (WCHAR[32]) + 4 (Flags) + 1 + 1 = 78 bytes.
+        Assert.Equal(78, WindowsGpuTelemetrySensor.NodeMetadataStructSize);
+        Assert.Equal(78, WindowsGpuTelemetrySensor.NodeMetadataMarshalSize);
+    }
+
+    [Theory]
+    [InlineData(1, "3D", true)]                    // DXGK_ENGINE_TYPE_3D
+    [InlineData(5, "SceneAssembly", true)]         // DXGK_ENGINE_TYPE_SCENE_ASSEMBLY
+    [InlineData(0, "Compute", true)]               // DXGK_ENGINE_TYPE_OTHER (Compute)
+    [InlineData(0, "High Priority Cuda", true)]    // DXGK_ENGINE_TYPE_OTHER (CUDA)
+    [InlineData(0, "VR", true)]                    // DXGK_ENGINE_TYPE_OTHER (VR)
+    [InlineData(0, "vr_0", true)]                  // DXGK_ENGINE_TYPE_OTHER (VR indexed)
+    [InlineData(2, "VideoDecode", false)]          // DXGK_ENGINE_TYPE_VIDEO_DECODE
+    [InlineData(3, "VideoEncode", false)]          // DXGK_ENGINE_TYPE_VIDEO_ENCODE (Discord Clips / NVENC)
+    [InlineData(4, "VideoProcessing", false)]      // DXGK_ENGINE_TYPE_VIDEO_PROCESSING
+    [InlineData(6, "Copy", false)]                 // DXGK_ENGINE_TYPE_COPY
+    [InlineData(7, "Overlay", false)]              // DXGK_ENGINE_TYPE_OVERLAY
+    [InlineData(8, "Crypto", false)]               // DXGK_ENGINE_TYPE_CRYPTO
+    [InlineData(9, "VideoCodec", false)]           // DXGK_ENGINE_TYPE_VIDEO_CODEC
+    [InlineData(0, "Security", false)]             // DXGK_ENGINE_TYPE_OTHER non-compute
+    [InlineData(0, "OFA_0", false)]                // Optical Flow Accelerator
+    [InlineData(0, "LegacyOverlay", false)]        // Legacy overlay
+    public void WddmEngineFilterExcludesVideoEncodeDecodeAndCopyWhileKeeping3DAndCompute(
+        int engineType,
+        string friendlyName,
+        bool expectedContending)
+    {
+        Assert.Equal(expectedContending, WindowsGpuTelemetrySensor.IsComputeContendingEngine(engineType, friendlyName));
     }
 
     [Fact]
@@ -480,6 +619,67 @@ public sealed class PowerTierEfficiencyTests
             Assert.Equal(1.0, controller.YieldScale, 6);
             Assert.False(controller.IsYielding);
         }
+
+        // E) Efficiency calibrated near 87.4% of FullLoadWatts (305 W / 349 W) must stay at 1.0 when alone (even warm at 312 W),
+        // fill headroom when a medium game runs at 228 W / 45%, and yield smoothly when a heavy game hits 338 W / 92%.
+        var upperEffProfile = new EfficiencyProfile(
+            FullLoadWatts: 349.0,
+            FullLoadGpuUtil: 96.0,
+            HasPowerSensor: true,
+            Eco: new TierOperatingPoint(0.10, 53.0, 22.0, 2.35e9, "natural-plateau"),
+            Balanced: new TierOperatingPoint(0.26, 103.0, 31.0, 6.11e9, "natural-peak"),
+            Efficiency: new TierOperatingPoint(0.72, 305.0, 72.0, 16.92e9, "upper-mid-peak"),
+            Samples: Array.Empty<EfficiencyCurveSample>());
+
+        controller.Reset();
+        for (int i = 0; i < 20; i++)
+        {
+            Assert.Equal(1.0, controller.Update(PowerTier.Efficiency, upperEffProfile, new GpuSensorSample(true, 312.0, 350.0, true, 76.0, 72.0, 4.0), 0.25), 6);
+        }
+        Assert.False(controller.IsYielding);
+
+        for (int i = 0; i < 16; i++)
+        {
+            controller.Update(PowerTier.Efficiency, upperEffProfile, new GpuSensorSample(true, 338.0, 350.0, true, 94.0, 24.0, 70.0), 0.25);
+        }
+        Assert.Equal(0.0, controller.YieldScale, 6);
+
+        // Medium game leaves headroom below Efficiency's ~307 W recovery threshold -> wakes and runs
+        for (int i = 0; i < 16; i++)
+        {
+            controller.Update(PowerTier.Efficiency, upperEffProfile, new GpuSensorSample(true, 228.0, 350.0, true, 58.0, 0.0, 45.0), 0.25);
+        }
+        Assert.InRange(controller.YieldScale, 0.15, 0.70);
+
+        // F) 75 W laptop GPU with Efficiency calibrated at 88% (66 W): hardPowerCeiling must remain < 75 W (trips at 74.5 W
+        // even without OtherProcessGpuUtil), and calm recovery must still reach 1.0 even when warm at 70 W.
+        var laptop88Profile = new EfficiencyProfile(
+            FullLoadWatts: 75.0,
+            FullLoadGpuUtil: 96.0,
+            HasPowerSensor: true,
+            Eco: new TierOperatingPoint(0.10, 18.0, 20.0, 0.4e9, "natural-plateau"),
+            Balanced: new TierOperatingPoint(0.30, 38.0, 42.0, 1.2e9, "natural-peak"),
+            Efficiency: new TierOperatingPoint(0.72, 66.0, 74.0, 2.9e9, "upper-mid-peak"),
+            Samples: Array.Empty<EfficiencyCurveSample>());
+
+        controller.Reset();
+        for (int i = 0; i < 16; i++) // clear 3s power cooldown grace while running alone warm at 70 W
+        {
+            Assert.Equal(1.0, controller.Update(PowerTier.Efficiency, laptop88Profile, new GpuSensorSample(true, 70.0, 75.0, true, 76.0, 74.0, 2.0), 0.25), 6);
+        }
+        // Runaway load at 74.5 W (< 75 W TDP) with low reported OtherProcessGpuUtil must still trip hardPowerCeiling
+        for (int i = 0; i < 16; i++)
+        {
+            controller.Update(PowerTier.Efficiency, laptop88Profile, new GpuSensorSample(true, 74.5, 75.0, true, 98.0, 90.0, 8.0), 0.25);
+        }
+        Assert.Equal(0.0, controller.YieldScale, 6);
+        // After load clears, warm laptop running up to 69.5 W recovers cleanly back to 1.0
+        for (int i = 0; i < 24; i++)
+        {
+            double selfWatts = 12.0 + (controller.YieldScale * 57.5); // 69.5 W at YieldScale=1.0
+            controller.Update(PowerTier.Efficiency, laptop88Profile, new GpuSensorSample(true, selfWatts, 75.0, true, 76.0, 74.0, 2.0), 0.25);
+        }
+        Assert.Equal(1.0, controller.YieldScale, 6);
     }
 
     [Fact]
@@ -563,7 +763,10 @@ public sealed class PowerTierEfficiencyTests
             CalibrationRecord rec = Assert.Single(persisted.Calibrations.Values);
             Assert.NotNull(rec.EfficiencyProfile);
             Assert.True(rec.EfficiencyProfile!.HasPowerSensor);
-            Assert.True(rec.EfficiencyProfile.Samples.Count > 0);
+            Assert.True(rec.EfficiencyProfile.Samples.Count >= 6);
+            Assert.True(rec.EfficiencyProfile.Samples.Max(s => s.RateFraction) > 0.65);
+            Assert.True(rec.EfficiencyProfile.Samples.Min(s => s.RateFraction) < 0.20);
+            Assert.StartsWith("v3/", rec.WorkloadIdentity, StringComparison.Ordinal);
             Assert.True(rec.EfficiencyProfile.Eco.RateFraction < rec.EfficiencyProfile.Balanced.RateFraction);
             Assert.True(rec.EfficiencyProfile.Balanced.RateFraction < rec.EfficiencyProfile.Efficiency.RateFraction);
 
@@ -597,7 +800,7 @@ public sealed class PowerTierEfficiencyTests
                 new DpapiVaultStore(tempDir),
                 new CoordinatorOptions
                 {
-                    FullCalibrationDuration = TimeSpan.FromMilliseconds(1600), // Stage 1 ~330ms, Stage 2 ~1270ms
+                    FullCalibrationDuration = TimeSpan.FromMilliseconds(1600), // Stage 1 ~272ms, Stage 2 ~1328ms
                     CalibrationWindow = TimeSpan.FromMilliseconds(50),
                     TelemetryInterval = TimeSpan.FromMilliseconds(30),
                     ExpectedKernelVersionOverride = gpu.KernelVersion
@@ -852,11 +1055,14 @@ public sealed class PowerTierEfficiencyTests
         {
             var gpu = new GpuDeviceInfo("GPU-0", 1, "Legacy GPU", 0x10DE, 1, 0, 1, 8_000_000_000UL, "1.0", true);
             var pattern = KeyIdPattern.Parse("1145141919810");
-            string v2Workload = CalibrationValidator.WorkloadIdentity(gpu, pattern);
-            string v2Key = CalibrationValidator.ProfileKey(gpu.DeviceKey, v2Workload);
+            string currentWorkload = CalibrationValidator.WorkloadIdentity(gpu, pattern);
+            string currentKey = CalibrationValidator.ProfileKey(gpu.DeviceKey, currentWorkload);
+            string legacyV2Workload = currentWorkload.Replace("v3/", "v2/", StringComparison.Ordinal);
+            string legacyV2Key = CalibrationValidator.ProfileKey(gpu.DeviceKey, legacyV2Workload);
             Directory.CreateDirectory(tempDir);
 
-            // Legacy state with v2 key whose EfficiencyProfile is missing Balanced -> must not throw and must require recalibration
+            // State with both a complete legacy v2 profile and a partial current v3 profile missing Balanced:
+            // must not throw, must preserve TotalChecked & PowerTier, and must require fresh v3 calibration.
             string partialJson = $$"""
             {
               "HasCompletedSetup": true,
@@ -866,7 +1072,7 @@ public sealed class PowerTierEfficiencyTests
               "SliderPosition": 0.25,
               "EnabledDeviceKeys": ["GPU-0"],
               "Calibrations": {
-                "{{v2Key}}": {
+                "{{legacyV2Key}}": {
                   "DeviceKey": "GPU-0",
                   "DeviceName": "Legacy GPU",
                   "DriverVersion": "1.0",
@@ -875,7 +1081,26 @@ public sealed class PowerTierEfficiencyTests
                   "MedianHashesPerSecond": 21000000000,
                   "IsFullCalibration": true,
                   "CalibratedAtUtc": "2026-11-25T10:00:00Z",
-                  "WorkloadIdentity": "{{v2Workload}}",
+                  "WorkloadIdentity": "{{legacyV2Workload}}",
+                  "EfficiencyProfile": {
+                    "FullLoadWatts": 340,
+                    "FullLoadGpuUtil": 85,
+                    "HasPowerSensor": true,
+                    "Eco": { "RateFraction": 0.08, "EstimatedWatts": 52, "EstimatedGpuUtil": 19, "MeasuredHps": 1700000000, "SelectionMode": "natural-plateau" },
+                    "Balanced": { "RateFraction": 0.22, "EstimatedWatts": 98, "EstimatedGpuUtil": 30, "MeasuredHps": 4700000000, "SelectionMode": "natural-peak" },
+                    "Efficiency": { "RateFraction": 0.48, "EstimatedWatts": 245, "EstimatedGpuUtil": 48, "MeasuredHps": 10400000000, "SelectionMode": "upper-mid-peak" }
+                  }
+                },
+                "{{currentKey}}": {
+                  "DeviceKey": "GPU-0",
+                  "DeviceName": "Legacy GPU",
+                  "DriverVersion": "1.0",
+                  "KernelVersion": "d3d11-sha1-four-v4",
+                  "PeakHashesPerSecond": 22000000000,
+                  "MedianHashesPerSecond": 21000000000,
+                  "IsFullCalibration": true,
+                  "CalibratedAtUtc": "2026-11-25T10:00:00Z",
+                  "WorkloadIdentity": "{{currentWorkload}}",
                   "EfficiencyProfile": {
                     "FullLoadWatts": 340,
                     "FullLoadGpuUtil": 85,
@@ -1064,8 +1289,8 @@ public sealed class HardwarePowerEfficiencyTests(ITestOutputHelper output)
                     $"Expected Balanced watts ({profile.Balanced.EstimatedWatts:F1}W) <= 60% of full ({profile.FullLoadWatts:F1}W).");
                 Assert.True(profile.Eco.EstimatedWatts < profile.Balanced.EstimatedWatts,
                     $"Expected Eco watts ({profile.Eco.EstimatedWatts:F1}W) < Balanced watts ({profile.Balanced.EstimatedWatts:F1}W).");
-                Assert.True(profile.Efficiency.EstimatedWatts <= profile.FullLoadWatts * 0.78,
-                    $"Expected Efficiency watts ({profile.Efficiency.EstimatedWatts:F1}W) <= 78% of full ({profile.FullLoadWatts:F1}W).");
+                Assert.True(profile.Efficiency.EstimatedWatts <= profile.FullLoadWatts * 0.90,
+                    $"Expected Efficiency watts ({profile.Efficiency.EstimatedWatts:F1}W) <= 90% of full ({profile.FullLoadWatts:F1}W).");
             }
 
             coordinator.SetPowerTier(PowerTier.Efficiency);

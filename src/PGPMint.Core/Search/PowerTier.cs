@@ -69,13 +69,24 @@ public static class EfficiencyCurveSelector
 {
     public const double DefaultEcoFraction = 0.10;
     public const double DefaultBalancedFraction = 0.25;
-    public const double DefaultEfficiencyFraction = 0.50;
+    public const double DefaultEfficiencyFraction = 0.68;
     public const double MinTierFraction = 0.02;
     public const double MaxBalancedFraction = 0.45;
+    public const double MaxEfficiencyFraction = 0.78;
     public const double MaxSubFullFraction = 0.85;
+    public const double RampStartFraction = 0.92;
+    public const double RampEndFraction = 0.05;
+    public const double RampConcavityExponent = 1.65;
 
-    // 7 step-down fractions spanning ~60-72% power -> P3 low-power sweet spot -> P5 quiet floor.
-    public static readonly double[] DefaultStepDownFractions = [0.60, 0.48, 0.35, 0.22, 0.15, 0.08, 0.05];
+    /// <summary>
+    /// Smooth concave ramp from 92% down to 5%: traverses upper P0 swiftly while spending
+    /// more than half of the sweep duration below 35% so low-power P-states settle cleanly.
+    /// </summary>
+    public static double RampFractionAtProgress(double progress)
+    {
+        double u = double.IsFinite(progress) ? Math.Clamp(progress, 0.0, 1.0) : 1.0;
+        return RampEndFraction + ((RampStartFraction - RampEndFraction) * Math.Pow(1.0 - u, RampConcavityExponent));
+    }
 
     public static EfficiencyProfile Select(
         double fullSpeedHps,
@@ -88,7 +99,7 @@ public static class EfficiencyCurveSelector
         double safeFullUtil = double.IsFinite(fullLoadGpuUtil) ? Math.Clamp(fullLoadGpuUtil, 0.0, 100.0) : 0.0;
 
         List<EfficiencyCurveSample> valid = (samples ?? Array.Empty<EfficiencyCurveSample>())
-            .Where(s => double.IsFinite(s.RateFraction) && s.RateFraction >= MinTierFraction && s.RateFraction < 0.90 &&
+            .Where(s => double.IsFinite(s.RateFraction) && s.RateFraction >= MinTierFraction && s.RateFraction <= 0.95 &&
                         double.IsFinite(s.MeasuredHps) && s.MeasuredHps > 0.0)
             .OrderByDescending(s => s.RateFraction)
             .ToList();
@@ -120,13 +131,66 @@ public static class EfficiencyCurveSelector
         return fallback with { Samples = valid };
     }
 
+    private static List<EfficiencyCurveSample> SmoothDenseCurve(List<EfficiencyCurveSample> sortedDesc, double fullSpeedHps)
+    {
+        if (sortedDesc.Count < 12)
+        {
+            return sortedDesc;
+        }
+
+        static EfficiencyCurveSample ClampEndpointHps(EfficiencyCurveSample ep, double fullHps)
+        {
+            if (fullHps > 0.0 && ep.RateFraction > 0.0)
+            {
+                double maxPlausible = fullHps * ep.RateFraction * 1.15;
+                if (ep.MeasuredHps > maxPlausible)
+                {
+                    return ep with { MeasuredHps = maxPlausible };
+                }
+            }
+            return ep;
+        }
+
+        var smoothed = new List<EfficiencyCurveSample>(sortedDesc.Count) { ClampEndpointHps(sortedDesc[0], fullSpeedHps) };
+        for (int i = 1; i < sortedDesc.Count - 1; i++)
+        {
+            EfficiencyCurveSample prev = sortedDesc[i - 1];
+            EfficiencyCurveSample cur = sortedDesc[i];
+            EfficiencyCurveSample next = sortedDesc[i + 1];
+            double medHps = Median3(prev.MeasuredHps, cur.MeasuredHps, next.MeasuredHps);
+            if (fullSpeedHps > 0.0 && cur.RateFraction > 0.0)
+            {
+                medHps = Math.Min(medHps, fullSpeedHps * cur.RateFraction * 1.15);
+            }
+            smoothed.Add(cur with
+            {
+                MeasuredHps = medHps,
+                MeasuredWatts = Median3(prev.MeasuredWatts, cur.MeasuredWatts, next.MeasuredWatts),
+                MeasuredGpuUtil = Median3(prev.MeasuredGpuUtil, cur.MeasuredGpuUtil, next.MeasuredGpuUtil)
+            });
+        }
+
+        smoothed.Add(ClampEndpointHps(sortedDesc[^1], fullSpeedHps));
+        return smoothed;
+    }
+
+    private static double Median3(double a, double b, double c)
+    {
+        if (a > b) (a, b) = (b, a);
+        if (b > c) (b, c) = (c, b);
+        if (a > b) (a, b) = (b, a);
+        return b;
+    }
+
     private static EfficiencyProfile SelectByPowerCurve(
         double fullSpeedHps,
         double fullLoadWatts,
         double fullLoadGpuUtil,
-        List<EfficiencyCurveSample> samples)
+        List<EfficiencyCurveSample> rawSamples)
     {
-        // 1. Balanced tier (low-power P3 sweet spot): keep <= MaxBalancedFraction so upper-mid samples stay reserved for Efficiency.
+        List<EfficiencyCurveSample> samples = SmoothDenseCurve(rawSamples, fullSpeedHps);
+
+        // 1. Balanced tier (low-to-mid power peak efficiency sweet spot, <= MaxBalancedFraction).
         List<EfficiencyCurveSample> balPool = samples
             .Where(s => s.RateFraction <= MaxBalancedFraction)
             .ToList();
@@ -135,11 +199,34 @@ public static class EfficiencyCurveSelector
             balPool = samples;
         }
 
-        EfficiencyCurveSample? naturalBal = balPool
+        List<EfficiencyCurveSample> naturalBalCandidates = balPool
             .Where(s => s.MeasuredWatts <= fullLoadWatts * 0.75)
-            .OrderByDescending(s => s.MeasuredHps / s.MeasuredWatts)
-            .ThenByDescending(s => s.MeasuredHps)
-            .FirstOrDefault();
+            .ToList();
+
+        EfficiencyCurveSample? naturalBal = null;
+        if (naturalBalCandidates.Count > 0)
+        {
+            double bestEff = naturalBalCandidates.Max(s => s.MeasuredHps / s.MeasuredWatts);
+            EfficiencyCurveSample peak = naturalBalCandidates
+                .OrderByDescending(s => s.MeasuredHps / s.MeasuredWatts)
+                .ThenByDescending(s => s.MeasuredHps)
+                .First();
+
+            if (peak.MeasuredWatts <= fullLoadWatts * 0.60)
+            {
+                // Within 3% of the peak MH/W (and still <= 60% power), prefer higher throughput so
+                // Balanced lands on the upper knee of the low-power P-state instead of hugging Eco.
+                naturalBal = naturalBalCandidates
+                    .Where(s => s.MeasuredWatts <= fullLoadWatts * 0.60 &&
+                                (s.MeasuredHps / s.MeasuredWatts) >= bestEff * 0.97)
+                    .OrderByDescending(s => s.MeasuredHps)
+                    .First();
+            }
+            else
+            {
+                naturalBal = peak;
+            }
+        }
 
         EfficiencyCurveSample balSample;
         string balMode;
@@ -173,12 +260,18 @@ public static class EfficiencyCurveSelector
             }
         }
 
-        // 2. Eco tier: highest compute on the lowest-power plateau (Rule 3), falling back to <= 30% power band (Rule 1).
+        // 2. Eco tier: highest compute on the lowest-power plateau clearly below Balanced.
         double minWatts = samples.Min(s => s.MeasuredWatts);
         double balWatts = balSample.MeasuredWatts;
         List<EfficiencyCurveSample> belowBal = samples
-            .Where(s => s.RateFraction < balSample.RateFraction - 1e-6)
+            .Where(s => s.RateFraction < balSample.RateFraction - 0.02)
             .ToList();
+        if (belowBal.Count == 0)
+        {
+            belowBal = samples
+                .Where(s => s.RateFraction < balSample.RateFraction - 1e-6)
+                .ToList();
+        }
 
         TierOperatingPoint ecoPoint;
         if (belowBal.Count == 0)
@@ -209,9 +302,13 @@ public static class EfficiencyCurveSelector
             else
             {
                 EfficiencyCurveSample? bandEco = belowBal
-                    .Where(s => s.MeasuredWatts <= fullLoadWatts * 0.30)
+                    .Where(s => s.MeasuredWatts <= fullLoadWatts * 0.30 && s.MeasuredWatts < balWatts)
                     .OrderByDescending(s => s.MeasuredHps)
-                    .FirstOrDefault();
+                    .FirstOrDefault()
+                    ?? belowBal
+                        .Where(s => s.MeasuredWatts <= fullLoadWatts * 0.30)
+                        .OrderByDescending(s => s.MeasuredHps)
+                        .FirstOrDefault();
 
                 if (bandEco is not null)
                 {
@@ -228,15 +325,16 @@ public static class EfficiencyCurveSelector
             }
         }
 
-        // 3. Efficiency tier (card-agnostic upper-mid band: <= 72% full power, fallback <= 75%):
-        // bridges Balanced and Max while keeping power clearly under the full thermal wall (~200-250W on a 350W GPU).
+        // 3. Efficiency tier (full-curve upper-mid high-efficiency zone: [max(0.55, bal+0.15) .. 0.78] under <= 88% full power):
+        // avoids the lower-P0 efficiency valley while staying well separated from both Balanced and Max.
+        double effMinFraction = Math.Max(0.55, balSample.RateFraction + 0.15);
         List<EfficiencyCurveSample> aboveBal = samples
-            .Where(s => s.RateFraction > balSample.RateFraction + 0.05 && s.RateFraction <= MaxSubFullFraction)
+            .Where(s => s.RateFraction > balSample.RateFraction + 0.05 && s.RateFraction <= MaxEfficiencyFraction)
             .ToList();
 
         TierOperatingPoint effPoint;
         EfficiencyCurveSample? upperMidPeak = aboveBal
-            .Where(s => s.RateFraction >= 0.35 && s.MeasuredWatts <= fullLoadWatts * 0.72)
+            .Where(s => s.RateFraction >= effMinFraction && s.MeasuredWatts <= fullLoadWatts * 0.88)
             .OrderByDescending(s => s.MeasuredHps / s.MeasuredWatts)
             .ThenByDescending(s => s.MeasuredHps)
             .FirstOrDefault();
@@ -248,7 +346,7 @@ public static class EfficiencyCurveSelector
         else
         {
             EfficiencyCurveSample? bandEff = aboveBal
-                .Where(s => s.MeasuredWatts <= fullLoadWatts * 0.75)
+                .Where(s => s.MeasuredWatts <= fullLoadWatts * 0.88)
                 .OrderByDescending(s => s.MeasuredHps / s.MeasuredWatts)
                 .ThenByDescending(s => s.MeasuredHps)
                 .FirstOrDefault();
@@ -260,7 +358,7 @@ public static class EfficiencyCurveSelector
             else if (aboveBal.Count > 0)
             {
                 EfficiencyCurveSample bestAbove = aboveBal
-                    .OrderBy(s => Math.Abs(s.MeasuredWatts - (fullLoadWatts * 0.68)))
+                    .OrderBy(s => Math.Abs(s.MeasuredWatts - (fullLoadWatts * 0.80)))
                     .ThenByDescending(s => s.MeasuredHps / s.MeasuredWatts)
                     .First();
                 effPoint = ToPoint(bestAbove, "upper-mid-fallback");
@@ -268,7 +366,7 @@ public static class EfficiencyCurveSelector
             else
             {
                 double synthFrac = Math.Clamp(Math.Max(DefaultEfficiencyFraction, (balSample.RateFraction + 1.0) * 0.5),
-                    Math.Min(MaxSubFullFraction, balSample.RateFraction + 0.05), MaxSubFullFraction);
+                    Math.Min(MaxEfficiencyFraction, balSample.RateFraction + 0.05), MaxEfficiencyFraction);
                 double synthWatts = Math.Max(0.0, (balWatts + fullLoadWatts) * 0.5);
                 double synthUtil = Math.Clamp((balSample.MeasuredGpuUtil + fullLoadGpuUtil) * 0.5, 0.0, 100.0);
                 effPoint = new TierOperatingPoint(
@@ -281,6 +379,41 @@ public static class EfficiencyCurveSelector
         }
 
         TierOperatingPoint balPoint = ToPoint(balSample, balMode);
+        if (aboveBal.Count == 0 && balPoint.RateFraction >= MaxSubFullFraction - 0.03)
+        {
+            double adjustedBalFrac = Math.Clamp(MaxSubFullFraction - 0.05, MinTierFraction + 0.02, MaxSubFullFraction - 0.05);
+            balPoint = balPoint with
+            {
+                RateFraction = adjustedBalFrac,
+                MeasuredHps = fullSpeedHps > 0.0 ? fullSpeedHps * adjustedBalFrac : balPoint.MeasuredHps
+            };
+        }
+
+        if (ecoPoint.RateFraction >= balPoint.RateFraction)
+        {
+            double adjustedEcoFrac = Math.Clamp(balPoint.RateFraction * 0.5, MinTierFraction, Math.Max(MinTierFraction, balPoint.RateFraction - 0.01));
+            ecoPoint = ecoPoint with
+            {
+                RateFraction = adjustedEcoFrac,
+                MeasuredHps = fullSpeedHps > 0.0 ? fullSpeedHps * adjustedEcoFrac : ecoPoint.MeasuredHps,
+                SelectionMode = "synthetic-eco"
+            };
+        }
+
+        if (effPoint.RateFraction <= balPoint.RateFraction)
+        {
+            double synthFrac = Math.Clamp(
+                Math.Max(DefaultEfficiencyFraction, (balPoint.RateFraction + 1.0) * 0.5),
+                Math.Min(MaxSubFullFraction, balPoint.RateFraction + 0.04),
+                MaxSubFullFraction);
+            effPoint = effPoint with
+            {
+                RateFraction = synthFrac,
+                MeasuredHps = fullSpeedHps > 0.0 ? fullSpeedHps * synthFrac : effPoint.MeasuredHps,
+                SelectionMode = "synthetic-efficiency"
+            };
+        }
+
         return new EfficiencyProfile(
             FullLoadWatts: fullLoadWatts,
             FullLoadGpuUtil: fullLoadGpuUtil,
@@ -288,14 +421,16 @@ public static class EfficiencyCurveSelector
             Eco: ecoPoint,
             Balanced: balPoint,
             Efficiency: effPoint,
-            Samples: samples);
+            Samples: rawSamples);
     }
 
     private static EfficiencyProfile SelectByGpuUtilFallback(
         double fullSpeedHps,
         double fullLoadGpuUtil,
-        List<EfficiencyCurveSample> samples)
+        List<EfficiencyCurveSample> rawSamples)
     {
+        List<EfficiencyCurveSample> samples = SmoothDenseCurve(rawSamples, fullSpeedHps);
+
         List<EfficiencyCurveSample> balPool = samples
             .Where(s => s.RateFraction <= MaxBalancedFraction)
             .ToList();
@@ -311,8 +446,14 @@ public static class EfficiencyCurveSelector
             ?? balPool.OrderBy(s => Math.Abs(s.MeasuredGpuUtil - 45.0)).ThenByDescending(s => s.MeasuredHps).First();
 
         List<EfficiencyCurveSample> belowBal = samples
-            .Where(s => s.RateFraction < balSample.RateFraction - 1e-6)
+            .Where(s => s.RateFraction < balSample.RateFraction - 0.02)
             .ToList();
+        if (belowBal.Count == 0)
+        {
+            belowBal = samples
+                .Where(s => s.RateFraction < balSample.RateFraction - 1e-6)
+                .ToList();
+        }
 
         TierOperatingPoint ecoPoint;
         if (belowBal.Count == 0)
@@ -335,30 +476,69 @@ public static class EfficiencyCurveSelector
             ecoPoint = ToPoint(ecoSample, "gpu-util-fallback");
         }
 
+        double effMinFraction = Math.Max(0.55, balSample.RateFraction + 0.15);
         List<EfficiencyCurveSample> aboveBal = samples
-            .Where(s => s.RateFraction > balSample.RateFraction + 0.05 && s.RateFraction <= MaxSubFullFraction)
+            .Where(s => s.RateFraction > balSample.RateFraction + 0.05 && s.RateFraction <= MaxEfficiencyFraction)
             .ToList();
 
         TierOperatingPoint effPoint;
         if (aboveBal.Count > 0)
         {
             EfficiencyCurveSample effSample = aboveBal
-                .Where(s => s.MeasuredGpuUtil <= 75.0)
+                .Where(s => s.RateFraction >= effMinFraction && s.MeasuredGpuUtil <= 80.0)
                 .OrderByDescending(s => s.MeasuredHps)
                 .FirstOrDefault()
-                ?? aboveBal.OrderBy(s => Math.Abs(s.MeasuredGpuUtil - 68.0)).ThenByDescending(s => s.MeasuredHps).First();
+                ?? aboveBal
+                    .Where(s => s.MeasuredGpuUtil <= 80.0)
+                    .OrderByDescending(s => s.MeasuredHps)
+                    .FirstOrDefault()
+                ?? aboveBal.OrderBy(s => Math.Abs(s.MeasuredGpuUtil - 72.0)).ThenByDescending(s => s.MeasuredHps).First();
             effPoint = ToPoint(effSample, "gpu-util-fallback");
         }
         else
         {
             double synthFrac = Math.Clamp(Math.Max(DefaultEfficiencyFraction, (balSample.RateFraction + 1.0) * 0.5),
-                Math.Min(MaxSubFullFraction, balSample.RateFraction + 0.05), MaxSubFullFraction);
+                Math.Min(MaxEfficiencyFraction, balSample.RateFraction + 0.05), MaxEfficiencyFraction);
             effPoint = new TierOperatingPoint(
                 synthFrac,
                 0.0,
-                Math.Clamp(fullLoadGpuUtil > 0.0 ? fullLoadGpuUtil * synthFrac : 65.0, 0.0, 80.0),
+                Math.Clamp(fullLoadGpuUtil > 0.0 ? fullLoadGpuUtil * synthFrac : 70.0, 0.0, 80.0),
                 fullSpeedHps * synthFrac,
                 "gpu-util-fallback");
+        }
+
+        TierOperatingPoint balPoint = ToPoint(balSample, "gpu-util-fallback");
+        if (aboveBal.Count == 0 && balPoint.RateFraction >= MaxSubFullFraction - 0.03)
+        {
+            double adjustedBalFrac = Math.Clamp(MaxSubFullFraction - 0.05, MinTierFraction + 0.02, MaxSubFullFraction - 0.05);
+            balPoint = balPoint with
+            {
+                RateFraction = adjustedBalFrac,
+                MeasuredHps = fullSpeedHps > 0.0 ? fullSpeedHps * adjustedBalFrac : balPoint.MeasuredHps
+            };
+        }
+
+        if (ecoPoint.RateFraction >= balPoint.RateFraction)
+        {
+            double adjustedEcoFrac = Math.Clamp(balPoint.RateFraction * 0.5, MinTierFraction, Math.Max(MinTierFraction, balPoint.RateFraction - 0.01));
+            ecoPoint = ecoPoint with
+            {
+                RateFraction = adjustedEcoFrac,
+                MeasuredHps = fullSpeedHps > 0.0 ? fullSpeedHps * adjustedEcoFrac : ecoPoint.MeasuredHps
+            };
+        }
+
+        if (effPoint.RateFraction <= balPoint.RateFraction)
+        {
+            double synthFrac = Math.Clamp(
+                Math.Max(DefaultEfficiencyFraction, (balPoint.RateFraction + 1.0) * 0.5),
+                Math.Min(MaxSubFullFraction, balPoint.RateFraction + 0.04),
+                MaxSubFullFraction);
+            effPoint = effPoint with
+            {
+                RateFraction = synthFrac,
+                MeasuredHps = fullSpeedHps > 0.0 ? fullSpeedHps * synthFrac : effPoint.MeasuredHps
+            };
         }
 
         return new EfficiencyProfile(
@@ -366,9 +546,9 @@ public static class EfficiencyCurveSelector
             FullLoadGpuUtil: fullLoadGpuUtil,
             HasPowerSensor: false,
             Eco: ecoPoint,
-            Balanced: ToPoint(balSample, "gpu-util-fallback"),
+            Balanced: balPoint,
             Efficiency: effPoint,
-            Samples: samples);
+            Samples: rawSamples);
     }
 
     private static TierOperatingPoint ToPoint(EfficiencyCurveSample sample, string mode) =>

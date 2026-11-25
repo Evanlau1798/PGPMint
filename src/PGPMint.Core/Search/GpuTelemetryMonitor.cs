@@ -50,6 +50,55 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
         _nvml = new NvmlPowerReader();
     }
 
+    internal static unsafe int NodeMetadataStructSize => sizeof(D3dKmtAdapterSampler.D3dKmtNodeMetadata);
+    internal static int NodeMetadataMarshalSize => Marshal.SizeOf<D3dKmtAdapterSampler.D3dKmtNodeMetadata>();
+
+    internal static bool IsComputeContendingEngine(int engineType, string? friendlyName)
+    {
+        // DXGK_ENGINE_TYPE from WDK d3dkmdt.h:
+        // 0=OTHER, 1=3D, 2=VIDEO_DECODE, 3=VIDEO_ENCODE, 4=VIDEO_PROCESSING,
+        // 5=SCENE_ASSEMBLY, 6=COPY, 7=OVERLAY, 8=CRYPTO, 9=VIDEO_CODEC
+        return engineType switch
+        {
+            1 or 5 => true,
+            2 or 3 or 4 or 6 or 7 or 8 or 9 => false,
+            0 => IsOtherEngineComputeContending(friendlyName),
+            _ => false
+        };
+    }
+
+    private static bool IsOtherEngineComputeContending(string? friendlyName)
+    {
+        if (string.IsNullOrWhiteSpace(friendlyName))
+        {
+            return false;
+        }
+
+        string name = friendlyName.Trim();
+        if (name.Contains("video", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("encode", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("decode", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("copy", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("overlay", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("security", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("crypto", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("ofa", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("optical", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return name.Contains("compute", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("cuda", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("3d", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("graphics", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("render", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("shader", StringComparison.OrdinalIgnoreCase) ||
+               name.Equals("vr", StringComparison.OrdinalIgnoreCase) ||
+               name.StartsWith("vr_", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("vr ", StringComparison.OrdinalIgnoreCase);
+    }
+
     public bool HasPowerSensor(GpuDeviceInfo device)
     {
         ArgumentNullException.ThrowIfNull(device);
@@ -117,6 +166,44 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Win32Luid
+    {
+        public uint LowPart;
+        public int HighPart;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct D3dKmtOpenAdapterFromLuid
+    {
+        public Win32Luid AdapterLuid;
+        public uint Handle;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct D3dKmtQueryAdapterInfo
+    {
+        public uint Handle;
+        public int Type;
+        public nint PrivateDriverData;
+        public uint PrivateDriverDataSize;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct D3dKmtCloseAdapter
+    {
+        public uint Handle;
+    }
+
+    [DllImport("gdi32.dll")]
+    private static extern int D3DKMTOpenAdapterFromLuid(ref D3dKmtOpenAdapterFromLuid arg);
+
+    [DllImport("gdi32.dll")]
+    private static extern int D3DKMTQueryAdapterInfo(ref D3dKmtQueryAdapterInfo arg);
+
+    [DllImport("gdi32.dll")]
+    private static extern int D3DKMTCloseAdapter(ref D3dKmtCloseAdapter arg);
+
     private sealed unsafe class NvmlPowerReader : IDisposable
     {
         private const uint NvidiaVendorId = 0x10DEu;
@@ -132,35 +219,6 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
             public uint PciDeviceId;
             public uint PciSubSystemId;
             public fixed byte BusId[32];
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct Win32Luid
-        {
-            public uint LowPart;
-            public int HighPart;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct D3dKmtOpenAdapterFromLuid
-        {
-            public Win32Luid AdapterLuid;
-            public uint Handle;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct D3dKmtQueryAdapterInfo
-        {
-            public uint Handle;
-            public int Type;
-            public nint PrivateDriverData;
-            public uint PrivateDriverDataSize;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct D3dKmtCloseAdapter
-        {
-            public uint Handle;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -515,15 +573,6 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
             _deviceHandleCache.Clear();
             ReleaseLibrary();
         }
-
-        [DllImport("gdi32.dll")]
-        private static extern int D3DKMTOpenAdapterFromLuid(ref D3dKmtOpenAdapterFromLuid arg);
-
-        [DllImport("gdi32.dll")]
-        private static extern int D3DKMTQueryAdapterInfo(ref D3dKmtQueryAdapterInfo arg);
-
-        [DllImport("gdi32.dll")]
-        private static extern int D3DKMTCloseAdapter(ref D3dKmtCloseAdapter arg);
     }
 
     private sealed unsafe class D3dKmtAdapterSampler
@@ -533,12 +582,27 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
         private const int QueryProcessNode = 6;
         private const int QueryResultOffset = 24;
         private const int QueryInputOffset = 800; // 0x320 on 64-bit Windows (x64 & ARM64)
+        private const int KmtQaiTypeNodeMetadata = 25;
         private const double MinSampleIntervalSeconds = 0.08;
+
+        // Matches D3DKMT_NODEMETADATA / DXGK_NODEMETADATA (78 bytes under #pragma pack(1)) from WDK d3dkmdt.h.
+        // Using fixed ushort keeps the struct 100% blittable (sizeof == Marshal.SizeOf == 78) on x64 and ARM64.
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        internal struct D3dKmtNodeMetadata
+        {
+            public uint NodeOrdinalAndAdapterIndex;
+            public int EngineType;
+            public fixed ushort FriendlyName[32];
+            public uint Flags;
+            public byte GpuMmuSupported;
+            public byte IoMmuSupported;
+        }
 
         private readonly uint _luidLow;
         private readonly int _luidHigh;
         private readonly nint _selfProcess;
         private readonly int _nodeCount;
+        private readonly bool[] _includeNode;
         private readonly ulong[] _buffer = new ulong[128]; // 1,024 bytes, 8-byte aligned
         private readonly long[] _prevNodeTime;
         private readonly long[] _prevProcNodeTime;
@@ -584,10 +648,92 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
                 IsAvailable = false;
             }
 
+            _includeNode = BuildComputeNodeMask(_luidLow, _luidHigh, _nodeCount);
             _prevNodeTime = new long[_nodeCount];
             _prevProcNodeTime = new long[_nodeCount];
             _curNodeTime = new long[_nodeCount];
             _curProcNodeTime = new long[_nodeCount];
+        }
+
+        private static bool[] BuildComputeNodeMask(uint luidLow, int luidHigh, int nodeCount)
+        {
+            var mask = new bool[nodeCount];
+            if (nodeCount == 0)
+            {
+                return mask;
+            }
+
+            bool anyMetadataOk = false;
+            bool anyIncluded = false;
+            try
+            {
+                var openArg = new D3dKmtOpenAdapterFromLuid
+                {
+                    AdapterLuid = new Win32Luid { LowPart = luidLow, HighPart = luidHigh }
+                };
+                if (D3DKMTOpenAdapterFromLuid(ref openArg) == 0 && openArg.Handle != 0)
+                {
+                    try
+                    {
+                        uint metaSize = (uint)sizeof(D3dKmtNodeMetadata);
+                        for (int node = 0; node < nodeCount; node++)
+                        {
+                            D3dKmtNodeMetadata meta = default;
+                            meta.NodeOrdinalAndAdapterIndex = (uint)node;
+                            var queryArg = new D3dKmtQueryAdapterInfo
+                            {
+                                Handle = openArg.Handle,
+                                Type = KmtQaiTypeNodeMetadata,
+                                PrivateDriverData = (nint)(&meta),
+                                PrivateDriverDataSize = metaSize
+                            };
+
+                            if (D3DKMTQueryAdapterInfo(ref queryArg) == 0)
+                            {
+                                anyMetadataOk = true;
+                                string friendly = ReadNullTerminatedName(meta.FriendlyName, 32);
+                                bool include = IsComputeContendingEngine(meta.EngineType, friendly);
+                                mask[node] = include;
+                                if (include)
+                                {
+                                    anyIncluded = true;
+                                }
+                            }
+                            else
+                            {
+                                mask[node] = true;
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        var closeArg = new D3dKmtCloseAdapter { Handle = openArg.Handle };
+                        D3DKMTCloseAdapter(ref closeArg);
+                    }
+                }
+            }
+            catch
+            {
+                anyMetadataOk = false;
+            }
+
+            if (!anyMetadataOk || !anyIncluded)
+            {
+                Array.Fill(mask, true);
+            }
+
+            return mask;
+        }
+
+        private static string ReadNullTerminatedName(ushort* chars, int maxLength)
+        {
+            int len = 0;
+            while (len < maxLength && chars[len] != 0)
+            {
+                len++;
+            }
+
+            return len > 0 ? new string((char*)chars, 0, len) : string.Empty;
         }
 
         public bool TrySample(out double totalUtil, out double selfUtil, out double otherUtil)
@@ -626,6 +772,11 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
                     byte* p = (byte*)raw;
                     for (int node = 0; node < _nodeCount; node++)
                     {
+                        if (!_includeNode[node])
+                        {
+                            continue;
+                        }
+
                         Array.Clear(_buffer);
                         *(int*)(p + 0) = QueryNode;
                         *(uint*)(p + 4) = _luidLow;
@@ -683,6 +834,11 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
             double maxOther = 0.0;
             for (int n = 0; n < _nodeCount; n++)
             {
+                if (!_includeNode[n])
+                {
+                    continue;
+                }
+
                 long dNode = Math.Max(0L, _curNodeTime[n] - _prevNodeTime[n]);
                 long dProc = Math.Max(0L, _curProcNodeTime[n] - _prevProcNodeTime[n]);
                 double tPct = Math.Clamp(100.0 * dNode / elapsed100ns, 0.0, 100.0);

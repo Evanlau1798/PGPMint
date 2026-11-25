@@ -50,8 +50,8 @@ public sealed partial class MultiGpuCoordinator
             UpdateRuntimeSensor(rt, _telemetrySensor.Sample(device.Info));
 
             double totalBudgetSec = Math.Max(0.05, _options.FullCalibrationDuration.TotalSeconds);
-            double fullBudgetSec = Math.Max(0.02, totalBudgetSec * 0.207); // ~6.2s out of 30s; leaves 7 x 3.4s = 23.8s
-            double fullWarmupSkipSec = totalBudgetSec >= 5.0 ? Math.Min(1.5, fullBudgetSec * 0.25) : 0.0;
+            double fullBudgetSec = Math.Max(0.02, totalBudgetSec * 0.17); // ~5.1s out of 30s; leaves ~24.9s continuous ramp
+            double fullWarmupSkipSec = totalBudgetSec >= 5.0 ? Math.Min(1.5, fullBudgetSec * 0.30) : 0.0;
             double fullSampleWindowSec = Math.Min(_options.CalibrationWindow.TotalSeconds, Math.Max(0.02, fullBudgetSec * 0.4));
 
             var allFullHpsSamples = new List<double>();
@@ -67,7 +67,7 @@ public sealed partial class MultiGpuCoordinator
             long windowChecked = 0;
             long stage1TotalMeasured = 0;
 
-            // Stage 1: Full-speed maximum output baseline (~21% of budget, ~6.2s out of 30s)
+            // Stage 1: Full-speed maximum output baseline (~17% of budget, ~5.1s out of 30s)
             while (!ct.IsCancellationRequested && !IsCurrentlyPaused())
             {
                 double stage1Elapsed = Stopwatch.GetElapsedTime(stage1Start).TotalSeconds;
@@ -142,136 +142,146 @@ public sealed partial class MultiGpuCoordinator
             double fullLoadWatts = ComputeMedian(settledFullWattSamples.Count > 0 ? settledFullWattSamples : allFullWattSamples);
             double fullLoadGpuUtil = ComputeMedian(settledFullUtilSamples.Count > 0 ? settledFullUtilSamples : allFullUtilSamples);
 
-            // Stage 2: Zero-waste step-down efficiency curve sweep (~79% of budget, ~23.8s out of 30s)
-            double[] fractions = EfficiencyCurveSelector.DefaultStepDownFractions;
+            // Stage 2: Zero-waste continuous descending efficiency curve ramp (~83% of budget, ~24.9s out of 30s)
             double remainingSec = Math.Max(0.0, totalBudgetSec - Stopwatch.GetElapsedTime(calStart).TotalSeconds);
-            var curveSamples = new List<EfficiencyCurveSample>(fractions.Length);
+            int targetSamples = Math.Clamp((int)Math.Round(remainingSec / 0.52), 8, 48);
+            var curveSamples = new List<EfficiencyCurveSample>(targetSamples + 2);
 
             if (remainingSec > 0.005 && baselineHps > 0.0)
             {
-                double stepBudgetSec = remainingSec / fractions.Length;
-                double settleSec = stepBudgetSec * 0.66; // ~2.24s settle out of 3.4s (> 2.0s P0->P3/P5 hysteresis)
-                double sensorIntervalSec = Math.Min(0.15, Math.Max(0.02, (stepBudgetSec - settleSec) * 0.25));
+                double sampleWindowSec = Math.Clamp(remainingSec / targetSamples, 0.025, 0.55);
+                double sensorIntervalSec = Math.Min(0.125, Math.Max(0.015, sampleWindowSec * 0.30));
 
-                foreach (double frac in fractions)
+                long rampStart = Stopwatch.GetTimestamp();
+                double readyTimeSec = rampStart / (double)Stopwatch.Frequency;
+                long binStart = rampStart;
+                double binStartFrac = EfficiencyCurveSelector.RampStartFraction;
+                long binCandidates = 0;
+                double binBudgetSec = 0.0;
+                long lastSensorTick = rampStart;
+                var binWatts = new List<double>();
+                var binUtils = new List<double>();
+
+                while (!ct.IsCancellationRequested && !IsCurrentlyPaused())
                 {
-                    if (ct.IsCancellationRequested || IsCurrentlyPaused())
+                    double rampElapsed = Stopwatch.GetElapsedTime(rampStart).TotalSeconds;
+                    if (rampElapsed >= remainingSec && (curveSamples.Count > 0 || binCandidates > 0))
                     {
-                        return null;
+                        break;
                     }
 
-                    long targetHps = Math.Max(1L, (long)Math.Round(baselineHps * frac, MidpointRounding.AwayFromZero));
-                    var stepDirective = new RateDirective(RateMode.Capped, targetHps);
+                    double progress = Math.Clamp(rampElapsed / remainingSec, 0.0, 1.0);
+                    double currentFrac = EfficiencyCurveSelector.RampFractionAtProgress(progress);
+                    long targetHps = Math.Max(1L, (long)Math.Round(baselineHps * currentFrac, MidpointRounding.AwayFromZero));
+                    var rampDirective = new RateDirective(RateMode.Capped, targetHps);
 
-                    long stepStart = Stopwatch.GetTimestamp();
-                    double readyTimeSec = stepStart / (double)Stopwatch.Frequency;
-                    long measStart = 0;
-                    long measCandidates = 0;
-                    long stepTotalCandidates = 0;
-                    long lastSensorTick = stepStart;
-                    var stepWatts = new List<double>();
-                    var stepUtils = new List<double>();
-
-                    while (!ct.IsCancellationRequested && !IsCurrentlyPaused())
+                    if (Stopwatch.GetElapsedTime(lastSensorTick).TotalSeconds >= sensorIntervalSec)
                     {
-                        double stepElapsed = Stopwatch.GetElapsedTime(stepStart).TotalSeconds;
-                        if (stepElapsed >= stepBudgetSec && stepTotalCandidates > 0)
+                        GpuSensorSample s = _telemetrySensor.Sample(device.Info);
+                        UpdateRuntimeSensor(rt, s);
+                        if (s.HasPowerWatts && s.PowerWatts > 0.0) binWatts.Add(s.PowerWatts);
+                        if (s.HasGpuUtil) binUtils.Add(s.TotalGpuUtil);
+                        lastSensorTick = Stopwatch.GetTimestamp();
+                    }
+
+                    double nowSec = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
+                    double binElapsed = Stopwatch.GetElapsedTime(binStart).TotalSeconds;
+                    // Flush only once the last dispatched batch's pacing sleep has completed (nowSec >= readyTimeSec)
+                    // so every bin spans whole [dispatch + sleep] cycles without cross-bin sawtooth distortion.
+                    if (nowSec >= readyTimeSec && binElapsed >= sampleWindowSec && binCandidates > 0)
+                    {
+                        if (binWatts.Count == 0 && binUtils.Count == 0)
+                        {
+                            GpuSensorSample s = _telemetrySensor.Sample(device.Info);
+                            UpdateRuntimeSensor(rt, s);
+                            if (s.HasPowerWatts && s.PowerWatts > 0.0) binWatts.Add(s.PowerWatts);
+                            if (s.HasGpuUtil) binUtils.Add(s.TotalGpuUtil);
+                            lastSensorTick = Stopwatch.GetTimestamp();
+                        }
+
+                        double effectiveElapsed = Math.Max(binElapsed, binBudgetSec);
+                        double binHps = binCandidates / Math.Max(0.001, effectiveElapsed);
+                        double binFrac = Math.Clamp(
+                            0.5 * (binStartFrac + currentFrac),
+                            EfficiencyCurveSelector.MinTierFraction,
+                            EfficiencyCurveSelector.RampStartFraction);
+                        Volatile.Write(ref rt.ActualHps, binHps);
+                        curveSamples.Add(new EfficiencyCurveSample(
+                            RateFraction: binFrac,
+                            MeasuredHps: binHps,
+                            MeasuredWatts: ComputeMedian(binWatts),
+                            MeasuredGpuUtil: ComputeMedian(binUtils)));
+
+                        binStart = Stopwatch.GetTimestamp();
+                        binStartFrac = currentFrac;
+                        binCandidates = 0;
+                        binBudgetSec = 0.0;
+                        binWatts.Clear();
+                        binUtils.Clear();
+                    }
+
+                    if (nowSec < readyTimeSec)
+                    {
+                        double remainRampMs = Math.Max(0.0, (remainingSec - Stopwatch.GetElapsedTime(rampStart).TotalSeconds) * 1000.0);
+                        if (remainRampMs <= 0.5 && (curveSamples.Count > 0 || binCandidates > 0))
                         {
                             break;
                         }
 
-                        if (measStart == 0 && stepElapsed >= settleSec)
-                        {
-                            measStart = Stopwatch.GetTimestamp();
-                            lastSensorTick = measStart;
-                            GpuSensorSample prime = _telemetrySensor.Sample(device.Info);
-                            UpdateRuntimeSensor(rt, prime);
-                        }
-
-                        if (measStart != 0 && Stopwatch.GetElapsedTime(lastSensorTick).TotalSeconds >= sensorIntervalSec)
-                        {
-                            GpuSensorSample s = _telemetrySensor.Sample(device.Info);
-                            UpdateRuntimeSensor(rt, s);
-                            if (s.HasPowerWatts && s.PowerWatts > 0.0) stepWatts.Add(s.PowerWatts);
-                            if (s.HasGpuUtil) stepUtils.Add(s.TotalGpuUtil);
-                            lastSensorTick = Stopwatch.GetTimestamp();
-                        }
-
-                        double nowSec = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
-                        if (nowSec < readyTimeSec)
-                        {
-                            double remainStepMs = Math.Max(0.0, (stepBudgetSec - Stopwatch.GetElapsedTime(stepStart).TotalSeconds) * 1000.0);
-                            if (remainStepMs <= 0.5 && stepTotalCandidates > 0)
-                            {
-                                break;
-                            }
-
-                            int sleepMs = (int)Math.Clamp(Math.Min((readyTimeSec - nowSec) * 1000.0, Math.Max(1.0, remainStepMs)), 1.0, 25.0);
-                            Thread.Sleep(sleepMs);
-                            continue;
-                        }
-
-                        if (cursor >= end)
-                        {
-                            RotateKeyGroup(keyPool, ref keys, ref pubKeys, ref end, ref cursor, ct);
-                        }
-
-                        uint stamps = RateControl.ComputeBatchTimestamps(
-                            batchSizer.NextCandidateLimit,
-                            device.KeysPerBatch,
-                            stepDirective,
-                            end - cursor);
-
-                        long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, batchSizer, ct, failureToken, out bool retired);
-                        cursor = AdvanceKeyGroupCursor(keys, cursor, stamps, end, retired);
-                        stepTotalCandidates += batchCandidates;
-                        if (measStart != 0)
-                        {
-                            measCandidates += batchCandidates;
-                            double measElapsedLive = Stopwatch.GetElapsedTime(measStart).TotalSeconds;
-                            if (measElapsedLive >= 0.25)
-                            {
-                                Volatile.Write(ref rt.ActualHps, measCandidates / measElapsedLive);
-                            }
-                        }
-                        else if (stepElapsed >= 0.3)
-                        {
-                            Volatile.Write(ref rt.ActualHps, stepTotalCandidates / stepElapsed);
-                        }
-
-                        double afterSec = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
-                        readyTimeSec = Math.Max(afterSec, readyTimeSec + (batchCandidates / (double)targetHps));
+                        int sleepMs = (int)Math.Clamp(Math.Min((readyTimeSec - nowSec) * 1000.0, Math.Max(1.0, remainRampMs)), 1.0, 20.0);
+                        Thread.Sleep(sleepMs);
+                        continue;
                     }
 
-                    if (ct.IsCancellationRequested || IsCurrentlyPaused())
+                    if (cursor >= end)
                     {
-                        return null;
+                        RotateKeyGroup(keyPool, ref keys, ref pubKeys, ref end, ref cursor, ct);
                     }
 
-                    // Ensure at least one final sensor reading per step (covers short test durations)
+                    uint stamps = RateControl.ComputeBatchTimestamps(
+                        batchSizer.NextCandidateLimit,
+                        device.KeysPerBatch,
+                        rampDirective,
+                        end - cursor);
+
+                    long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, batchSizer, ct, failureToken, out bool retired);
+                    cursor = AdvanceKeyGroupCursor(keys, cursor, stamps, end, retired);
+                    binCandidates += batchCandidates;
+                    double batchBudgetSec = batchCandidates / (double)targetHps;
+                    binBudgetSec += batchBudgetSec;
+
+                    double afterSec = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
+                    readyTimeSec = Math.Max(afterSec, readyTimeSec + batchBudgetSec);
+                }
+
+                if (ct.IsCancellationRequested || IsCurrentlyPaused())
+                {
+                    return null;
+                }
+
+                // Flush the final ramp bin only when it covers enough duration (or is the sole bin),
+                // normalizing by max(wallElapsed, commandedBudgetSec) so an un-slept tail batch cannot inflate HPS.
+                double tailElapsed = Stopwatch.GetElapsedTime(binStart).TotalSeconds;
+                if (binCandidates > 0 && (curveSamples.Count == 0 || tailElapsed >= sampleWindowSec * 0.5))
+                {
                     GpuSensorSample endSample = _telemetrySensor.Sample(device.Info);
                     UpdateRuntimeSensor(rt, endSample);
-                    if (endSample.HasPowerWatts && endSample.PowerWatts > 0.0) stepWatts.Add(endSample.PowerWatts);
-                    if (endSample.HasGpuUtil) stepUtils.Add(endSample.TotalGpuUtil);
+                    if (endSample.HasPowerWatts && endSample.PowerWatts > 0.0) binWatts.Add(endSample.PowerWatts);
+                    if (endSample.HasGpuUtil) binUtils.Add(endSample.TotalGpuUtil);
 
-                    double stepHps;
-                    if (measStart != 0 && measCandidates > 0)
-                    {
-                        double measElapsed = Math.Max(0.001, Stopwatch.GetElapsedTime(measStart).TotalSeconds);
-                        stepHps = measCandidates / measElapsed;
-                    }
-                    else
-                    {
-                        double stepElapsed = Math.Max(0.001, Stopwatch.GetElapsedTime(stepStart).TotalSeconds);
-                        stepHps = stepTotalCandidates / stepElapsed;
-                    }
-
-                    Volatile.Write(ref rt.ActualHps, stepHps);
+                    double tailDenom = Math.Max(0.001, Math.Max(tailElapsed, binBudgetSec));
+                    double tailProgress = Math.Clamp(Stopwatch.GetElapsedTime(rampStart).TotalSeconds / remainingSec, 0.0, 1.0);
+                    double tailFrac = Math.Clamp(
+                        0.5 * (binStartFrac + EfficiencyCurveSelector.RampFractionAtProgress(tailProgress)),
+                        EfficiencyCurveSelector.MinTierFraction,
+                        EfficiencyCurveSelector.RampStartFraction);
+                    double tailHps = binCandidates / tailDenom;
+                    Volatile.Write(ref rt.ActualHps, tailHps);
                     curveSamples.Add(new EfficiencyCurveSample(
-                        RateFraction: frac,
-                        MeasuredHps: stepHps,
-                        MeasuredWatts: ComputeMedian(stepWatts),
-                        MeasuredGpuUtil: ComputeMedian(stepUtils)));
+                        RateFraction: tailFrac,
+                        MeasuredHps: tailHps,
+                        MeasuredWatts: ComputeMedian(binWatts),
+                        MeasuredGpuUtil: ComputeMedian(binUtils)));
                 }
             }
 

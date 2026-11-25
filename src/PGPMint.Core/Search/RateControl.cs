@@ -144,7 +144,7 @@ public static class CalibrationValidator
                 ? "exact-low32-5-8"
                 : "exact-high64-9-16";
         return FormattableString.Invariant(
-            $"v2/{device.BackendName}/{device.BackendDriverVersion ?? device.DriverVersion}/{shape}/{suffixGroup}/find-one-1/efficiency-curve");
+            $"v3/{device.BackendName}/{device.BackendDriverVersion ?? device.DriverVersion}/{shape}/{suffixGroup}/find-one-1/efficiency-curve");
     }
 
     internal static string ProfileKey(string deviceKey, string workloadIdentity) => $"{deviceKey}|{workloadIdentity}";

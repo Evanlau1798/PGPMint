@@ -89,15 +89,23 @@ public sealed class OverloadYieldController
                 : profile.FullLoadWatts * defaultRatio;
 
             bool isUpperMid = tier == PowerTier.Efficiency;
-            double maxCeilingRatio = isUpperMid ? 0.88 : 0.80;
+            double maxCeilingRatio = isUpperMid ? 0.94 : 0.80;
             double headroomScale = isUpperMid ? 1.15 : 1.25;
             double headroomMinWatts = isUpperMid ? 20.0 : 25.0;
             double powerCeiling = Math.Min(
                 profile.FullLoadWatts * maxCeilingRatio,
                 Math.Max(tierWatts * headroomScale, tierWatts + headroomMinWatts));
+            // Scale the hard safety offset proportionally so GPUs < 250 W still trip hardPowerCeiling below 100% TDP
+            double hardOffsetWatts = isUpperMid
+                ? Math.Min(15.0, Math.Max(3.0, profile.FullLoadWatts * 0.04))
+                : Math.Min(20.0, Math.Max(5.0, profile.FullLoadWatts * 0.08));
             double hardPowerCeiling = isUpperMid
-                ? Math.Max(powerCeiling + 20.0, profile.FullLoadWatts * 0.90)
-                : Math.Max(powerCeiling + 20.0, profile.FullLoadWatts * 0.70);
+                ? Math.Min(profile.FullLoadWatts * 0.985, Math.Max(powerCeiling + hardOffsetWatts, profile.FullLoadWatts * 0.96))
+                : Math.Min(profile.FullLoadWatts * 0.96, Math.Max(powerCeiling + hardOffsetWatts, profile.FullLoadWatts * 0.70));
+            if (hardPowerCeiling <= powerCeiling)
+            {
+                hardPowerCeiling = Math.Min(profile.FullLoadWatts * 0.99, powerCeiling + 1.0);
+            }
             double marginAboveTier = Math.Max(0.0, powerCeiling - tierWatts);
             double powerDeadbandWatts = Math.Min(12.0, Math.Min(powerCeiling * 0.15, Math.Max(2.0, marginAboveTier * 0.5)));
             double powerRecoveryThreshold = Math.Max(0.0, Math.Min(powerCeiling * 0.92, powerCeiling - powerDeadbandWatts));
@@ -127,9 +135,12 @@ public sealed class OverloadYieldController
                                         (sample.PowerWatts > powerCeiling || sample.TotalGpuUtil >= utilCeiling);
                 bool hardPowerOverload = !inPowerCooldownGrace && sample.PowerWatts > hardPowerCeiling;
                 isOverloaded = otherAppOverload || hardPowerOverload;
-                // When no other app is competing (< 15%), allow full recovery up to powerCeiling
-                // (still well below hardPowerCeiling) so warm GPUs and <=90W GPUs never stall below 1.0.
-                isFullyCalm = sample.OtherProcessGpuUtil < 15.0 && sample.PowerWatts < powerCeiling;
+                // When no other app is competing (< 15%), allow full recovery safely below hardPowerCeiling
+                // so warm GPUs, <=90W GPUs, and slight FullLoadWatts drift never stall below 1.0.
+                double calmPowerThreshold = Math.Min(
+                    Math.Max(powerCeiling, hardPowerCeiling - Math.Min(2.0, hardOffsetWatts * 0.5)),
+                    Math.Max(powerCeiling, tierWatts * 1.06));
+                isFullyCalm = sample.OtherProcessGpuUtil < 15.0 && sample.PowerWatts < calmPowerThreshold;
                 hasHeadroom = isFullyCalm ||
                               (sample.PowerWatts < powerRecoveryThreshold && sample.TotalGpuUtil < utilRecoveryThreshold);
             }
