@@ -83,6 +83,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 item.representedObject = tier
                 item.state = (model.displayTier == tier) ? .on : .off
                 item.isEnabled = model.isTierSelectorEnabled
+                item.toolTip = model.loc.tierTooltip(tier)
                 tierMenu.addItem(item)
             }
             let tierParent = NSMenuItem(title: model.loc.text("PowerTier"), action: nil, keyEquivalent: "")

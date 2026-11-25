@@ -123,18 +123,7 @@ struct DashboardView: View {
                         .help(model.efficiencyBadgeTooltip ?? "")
                 }
 
-                Picker(model.loc.text("PowerTier"), selection: Binding(
-                    get: { model.displayTier },
-                    set: { tier in Task { await model.setPowerTier(tier) } }
-                )) {
-                    ForEach(tiers, id: \.self) { tier in
-                        Text(model.loc.tierLabel(tier)).tag(tier)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .disabled(!model.isTierSelectorEnabled)
-                .help(model.loc.tierTooltip(model.displayTier))
+                tierSelectorBar
 
                 Button {
                     Task { await model.primaryAction() }
@@ -148,6 +137,42 @@ struct DashboardView: View {
                 .disabled(!model.canPrimaryAction)
             }
         }
+    }
+
+    private var tierSelectorBar: some View {
+        HStack(spacing: 3) {
+            ForEach(tiers, id: \.self) { tier in
+                let isSelected = model.displayTier == tier
+                ZStack {
+                    Button {
+                        Task { await model.setPowerTier(tier) }
+                    } label: {
+                        Text(model.loc.tierLabel(tier))
+                            .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
+                            .foregroundStyle(isSelected ? Color.white : (model.isTierSelectorEnabled ? Color.primary : Color.secondary))
+                            .frame(maxWidth: .infinity, minHeight: 26)
+                            .background(
+                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    .fill(isSelected ? Color.accentColor.opacity(model.isTierSelectorEnabled ? 1.0 : 0.45) : Color.clear)
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!model.isTierSelectorEnabled)
+                }
+                .contentShape(Rectangle())
+                .help(model.loc.tierTooltip(tier))
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.secondary.opacity(0.12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
+                )
+        )
     }
 
     private var progressCard: some View {
