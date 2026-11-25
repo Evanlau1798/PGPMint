@@ -14,9 +14,9 @@ struct PGPMintMacApp: App {
             .background(WindowAccessor { window in
                 delegate.attachMainWindow(window)
             })
-            .frame(minWidth: 390, idealWidth: 460)
+            .frame(minWidth: 360, idealWidth: 400)
         }
-        .defaultSize(width: 460, height: 420)
+        .defaultSize(width: 400, height: 420)
         .commands {
             CommandGroup(replacing: .newItem) {}
         }

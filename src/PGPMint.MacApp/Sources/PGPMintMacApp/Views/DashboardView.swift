@@ -100,18 +100,18 @@ struct DashboardView: View {
                     .frame(maxWidth: .infinity)
 
                 HStack(alignment: .lastTextBaseline) {
-                    HStack(alignment: .lastTextBaseline, spacing: 6) {
+                    HStack(alignment: .lastTextBaseline, spacing: 5) {
                         Text(model.actualRateNumber)
-                            .font(.system(size: 42, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 38, weight: .semibold, design: .monospaced))
                             .monospacedDigit()
                         Text(model.actualRateUnit)
-                            .font(.system(size: 14, weight: .medium, design: .monospaced))
+                            .font(.system(size: 13.5, weight: .medium, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
                     Text(model.efficiencyBadgeText)
-                        .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
-                        .padding(.horizontal, 10)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .padding(.horizontal, 9)
                         .padding(.vertical, 4)
                         .background(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -153,21 +153,27 @@ struct DashboardView: View {
                 ProgressView(value: model.progressPercent, total: 100.0)
                     .progressViewStyle(.linear)
 
-                HStack {
+                HStack(spacing: 4) {
                     Text(model.probabilityText)
-                        .font(.system(size: 12.5, design: .monospaced))
+                        .font(.system(size: 11.5, design: .monospaced))
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                         .help(model.singleHashProbabilityTooltip)
-                    Spacer()
+                    Spacer(minLength: 4)
                     Text(model.checkedCountText)
-                        .font(.system(size: 12.5, design: .monospaced))
+                        .font(.system(size: 11.5, design: .monospaced))
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                         .foregroundStyle(.secondary)
                         .help(model.checkedCountTooltip)
-                    Spacer()
+                    Spacer(minLength: 4)
                     Text(model.liveEtaText)
-                        .font(.system(size: 12.5, design: .monospaced))
+                        .font(.system(size: 11.5, design: .monospaced))
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                         .foregroundStyle(.secondary)
                 }
             }

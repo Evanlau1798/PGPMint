@@ -4,7 +4,8 @@ import PGPMintMacCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    private static let defaultWidth: CGFloat = 460
+    private static let defaultWidth: CGFloat = 400
+    private static let minWidth: CGFloat = 360
     private static let logger = Logger(subsystem: "org.pgpmint.desktop", category: "window")
 
     let powerManager = MacPowerActivityManager()
@@ -65,9 +66,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let screenMax = (window.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
         let clampedHeight = min(max(contentHeight, 260), screenMax - 80)
         let currentContent = window.contentRect(forFrameRect: window.frame)
-        let targetWidth = max(Self.defaultWidth, currentContent.width)
+        let targetWidth = hasAppliedInitialSize
+            ? max(Self.minWidth, currentContent.width)
+            : Self.defaultWidth
 
-        window.contentMinSize = NSSize(width: 390, height: clampedHeight)
+        window.contentMinSize = NSSize(width: Self.minWidth, height: clampedHeight)
         if abs(currentContent.height - clampedHeight) < 2 && abs(currentContent.width - targetWidth) < 2 {
             hasAppliedInitialSize = true
             return
