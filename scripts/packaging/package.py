@@ -52,12 +52,31 @@ def publish(project, output, rid, platform, tag, single=False):
     run(args, cwd=ROOT)
 
 
+def is_macho(path):
+    if not path.is_file():
+        return False
+    with path.open("rb") as stream:
+        magic = stream.read(4)
+    return magic in (b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
+                     b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca", b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca")
+
+
 def macos_app(published, parent, tag):
     app = parent / "PGPMint.app"
     contents = app / "Contents"
     contents.mkdir(parents=True)
-    shutil.move(str(published), contents / "MacOS")
-    (contents / "Resources").mkdir()
+    for directory in ("MacOS", "Frameworks", "Resources"):
+        (contents / directory).mkdir()
+    # Apple code locations require Mach-O; preserve .NET's adjacent-file lookup via relative links.
+    for item in sorted(published.iterdir()):
+        location = "Resources"
+        if is_macho(item):
+            location = "Frameworks" if item.suffix == ".dylib" else "MacOS"
+        destination = contents / location / item.name
+        shutil.move(str(item), destination)
+        if location != "MacOS":
+            (contents / "MacOS" / item.name).symlink_to(Path("..") / location / item.name, target_is_directory=destination.is_dir())
+    published.rmdir()
     info = {
         "CFBundleIdentifier": "org.pgpmint.desktop", "CFBundleName": "PGPMint",
         "CFBundleDisplayName": "PGPMint", "CFBundlePackageType": "APPL",
@@ -68,21 +87,16 @@ def macos_app(published, parent, tag):
     with (contents / "Info.plist").open("wb") as stream:
         plistlib.dump(info, stream)
     launcher = contents / "MacOS" / "PGPMint"
-    launcher.write_text('#!/bin/sh\nHERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\n'
-                        'exec "$HERE/PGPMint.Desktop" "$@"\n', encoding="utf-8")
-    launcher.chmod(0o755)
+    launcher.symlink_to("PGPMint.Desktop")
     (contents / "MacOS" / "PGPMint.Desktop").chmod(0o755)
     return app
 
 
 def sign_macos(folder):
     # Sign inside-out after all payload changes, including every .NET native dylib.
-    for library in sorted(folder.rglob("*.dylib")):
-        run(["codesign", "--force", "--sign", "-", "--timestamp=none", library])
-    for name in ("pgpmint", "PGPMint.Desktop"):
-        for executable in folder.rglob(name):
-            if executable.is_file():
-                run(["codesign", "--force", "--sign", "-", "--timestamp=none", executable])
+    binaries = [path for path in folder.rglob("*") if not path.is_symlink() and is_macho(path)]
+    for binary in sorted(binaries, key=lambda path: (path.name == "PGPMint.Desktop", path.suffix != ".dylib", str(path))):
+        run(["codesign", "--force", "--sign", "-", "--timestamp=none", binary])
     if folder.suffix == ".app":
         run(["codesign", "--force", "--sign", "-", "--timestamp=none", folder])
         run(["codesign", "--verify", "--deep", "--strict", str(folder)])
@@ -99,6 +113,8 @@ def archive(folder, destination, rid):
     else:
         output = Path(str(destination) + ".tar.gz")
         def executable_modes(member):
+            if member.issym():
+                member.linkname = Path(member.linkname).as_posix()
             # Windows cross-publishing cannot preserve POSIX apphost mode bits.
             if member.isfile() and Path(member.name).name in ("pgpmint", "PGPMint.Desktop", "PGPMint"):
                 member.mode = 0o755
