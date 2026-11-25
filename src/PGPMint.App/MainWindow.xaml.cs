@@ -25,9 +25,9 @@ public sealed partial class MainWindow : Window
     private const uint WmSetIcon = 0x0080;
     private const int SwRestore = 9;
     private const int LogicalDefaultWidth = 460;
-    private const int LogicalBaseDashboardHeight = 428;
+    private const int LogicalBaseDashboardHeight = 434;
     private const int LogicalMinWidth = 380;
-    private const int LogicalMinHeight = 410;
+    private const int LogicalMinHeight = 416;
     private const int MaxAutoStretchMatches = 5;
 
     private readonly TrayIconService _trayIcon;
@@ -39,7 +39,6 @@ public sealed partial class MainWindow : Window
     private bool _isDialogOpen;
     private bool _isStartingSetup;
     private bool _syncingLangCombo;
-    private bool _coercingSlider;
     private bool? _lastSizedSetupMode;
     private int _lastSizedVisibleMatchRows = -1;
     private double _lastSetupDesiredClientHeight;
@@ -65,12 +64,6 @@ public sealed partial class MainWindow : Window
 
         SetupLanguageComboBox.ItemsSource = ViewModel.LanguageOptions;
         SetupLanguageComboBox.Loaded += (_, _) => SyncSetupLanguageCombo();
-
-        RateSlider.Loaded += (_, _) => DisableSliderThumbHitTest(RateSlider);
-        RateSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnSliderReleased), handledEventsToo: true);
-        RateSlider.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(OnSliderReleased), handledEventsToo: true);
-        RateSlider.PreviewKeyDown += OnSliderPreviewKeyDown;
-        RateSlider.AddHandler(UIElement.KeyUpEvent, new KeyEventHandler(OnSliderKeyUp), handledEventsToo: true);
 
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         UpdateVisualStates();
@@ -150,6 +143,8 @@ public sealed partial class MainWindow : Window
         if (e.PropertyName is nameof(MainViewModel.IsInitialized)
             or nameof(MainViewModel.State)
             or nameof(MainViewModel.ShowSetupWizard)
+            or nameof(MainViewModel.DisplayTier)
+            or nameof(MainViewModel.IsTierSelectorEnabled)
             or nameof(MainViewModel.HasDraftError)
             or nameof(MainViewModel.HasError)
             or nameof(MainViewModel.HasMatches)
@@ -186,7 +181,29 @@ public sealed partial class MainWindow : Window
         NoMatchesEmptyPanel.Visibility = ViewModel.HasMatches ? Visibility.Collapsed : Visibility.Visible;
         MatchesContentGrid.Visibility = ViewModel.HasMatches ? Visibility.Visible : Visibility.Collapsed;
 
+        UpdateTierButtonStyles();
         AdjustWindowHeightForMatchesAndMode();
+    }
+
+    private void UpdateTierButtonStyles()
+    {
+        Style accent = (Style)Application.Current.Resources["AccentButtonStyle"];
+        Style ghost = (Style)Application.Current.Resources["TierGhostButtonStyle"];
+        PowerTier active = ViewModel.DisplayTier;
+
+        ApplyTierButtonStyle(TierEcoButton, active == PowerTier.Eco, accent, ghost);
+        ApplyTierButtonStyle(TierBalancedButton, active == PowerTier.Balanced, accent, ghost);
+        ApplyTierButtonStyle(TierEfficiencyButton, active == PowerTier.Efficiency, accent, ghost);
+        ApplyTierButtonStyle(TierMaxButton, active == PowerTier.Max, accent, ghost);
+    }
+
+    private static void ApplyTierButtonStyle(Button button, bool isActive, Style accent, Style ghost)
+    {
+        button.Style = isActive ? accent : ghost;
+        button.Padding = new Thickness(4, 0, 4, 0);
+        button.CornerRadius = new CornerRadius(4);
+        button.FontSize = 12.5;
+        button.FontWeight = isActive ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal;
     }
 
     private void OnSetupContentSizeChanged(object sender, SizeChangedEventArgs e)
@@ -336,23 +353,6 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static void DisableSliderThumbHitTest(DependencyObject root)
-    {
-        int count = VisualTreeHelper.GetChildrenCount(root);
-        for (int i = 0; i < count; i++)
-        {
-            DependencyObject child = VisualTreeHelper.GetChild(root, i);
-            if (child is Thumb thumb)
-            {
-                // Route pointer dragging through Slider's stateless track coordinate mapping
-                // so magnetic detent coercion at 99% never accumulates relative Thumb delta offset.
-                thumb.IsHitTestVisible = false;
-                return;
-            }
-            DisableSliderThumbHitTest(child);
-        }
-    }
-
     private void OnOpenSettingsClick(object sender, RoutedEventArgs e)
     {
         _openSettingsCallback();
@@ -381,75 +381,17 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void OnRateSliderValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    private void OnTierButtonClick(object sender, RoutedEventArgs e)
     {
-        if (_coercingSlider)
+        if (sender is not Button btn || btn.Tag is not string tag)
         {
             return;
         }
 
-        double snapped = RateControl.SnapUiSliderOnRelease(e.NewValue);
-        if (Math.Abs(snapped - e.NewValue) > 0.5)
+        if (Enum.TryParse<PowerTier>(tag, ignoreCase: false, out PowerTier tier))
         {
-            _coercingSlider = true;
-            try
-            {
-                RateSlider.Value = snapped;
-                ViewModel.SliderValue = snapped;
-            }
-            finally
-            {
-                _coercingSlider = false;
-            }
-        }
-    }
-
-    private void OnSliderReleased(object sender, PointerRoutedEventArgs e)
-    {
-        ViewModel.CommitSliderRelease();
-    }
-
-    private void OnSliderPreviewKeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        if (!ViewModel.IsSliderEnabled)
-        {
-            return;
-        }
-
-        if (e.Key is VirtualKey.Right or VirtualKey.Up or VirtualKey.PageUp)
-        {
-            if (ViewModel.SliderValue >= RateControl.UiSliderCappedMax && ViewModel.SliderValue < RateControl.UiSliderFullSpeed)
-            {
-                ViewModel.SliderValue = RateControl.UiSliderFullSpeed;
-                ViewModel.CommitSliderRelease();
-                e.Handled = true;
-            }
-            else if (e.Key == VirtualKey.PageUp &&
-                     ViewModel.SliderValue < RateControl.UiSliderCappedMax &&
-                     ViewModel.SliderValue + RateSlider.LargeChange > RateControl.UiSliderCappedMax)
-            {
-                ViewModel.SliderValue = RateControl.UiSliderCappedMax;
-                ViewModel.CommitSliderRelease();
-                e.Handled = true;
-            }
-        }
-        else if (e.Key is VirtualKey.Left or VirtualKey.Down or VirtualKey.PageDown)
-        {
-            if (ViewModel.SliderValue >= RateControl.UiSliderFullSpeedThreshold)
-            {
-                ViewModel.SliderValue = RateControl.UiSliderCappedMax;
-                ViewModel.CommitSliderRelease();
-                e.Handled = true;
-            }
-        }
-    }
-
-    private void OnSliderKeyUp(object sender, KeyRoutedEventArgs e)
-    {
-        if (e.Key is VirtualKey.Left or VirtualKey.Right or VirtualKey.Up or VirtualKey.Down
-            or VirtualKey.PageUp or VirtualKey.PageDown or VirtualKey.Home or VirtualKey.End)
-        {
-            ViewModel.CommitSliderRelease();
+            ViewModel.SelectPowerTier(tier);
+            UpdateTierButtonStyles();
         }
     }
 

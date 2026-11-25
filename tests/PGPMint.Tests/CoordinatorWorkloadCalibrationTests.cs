@@ -32,7 +32,7 @@ public sealed class CoordinatorWorkloadCalibrationTests
             coordinator.SetTargetPattern(shortPattern);
             Assert.True(coordinator.NeedsFullCalibration());
             Assert.Equal(0, coordinator.LatestTelemetry.TotalBaselineHps);
-            Assert.Equal(0.4, coordinator.SliderPosition, 6);
+            Assert.Equal(PowerTier.Balanced, coordinator.SelectedTier);
 
             await CalibrateAsync(coordinator, shortPattern);
             coordinator.SetTargetPattern(sameDensity);
@@ -49,11 +49,11 @@ public sealed class CoordinatorWorkloadCalibrationTests
             Assert.False(coordinator.NeedsFullCalibration());
             Assert.Equal(shortBaseline, coordinator.LatestTelemetry.TotalBaselineHps);
 
-            using var reopened = new MultiGpuCoordinator(backend, stateStore, new DpapiVaultStore(directory));
+            using var reopened = new MultiGpuCoordinator(backend, stateStore, new DpapiVaultStore(directory), telemetrySensor: NullGpuTelemetrySensor.Instance);
             reopened.Initialize();
             reopened.SetTargetPattern(shortPattern);
             Assert.Equal(shortBaseline, reopened.LatestTelemetry.TotalBaselineHps);
-            Assert.Equal(0.4, reopened.SliderPosition, 6);
+            Assert.Equal(PowerTier.Balanced, reopened.SelectedTier);
 
             var newShape = new CalibrationBackend(backend.Info with
             {

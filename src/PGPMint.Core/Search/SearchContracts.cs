@@ -29,7 +29,8 @@ public sealed record CalibrationRecord(
     double MedianHashesPerSecond,
     bool IsFullCalibration,
     DateTimeOffset CalibratedAtUtc,
-    string? WorkloadIdentity = null);
+    string? WorkloadIdentity = null,
+    EfficiencyProfile? EfficiencyProfile = null);
 
 public sealed record MatchedKeyRecord(
     string Id,

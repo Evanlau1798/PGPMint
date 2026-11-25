@@ -38,7 +38,7 @@ public sealed class CoordinatorAdaptiveGpuTests(ITestOutputHelper output)
             await coordinator.StartSearchAsync(KeyIdPattern.Parse("0000000000000000"));
             double[] fullBatchTimes = await fullSpeed.WaitAsync(TimeSpan.FromSeconds(10));
             var capped = ObserveBatchTimes(coordinator, fullSpeed: false);
-            coordinator.SetSliderPosition(0.5);
+            coordinator.SetPowerTier(PowerTier.Efficiency);
             double[] cappedBatchTimes = await capped.WaitAsync(TimeSpan.FromSeconds(10));
 
             long started = Stopwatch.GetTimestamp();

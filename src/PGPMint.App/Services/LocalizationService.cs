@@ -324,6 +324,28 @@ public sealed class LocalizationService : ObservableObject
     public string FormatTraySpeedupMeasured(int percent) =>
         SafeFormat("TraySpeedupMeasuredFormat", Math.Max(1, percent));
 
+    public string FormatPowerTooltip(string wattsText, string efficiencyText) =>
+        SafeFormat("PowerTooltipFormat", wattsText, efficiencyText);
+
+    public string FormatGpuLoadTooltip(int percent) =>
+        SafeFormat("GpuLoadTooltipFormat", Math.Clamp(percent, 0, 100));
+
+    public string GetTierLabel(PowerTier tier) => tier switch
+    {
+        PowerTier.Eco => TierEco,
+        PowerTier.Balanced => TierBalanced,
+        PowerTier.Efficiency => TierEfficiency,
+        _ => TierMax
+    };
+
+    public string TierEco => Get("TierEco");
+    public string TierBalanced => Get("TierBalanced");
+    public string TierEfficiency => Get("TierEfficiency");
+    public string TierMax => Get("TierMax");
+    public string Recalibrate => Get("Recalibrate");
+    public string Recalibrating => Get("Recalibrating");
+    public string YieldingSuffix => Get("YieldingSuffix");
+
     public string TraySpeedupGenericHint => Get("TraySpeedupGenericHint");
     public string ProbabilityPrefix => Get("ProbabilityPrefix");
     public string Found => Get("Found");

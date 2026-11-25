@@ -260,6 +260,21 @@ public sealed partial class SettingsWindow : Window
         UpdateVisualStates();
     }
 
+    private async void OnRecalibrateClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await ViewModel.RecalibrateAsync();
+        }
+        catch (Exception ex)
+        {
+            if (!_isClosed)
+            {
+                ViewModel.ReportError(ex.Message);
+            }
+        }
+    }
+
     private async void OnGpuToggleClick(object sender, RoutedEventArgs e)
     {
         if (sender is not CheckBox cb || cb.Tag is not string deviceKey)

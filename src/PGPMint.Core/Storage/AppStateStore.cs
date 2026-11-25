@@ -10,6 +10,7 @@ public sealed class AppPersistedState
     public string LastPatternMask { get; set; } = string.Empty;
     public ulong TotalCheckedCandidates { get; set; }
     public double SliderPosition { get; set; } = 1.0;
+    public PowerTier? PowerTier { get; set; }
     public List<string> EnabledDeviceKeys { get; set; } = new();
     public Dictionary<string, CalibrationRecord> Calibrations { get; set; } = new(StringComparer.Ordinal);
     public string Language { get; set; } = "auto";

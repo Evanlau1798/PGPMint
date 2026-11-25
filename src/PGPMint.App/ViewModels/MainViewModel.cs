@@ -58,15 +58,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private readonly MiniHudService _miniHud;
     private readonly DispatcherQueue _dispatcher;
 
-    private readonly Timer _sliderDebounceTimer;
     private readonly DispatcherQueueTimer _smoothProgressTimer;
-    private double _pendingSliderPosition;
-    private int _hasPendingSlider;
-    private bool _sliderDirty;
-    private bool _suppressSliderCallback;
     private bool _suppressGpuToggleCallback;
     private bool _suppressLanguageCallback;
-    private bool _wasCalibrating;
     private bool _mainWindowInTray;
     private long _lastHitNotifyTick = -NotificationThrottleMs;
 
@@ -115,12 +109,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _canApplyDraftTarget;
     public bool CanFinishSetup => HasHardwareGpu && IsDraftValid;
 
-    // Live telemetry & two-stage throttle state (UI slider 10..1120)
+    // Live telemetry & 4-tier efficiency control (Eco / Balanced / Efficiency / Max)
     [ObservableProperty] private string _actualRateNumber = "0.00";
     [ObservableProperty] private string _actualRateUnit = "GH/s";
-    [ObservableProperty] private string _targetCapText = string.Empty;
-    [ObservableProperty] private double _sliderValue = RateControl.UiSliderFullSpeed;
-    [ObservableProperty] private bool _isSliderEnabled;
+    [ObservableProperty] private string _efficiencyBadgeText = string.Empty;
+    [ObservableProperty] private string? _efficiencyBadgeTooltip;
+    [ObservableProperty] private PowerTier _selectedTier = PowerTier.Max;
+    [ObservableProperty] private PowerTier _displayTier = PowerTier.Max;
+    [ObservableProperty] private bool _isTierSelectorEnabled;
+    [ObservableProperty] private bool _canRecalibrate;
     [ObservableProperty] private string _traySpeedupHintText = string.Empty;
 
     [ObservableProperty] private double _progressPercent;
@@ -169,7 +166,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _miniHud = miniHud;
         _dispatcher = dispatcher;
 
-        _sliderDebounceTimer = new Timer(OnSliderDebounceTick, null, Timeout.Infinite, Timeout.Infinite);
         _smoothProgressTimer = _dispatcher.CreateTimer();
         _smoothProgressTimer.Interval = TimeSpan.FromMilliseconds(33);
         _smoothProgressTimer.IsRepeating = true;
@@ -214,9 +210,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         ReloadMatchesFromVault();
 
-        _suppressSliderCallback = true;
-        SliderValue = RateControl.LogicalToUiSlider(persisted.SliderPosition);
-        _suppressSliderCallback = false;
+        SelectedTier = _coordinator.SelectedTier;
+        DisplayTier = SelectedTier;
 
         bool hasSavedValidTarget = KeyIdPattern.TryParse(persisted.TargetInput, out KeyIdPattern? savedPattern, out _);
         if (hasSavedValidTarget && savedPattern is not null)
@@ -374,6 +369,5 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _smoothProgressTimer.Stop();
         _coordinator.TelemetryUpdated -= OnCoordinatorTelemetryUpdated;
         _coordinator.MatchFound -= OnCoordinatorMatchFound;
-        _sliderDebounceTimer.Dispose();
     }
 }

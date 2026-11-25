@@ -185,7 +185,7 @@
                   RowSpacing="12"
                   Visibility="Collapsed">
 
-                <!-- 1. Live Speed, Current Target & Two-Stage Throttle Card -->
+                <!-- 1. Live Speed, Current Target & 4-Tier Efficiency Card -->
                 <Border Grid.Row="0" Style="{StaticResource SurfaceCardStyle}">
                     <StackPanel Spacing="12">
                         <TextBlock Text="{x:Bind ViewModel.ActiveFormattedPreview, Mode=OneWay}"
@@ -211,29 +211,77 @@
                                            Margin="0,0,0,6" />
                             </StackPanel>
 
-                            <Border Grid.Column="1"
+                            <Border x:Name="EfficiencyBadgeBorder"
+                                    Grid.Column="1"
                                     VerticalAlignment="Bottom"
                                     Margin="0,0,0,6"
                                     CornerRadius="6"
                                     Padding="10,4"
-                                    Background="{ThemeResource ControlFillColorSecondaryBrush}">
-                                <TextBlock Text="{x:Bind ViewModel.TargetCapText, Mode=OneWay}"
+                                    Background="{ThemeResource ControlFillColorSecondaryBrush}"
+                                    ToolTipService.ToolTip="{x:Bind ViewModel.EfficiencyBadgeTooltip, Mode=OneWay}">
+                                <TextBlock x:Name="EfficiencyBadgeTextBlock"
+                                           Text="{x:Bind ViewModel.EfficiencyBadgeText, Mode=OneWay}"
                                            FontFamily="{StaticResource MonoFont}"
                                            FontSize="13"
                                            FontWeight="SemiBold" />
                             </Border>
                         </Grid>
 
-                        <Slider x:Name="RateSlider"
-                                Minimum="10"
-                                Maximum="1120"
-                                StepFrequency="10"
-                                SmallChange="10"
-                                LargeChange="50"
-                                IsThumbToolTipEnabled="False"
-                                Value="{x:Bind ViewModel.SliderValue, Mode=TwoWay}"
-                                IsEnabled="{x:Bind ViewModel.IsSliderEnabled, Mode=OneWay}"
-                                ValueChanged="OnRateSliderValueChanged" />
+                        <Border x:Name="TierSelectorBorder"
+                                CornerRadius="6"
+                                Padding="3"
+                                Background="{ThemeResource ControlFillColorSecondaryBrush}"
+                                BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                BorderThickness="1">
+                            <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="3">
+                                <Button x:Name="TierEcoButton"
+                                        Grid.Column="0"
+                                        Content="{x:Bind ViewModel.Loc.TierEco, Mode=OneWay}"
+                                        Style="{StaticResource TierGhostButtonStyle}"
+                                        HorizontalAlignment="Stretch"
+                                        Height="30"
+                                        Padding="4,0"
+                                        FontSize="12.5"
+                                        IsEnabled="{x:Bind ViewModel.IsTierSelectorEnabled, Mode=OneWay}"
+                                        Tag="Eco"
+                                        Click="OnTierButtonClick" />
+                                <Button x:Name="TierBalancedButton"
+                                        Grid.Column="1"
+                                        Content="{x:Bind ViewModel.Loc.TierBalanced, Mode=OneWay}"
+                                        Style="{StaticResource TierGhostButtonStyle}"
+                                        HorizontalAlignment="Stretch"
+                                        Height="30"
+                                        Padding="4,0"
+                                        FontSize="12.5"
+                                        IsEnabled="{x:Bind ViewModel.IsTierSelectorEnabled, Mode=OneWay}"
+                                        Tag="Balanced"
+                                        Click="OnTierButtonClick" />
+                                <Button x:Name="TierEfficiencyButton"
+                                        Grid.Column="2"
+                                        Content="{x:Bind ViewModel.Loc.TierEfficiency, Mode=OneWay}"
+                                        Style="{StaticResource TierGhostButtonStyle}"
+                                        HorizontalAlignment="Stretch"
+                                        Height="30"
+                                        Padding="4,0"
+                                        FontSize="12.5"
+                                        IsEnabled="{x:Bind ViewModel.IsTierSelectorEnabled, Mode=OneWay}"
+                                        Tag="Efficiency"
+                                        Click="OnTierButtonClick" />
+                                <Button x:Name="TierMaxButton"
+                                        Grid.Column="3"
+                                        Content="{x:Bind ViewModel.Loc.TierMax, Mode=OneWay}"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        HorizontalAlignment="Stretch"
+                                        Height="30"
+                                        Padding="4,0"
+                                        CornerRadius="4"
+                                        FontSize="12.5"
+                                        FontWeight="SemiBold"
+                                        IsEnabled="{x:Bind ViewModel.IsTierSelectorEnabled, Mode=OneWay}"
+                                        Tag="Max"
+                                        Click="OnTierButtonClick" />
+                            </Grid>
+                        </Border>
 
                         <Button Content="{x:Bind ViewModel.PrimaryButtonText, Mode=OneWay}"
                                 Style="{StaticResource AccentButtonStyle}"

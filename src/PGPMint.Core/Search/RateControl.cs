@@ -13,45 +13,73 @@ public static class RateControl
 {
     public const long FullSpeedSentinel = 1_000_000_000_000L; // 10^12
 
-    // Two-stage UI slider layout:
-    //   10..990     -> Capped 1%..99% (10 units per 1%)
-    //   991..1099   -> Resistance detent zone (thumb & value stay pinned at 990 / 99%)
-    //   1100..1120  -> Full Speed (snaps thumb to 1120 / Full Speed, enables dynamic median tracking)
-    public const double UiSliderMin = 10.0;
-    public const double UiSliderCappedMax = 990.0;
-    public const double UiSliderFullSpeedThreshold = 1100.0;
-    public const double UiSliderFullSpeed = 1120.0;
-
-    public static double UiSliderToLogical(double uiValue)
+    public static PowerTier TierFromLegacySlider(double sliderPosition)
     {
-        if (uiValue >= UiSliderFullSpeedThreshold)
+        if (double.IsNaN(sliderPosition) || sliderPosition >= 0.99)
         {
-            return 1.0;
+            return PowerTier.Max;
         }
 
-        if (uiValue >= UiSliderCappedMax)
+        if (sliderPosition >= 0.55)
         {
-            return 0.99;
+            return PowerTier.Efficiency;
         }
 
-        int pct = (int)Math.Clamp(Math.Round(uiValue / 10.0, MidpointRounding.AwayFromZero), 1.0, 99.0);
-        return pct / 100.0;
+        return sliderPosition <= 0.30 ? PowerTier.Eco : PowerTier.Balanced;
     }
 
-    public static double LogicalToUiSlider(double logicalPosition)
+    public static double TierToLegacySlider(PowerTier tier) => tier switch
     {
-        double p = Math.Clamp(logicalPosition, 0.01, 1.0);
-        if (p >= 1.0)
+        PowerTier.Eco => 0.15,
+        PowerTier.Balanced => 0.35,
+        PowerTier.Efficiency => 0.55,
+        _ => 1.0
+    };
+
+    public static double GetTierRateFraction(PowerTier tier, EfficiencyProfile? profile) => tier switch
+    {
+        PowerTier.Max => 1.0,
+        PowerTier.Eco => Math.Clamp(
+            profile?.Eco?.RateFraction ?? EfficiencyCurveSelector.DefaultEcoFraction,
+            EfficiencyCurveSelector.MinTierFraction,
+            EfficiencyCurveSelector.MaxSubFullFraction),
+        PowerTier.Balanced => Math.Clamp(
+            profile?.Balanced?.RateFraction ?? EfficiencyCurveSelector.DefaultBalancedFraction,
+            EfficiencyCurveSelector.MinTierFraction,
+            EfficiencyCurveSelector.MaxSubFullFraction),
+        PowerTier.Efficiency => Math.Clamp(
+            profile?.Efficiency?.RateFraction ?? EfficiencyCurveSelector.DefaultEfficiencyFraction,
+            EfficiencyCurveSelector.MinTierFraction,
+            EfficiencyCurveSelector.MaxSubFullFraction),
+        _ => 1.0
+    };
+
+    public static RateDirective FromTier(
+        PowerTier tier,
+        double calibratedBaselineHps,
+        EfficiencyProfile? profile,
+        double yieldScale = 1.0)
+    {
+        if (tier == PowerTier.Max)
         {
-            return UiSliderFullSpeed;
+            return new RateDirective(RateMode.FullSpeed, FullSpeedSentinel);
         }
 
-        int pct = (int)Math.Clamp(Math.Round(p * 100.0, MidpointRounding.AwayFromZero), 1.0, 99.0);
-        return pct * 10.0;
-    }
+        if (calibratedBaselineHps <= 0.0 || !double.IsFinite(calibratedBaselineHps))
+        {
+            return new RateDirective(RateMode.FullSpeed, FullSpeedSentinel);
+        }
 
-    public static double SnapUiSliderOnRelease(double uiValue) =>
-        LogicalToUiSlider(UiSliderToLogical(uiValue));
+        double clampedYield = double.IsFinite(yieldScale) ? Math.Clamp(yieldScale, 0.0, 1.0) : 1.0;
+        if (clampedYield <= 0.0)
+        {
+            return new RateDirective(RateMode.Paused, 0L);
+        }
+
+        double fraction = GetTierRateFraction(tier, profile);
+        long target = (long)Math.Round(calibratedBaselineHps * fraction * clampedYield, MidpointRounding.AwayFromZero);
+        return new RateDirective(RateMode.Capped, Math.Max(1L, target));
+    }
 
     public static RateDirective FromSlider(double sliderPosition, double calibratedBaselineHps)
     {
@@ -91,7 +119,8 @@ public static class RateControl
 
         if (directive.Mode == RateMode.Capped)
         {
-            // Keep capped batches <= 2^29 candidates and ~50ms slices so slider adjustments stay crisp
+            // Keep capped batches <= 2^29 candidates and ~50ms period slices:
+            // empirically verified on RTX 3080 to keep short 4-11ms bursts in low-voltage P5/P3 states.
             long cappedMaxStamps = Math.Min(maxStampsByDevice, (1L << 29) / keysPerBatch);
             long targetSliceStamps = Math.Max(1L, directive.TargetHashesPerSecond / (20L * keysPerBatch));
             stamps = Math.Min(cappedMaxStamps, targetSliceStamps);
@@ -115,7 +144,7 @@ public static class CalibrationValidator
                 ? "exact-low32-5-8"
                 : "exact-high64-9-16";
         return FormattableString.Invariant(
-            $"v1/{device.BackendName}/{device.BackendDriverVersion ?? device.DriverVersion}/{shape}/{suffixGroup}/find-one-1/effective");
+            $"v2/{device.BackendName}/{device.BackendDriverVersion ?? device.DriverVersion}/{shape}/{suffixGroup}/find-one-1/efficiency-curve");
     }
 
     internal static string ProfileKey(string deviceKey, string workloadIdentity) => $"{deviceKey}|{workloadIdentity}";
@@ -144,7 +173,12 @@ public static class CalibrationValidator
             return false;
         }
 
-        if (requireFull && !record.IsFullCalibration)
+        if (requireFull &&
+            (!record.IsFullCalibration ||
+             record.EfficiencyProfile is null ||
+             record.EfficiencyProfile.Eco is null ||
+             record.EfficiencyProfile.Balanced is null ||
+             record.EfficiencyProfile.Efficiency is null))
         {
             return false;
         }

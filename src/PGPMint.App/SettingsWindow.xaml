@@ -121,12 +121,23 @@
                     </StackPanel>
                 </Border>
 
-                <!-- 4. Hardware GPUs Card (Selection only; no estimated speeds, no manual test button) -->
+                <!-- 4. Hardware GPUs Card (Selection & manual curve recalibration) -->
                 <Border Style="{StaticResource SurfaceCardStyle}">
                     <StackPanel Spacing="10">
-                        <TextBlock Text="{x:Bind ViewModel.Loc.SectionGpus, Mode=OneWay}"
-                                   FontSize="13"
-                                   FontWeight="SemiBold" />
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <TextBlock Grid.Column="0"
+                                       Text="{x:Bind ViewModel.Loc.SectionGpus, Mode=OneWay}"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center" />
+                            <Button x:Name="RecalibrateButton"
+                                    Grid.Column="1"
+                                    Content="{x:Bind ViewModel.Loc.Recalibrate, Mode=OneWay}"
+                                    FontSize="12"
+                                    Padding="10,4"
+                                    IsEnabled="{x:Bind ViewModel.CanRecalibrate, Mode=OneWay}"
+                                    Click="OnRecalibrateClick" />
+                        </Grid>
 
                         <ItemsControl ItemsSource="{x:Bind ViewModel.Gpus}">
                             <ItemsControl.ItemsPanel>

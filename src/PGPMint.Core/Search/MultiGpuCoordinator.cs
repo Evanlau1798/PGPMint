@@ -32,6 +32,12 @@ public sealed record GpuTelemetrySnapshot(
     string? Error)
 {
     public double LastBatchWallMilliseconds { get; init; }
+    public double PowerWatts { get; init; }
+    public double PowerLimitWatts { get; init; }
+    public bool HasPowerSensor { get; init; }
+    public double GpuUtilPercent { get; init; }
+    public bool HasGpuUtilSensor { get; init; }
+    public bool IsOverloadYielding { get; init; }
 }
 
 public sealed record CoordinatorTelemetry(
@@ -53,6 +59,12 @@ public sealed record CoordinatorTelemetry(
     public SearchWorkMetrics SessionWork { get; init; }
     public bool VaultIsFull { get; init; }
     public SearchFailure Failure { get; init; }
+    public PowerTier ActiveTier { get; init; } = PowerTier.Max;
+    public double TotalPowerWatts { get; init; }
+    public bool HasPowerSensor { get; init; }
+    public double AggregateGpuUtilPercent { get; init; }
+    public bool HasGpuUtilSensor { get; init; }
+    public bool IsOverloadYielding { get; init; }
 }
 
 public sealed class CoordinatorOptions
@@ -62,6 +74,7 @@ public sealed class CoordinatorOptions
     public TimeSpan DynamicMedianInterval { get; init; } = TimeSpan.FromSeconds(30);
     public int MinDynamicMedianSamples { get; init; } = 3;
     public TimeSpan TelemetryInterval { get; init; } = TimeSpan.FromMilliseconds(250);
+    public TimeSpan SensorPollInterval { get; init; } = TimeSpan.FromMilliseconds(250);
     public string? ExpectedKernelVersionOverride { get; init; }
 }
 
@@ -71,6 +84,8 @@ public sealed partial class MultiGpuCoordinator : IDisposable
     private readonly AppStateStore _stateStore;
     private readonly DpapiVaultStore _vaultStore;
     private readonly CoordinatorOptions _options;
+    private readonly IGpuTelemetrySensor _telemetrySensor;
+    private readonly bool _ownsTelemetrySensor;
 
     private readonly object _lifecycleLock = new();
     private readonly object _submissionGate = new();
@@ -81,11 +96,9 @@ public sealed partial class MultiGpuCoordinator : IDisposable
     private IReadOnlyList<GpuDeviceInfo> _devices = Array.Empty<GpuDeviceInfo>();
     private KeyIdPattern? _activePattern;
     private string _persistedPatternMask = string.Empty;
-    private double _sliderPosition = 1.0;
-    private double _lastPositiveSliderPosition = 1.0;
+    private int _selectedTier = (int)PowerTier.Max;
     private volatile bool _autoPauseOnHit = true;
     private volatile bool _pausedExplicitly;
-    private volatile bool _pausedByZeroSlider;
     private int _autoPauseTriggered;
     private bool _submissionFailed;
     private int _rateEpoch;
@@ -107,7 +120,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
 
     public IReadOnlyList<GpuDeviceInfo> Devices => _devices;
     public CoordinatorState CurrentState => _state;
-    public double SliderPosition => Volatile.Read(ref _sliderPosition);
+    public PowerTier SelectedTier => (PowerTier)Volatile.Read(ref _selectedTier);
     public double FullCalibrationDurationSeconds => Math.Max(1.0, _options.FullCalibrationDuration.TotalSeconds);
     public bool AutoPauseOnHit => _autoPauseOnHit;
     private volatile CoordinatorTelemetry _latestTelemetry;
@@ -120,12 +133,23 @@ public sealed partial class MultiGpuCoordinator : IDisposable
         IGpuBackend backend,
         AppStateStore stateStore,
         DpapiVaultStore vaultStore,
-        CoordinatorOptions? options = null)
+        CoordinatorOptions? options = null,
+        IGpuTelemetrySensor? telemetrySensor = null)
     {
         _backend = backend ?? throw new ArgumentNullException(nameof(backend));
         _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
         _vaultStore = vaultStore ?? throw new ArgumentNullException(nameof(vaultStore));
         _options = options ?? new CoordinatorOptions();
+        if (telemetrySensor is not null)
+        {
+            _telemetrySensor = telemetrySensor;
+            _ownsTelemetrySensor = false;
+        }
+        else
+        {
+            _telemetrySensor = new WindowsGpuTelemetrySensor();
+            _ownsTelemetrySensor = true;
+        }
 
         _latestTelemetry = BuildTelemetrySnapshot();
     }
@@ -140,8 +164,11 @@ public sealed partial class MultiGpuCoordinator : IDisposable
             _devices = enumerated;
             _persistedPatternMask = persisted.LastPatternMask ?? string.Empty;
             _persistedTotalChecked = persisted.TotalCheckedCandidates;
-            _sliderPosition = persisted.SliderPosition <= 0.0 ? 1.0 : Math.Clamp(persisted.SliderPosition, 0.01, 1.0);
-            _lastPositiveSliderPosition = _sliderPosition;
+
+            PowerTier resolvedTier = persisted.PowerTier is { } savedTier && Enum.IsDefined(savedTier)
+                ? savedTier
+                : RateControl.TierFromLegacySlider(persisted.SliderPosition);
+            Volatile.Write(ref _selectedTier, (int)resolvedTier);
             _autoPauseOnHit = persisted.AutoPauseOnHit;
 
             _calibrations.Clear();
@@ -168,7 +195,6 @@ public sealed partial class MultiGpuCoordinator : IDisposable
             {
                 _enabledDevices[_devices[0].DeviceKey] = true;
             }
-
         }
 
         try
@@ -279,25 +305,86 @@ public sealed partial class MultiGpuCoordinator : IDisposable
         }
     }
 
-    public void SetSliderPosition(double position)
+    public void SetPowerTier(PowerTier tier)
     {
-        double clamped = Math.Clamp(position, 0.01, 1.0);
+        if (!Enum.IsDefined(tier))
+        {
+            return;
+        }
+
         lock (_lifecycleLock)
         {
-            // Slider cannot be adjusted before or during the initial 30s baseline measurement.
+            // Power tier cannot be adjusted before or during the initial 30s curve measurement.
             if (_state is CoordinatorState.Calibrating or CoordinatorState.Stopping || NeedsFullCalibrationLocked())
             {
                 return;
             }
 
-            Volatile.Write(ref _sliderPosition, clamped);
-            _lastPositiveSliderPosition = clamped;
-            _pausedByZeroSlider = false;
+            Volatile.Write(ref _selectedTier, (int)tier);
             Interlocked.Increment(ref _rateEpoch);
         }
 
-        _stateStore.Update(s => s.SliderPosition = clamped);
+        double legacySlider = RateControl.TierToLegacySlider(tier);
+        _stateStore.Update(s =>
+        {
+            s.PowerTier = tier;
+            s.SliderPosition = legacySlider;
+        });
         PublishTelemetry();
+    }
+
+    public bool InvalidateCalibrationsForRecalibration()
+    {
+        HashSet<string> enabledKeys;
+        List<string> removedKeys;
+        lock (_lifecycleLock)
+        {
+            if (_state is not (CoordinatorState.Idle or CoordinatorState.Faulted))
+            {
+                return false;
+            }
+
+            enabledKeys = _enabledDevices
+                .Where(kv => kv.Value)
+                .Select(kv => kv.Key)
+                .ToHashSet(StringComparer.Ordinal);
+            if (enabledKeys.Count == 0)
+            {
+                return false;
+            }
+
+            removedKeys = _calibrations
+                .Where(kv => enabledKeys.Contains(kv.Value.DeviceKey) || enabledKeys.Any(k => kv.Key.StartsWith(k + "|", StringComparison.Ordinal) || string.Equals(kv.Key, k, StringComparison.Ordinal)))
+                .Select(kv => kv.Key)
+                .ToList();
+
+            foreach (string key in removedKeys)
+            {
+                _calibrations.Remove(key);
+            }
+
+            foreach (string devKey in enabledKeys)
+            {
+                if (_workerStates.TryGetValue(devKey, out WorkerRuntimeState? rt))
+                {
+                    ResetWorkerRuntime(rt);
+                }
+            }
+        }
+
+        if (removedKeys.Count > 0)
+        {
+            _stateStore.Update(s =>
+            {
+                foreach (string key in removedKeys)
+                {
+                    s.Calibrations.Remove(key);
+                }
+            });
+        }
+
+        PublishTelemetry();
+        return true;
     }
 
     public void Pause()
@@ -319,7 +406,6 @@ public sealed partial class MultiGpuCoordinator : IDisposable
 
     public void Resume()
     {
-        double? persistedSlider = null;
         lock (_lifecycleLock)
         {
             if (_state != CoordinatorState.Paused)
@@ -327,16 +413,8 @@ public sealed partial class MultiGpuCoordinator : IDisposable
                 return;
             }
 
-            if (Volatile.Read(ref _sliderPosition) <= 0.0)
-            {
-                double restored = _lastPositiveSliderPosition > 0.0 ? _lastPositiveSliderPosition : 1.0;
-                Volatile.Write(ref _sliderPosition, restored);
-                persistedSlider = restored;
-            }
-
             Interlocked.Exchange(ref _autoPauseTriggered, 0);
             _pausedExplicitly = false;
-            _pausedByZeroSlider = false;
 
             bool needsCal = NeedsFullCalibrationLocked();
             if (needsCal)
@@ -350,11 +428,6 @@ public sealed partial class MultiGpuCoordinator : IDisposable
             }
 
             Interlocked.Increment(ref _rateEpoch);
-        }
-
-        if (persistedSlider.HasValue)
-        {
-            _stateStore.Update(s => s.SliderPosition = persistedSlider.Value);
         }
 
         PublishTelemetry();
@@ -411,20 +484,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
             _activeOpCts = cts;
 
             bool needsFullCal = enabled.Any(d => GetValidatedCalibrationLocked(d) is null);
-
-            bool startPaused = _pausedExplicitly || (!needsFullCal && Volatile.Read(ref _sliderPosition) <= 0.0);
-            if (!needsFullCal && Volatile.Read(ref _sliderPosition) <= 0.0)
-            {
-                _pausedByZeroSlider = true;
-            }
-            else if (needsFullCal && Volatile.Read(ref _sliderPosition) <= 0.0)
-            {
-                // Initial 30s baseline measurement runs at full speed (100%).
-                Volatile.Write(ref _sliderPosition, 1.0);
-                _lastPositiveSliderPosition = 1.0;
-                _pausedByZeroSlider = false;
-                _stateStore.Update(s => s.SliderPosition = 1.0);
-            }
+            bool startPaused = _pausedExplicitly;
 
             _state = startPaused
                 ? CoordinatorState.Paused
@@ -454,6 +514,13 @@ public sealed partial class MultiGpuCoordinator : IDisposable
         catch
         {
             // Ignore shutdown errors during dispose
+        }
+        finally
+        {
+            if (_ownsTelemetrySensor)
+            {
+                try { _telemetrySensor.Dispose(); } catch { }
+            }
         }
     }
 }

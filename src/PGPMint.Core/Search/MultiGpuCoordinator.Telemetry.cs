@@ -20,8 +20,7 @@ public sealed partial class MultiGpuCoordinator
         lock (_lifecycleLock)
         {
             _calibrations.Remove(profileKey);
-            Volatile.Write(ref runtime.ActualHps, 0.0);
-            runtime.BatchSizer = null;
+            ResetWorkerRuntime(runtime);
         }
 
         _stateStore.Update(s => s.Calibrations.Remove(profileKey));
@@ -135,6 +134,14 @@ public sealed partial class MultiGpuCoordinator
             : null;
     }
 
+    private CalibrationRecord? GetValidatedDeviceCalibration(GpuDeviceInfo device)
+    {
+        lock (_lifecycleLock)
+        {
+            return GetValidatedCalibrationLocked(device);
+        }
+    }
+
     private double GetValidatedDeviceBaselineHps(GpuDeviceInfo device)
     {
         lock (_lifecycleLock)
@@ -164,14 +171,25 @@ public sealed partial class MultiGpuCoordinator
         }
     }
 
+    private static void ResetWorkerRuntime(WorkerRuntimeState rt)
+    {
+        Volatile.Write(ref rt.ActualHps, 0.0);
+        Volatile.Write(ref rt.PowerWatts, 0.0);
+        Volatile.Write(ref rt.PowerLimitWatts, 0.0);
+        Volatile.Write(ref rt.HasPowerSensor, 0);
+        Volatile.Write(ref rt.GpuUtilPercent, 0.0);
+        Volatile.Write(ref rt.HasGpuUtilSensor, 0);
+        Volatile.Write(ref rt.IsOverloadYielding, 0);
+        rt.BatchSizer = null;
+    }
+
     private void ResetTransientRates()
     {
         lock (_lifecycleLock)
         {
             foreach (WorkerRuntimeState rt in _workerStates.Values)
             {
-                Volatile.Write(ref rt.ActualHps, 0.0);
-                rt.BatchSizer = null;
+                ResetWorkerRuntime(rt);
             }
         }
     }
@@ -190,13 +208,20 @@ public sealed partial class MultiGpuCoordinator
     private CoordinatorTelemetry BuildTelemetrySnapshot()
     {
         bool paused = IsCurrentlyPaused();
-        double slider = paused ? 0.0 : Volatile.Read(ref _sliderPosition);
+        PowerTier activeTier = SelectedTier;
         double totalActual = 0.0;
         long totalTarget = 0;
         double totalBaseline = 0.0;
         bool allFull = true;
         bool anyEnabled = false;
-        bool isFullSpeed = (_state == CoordinatorState.Calibrating) || (slider >= 1.0 && !paused);
+        int enabledCount = 0;
+        int powerSensorCount = 0;
+        double totalPowerWatts = 0.0;
+        int utilSensorCount = 0;
+        double totalUtilPercent = 0.0;
+        bool anyYielding = false;
+
+        bool isFullSpeed = (_state == CoordinatorState.Calibrating) || (activeTier == PowerTier.Max && !paused);
         ulong sessionChecked;
         SearchWorkMetrics sessionWork;
         ulong totalChecked;
@@ -212,8 +237,16 @@ public sealed partial class MultiGpuCoordinator
                 bool fullCal = cal is not null;
                 double baseline = CalibrationValidator.GetBaselineHps(cal);
                 double actual = rt is not null ? Volatile.Read(ref rt.ActualHps) : 0.0;
+                double powerWatts = rt is not null ? Volatile.Read(ref rt.PowerWatts) : 0.0;
+                double powerLimitWatts = rt is not null ? Volatile.Read(ref rt.PowerLimitWatts) : 0.0;
+                bool hasPower = rt is not null && Volatile.Read(ref rt.HasPowerSensor) != 0 && powerWatts > 0.0;
+                double gpuUtil = rt is not null ? Volatile.Read(ref rt.GpuUtilPercent) : 0.0;
+                bool hasUtil = rt is not null && Volatile.Read(ref rt.HasGpuUtilSensor) != 0;
+                bool isYielding = rt is not null && Volatile.Read(ref rt.IsOverloadYielding) != 0;
 
-                RateDirective dir = enabled ? RateControl.FromSlider(slider, baseline) : new RateDirective(RateMode.Paused, 0);
+                RateDirective dir = enabled && !paused
+                    ? RateControl.FromTier(activeTier, baseline, cal?.EfficiencyProfile)
+                    : new RateDirective(RateMode.Paused, 0);
                 long devTarget = dir.Mode == RateMode.Capped
                     ? dir.TargetHashesPerSecond
                     : (dir.Mode == RateMode.FullSpeed ? (long)Math.Round(baseline) : 0L);
@@ -221,12 +254,30 @@ public sealed partial class MultiGpuCoordinator
                 if (enabled)
                 {
                     anyEnabled = true;
+                    enabledCount++;
                     totalActual += actual;
                     totalBaseline += baseline;
                     totalTarget += devTarget;
                     if (!fullCal)
                     {
                         allFull = false;
+                    }
+
+                    if (hasPower)
+                    {
+                        powerSensorCount++;
+                        totalPowerWatts += powerWatts;
+                    }
+
+                    if (hasUtil)
+                    {
+                        utilSensorCount++;
+                        totalUtilPercent += gpuUtil;
+                    }
+
+                    if (isYielding)
+                    {
+                        anyYielding = true;
                     }
                 }
 
@@ -242,7 +293,13 @@ public sealed partial class MultiGpuCoordinator
                     IsFullCalibrated: fullCal,
                     Error: rt?.Error)
                 {
-                    LastBatchWallMilliseconds = rt?.BatchSizer?.LastDispatchWallMilliseconds ?? 0.0
+                    LastBatchWallMilliseconds = rt?.BatchSizer?.LastDispatchWallMilliseconds ?? 0.0,
+                    PowerWatts = powerWatts,
+                    PowerLimitWatts = powerLimitWatts,
+                    HasPowerSensor = hasPower,
+                    GpuUtilPercent = gpuUtil,
+                    HasGpuUtilSensor = hasUtil,
+                    IsOverloadYielding = isYielding
                 });
             }
 
@@ -257,6 +314,10 @@ public sealed partial class MultiGpuCoordinator
         TimeSpan? eta = (_state is CoordinatorState.Running or CoordinatorState.Calibrating && totalActual > 0.0)
             ? _activePattern?.EstimateMeanWait(totalActual)
             : null;
+
+        bool allEnabledHavePower = enabledCount > 0 && powerSensorCount == enabledCount && totalPowerWatts > 0.0;
+        bool anyEnabledHasUtil = utilSensorCount > 0;
+        double aggregateUtil = anyEnabledHasUtil ? Math.Clamp(totalUtilPercent / utilSensorCount, 0.0, 100.0) : 0.0;
 
         return new CoordinatorTelemetry(
             State: _state,
@@ -276,13 +337,25 @@ public sealed partial class MultiGpuCoordinator
         {
             SessionWork = sessionWork,
             VaultIsFull = _vaultIsFull,
-            Failure = _searchFailure
+            Failure = _searchFailure,
+            ActiveTier = activeTier,
+            TotalPowerWatts = allEnabledHavePower ? totalPowerWatts : 0.0,
+            HasPowerSensor = allEnabledHavePower,
+            AggregateGpuUtilPercent = aggregateUtil,
+            HasGpuUtilSensor = anyEnabledHasUtil,
+            IsOverloadYielding = anyYielding
         };
     }
 
     private sealed class WorkerRuntimeState
     {
         public double ActualHps;
+        public double PowerWatts;
+        public double PowerLimitWatts;
+        public int HasPowerSensor;
+        public double GpuUtilPercent;
+        public int HasGpuUtilSensor;
+        public int IsOverloadYielding;
         public volatile AdaptiveBatchSizer? BatchSizer;
         public string? Error;
     }

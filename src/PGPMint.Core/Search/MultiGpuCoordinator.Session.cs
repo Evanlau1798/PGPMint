@@ -29,7 +29,6 @@ public sealed partial class MultiGpuCoordinator
             if (runningTask is null)
             {
                 _pausedExplicitly = false;
-                _pausedByZeroSlider = false;
                 _state = CoordinatorState.Idle;
                 Volatile.Write(ref _calibrationRemainingSeconds, 0.0);
             }
@@ -73,7 +72,6 @@ public sealed partial class MultiGpuCoordinator
             lock (_lifecycleLock)
             {
                 _pausedExplicitly = false;
-                _pausedByZeroSlider = false;
                 Interlocked.Exchange(ref _autoPauseTriggered, 0);
                 Volatile.Write(ref _calibrationRemainingSeconds, 0.0);
                 if (_activeOpTask is null && _state != CoordinatorState.Faulted)
@@ -286,7 +284,6 @@ public sealed partial class MultiGpuCoordinator
             lock (_lifecycleLock)
             {
                 _pausedExplicitly = false;
-                _pausedByZeroSlider = false;
                 Interlocked.Exchange(ref _autoPauseTriggered, 0);
                 Volatile.Write(ref _calibrationRemainingSeconds, 0.0);
                 if (ReferenceEquals(_activeOpCts, sessionCts))

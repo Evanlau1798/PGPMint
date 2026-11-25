@@ -9,38 +9,50 @@ namespace PGPMint.Tests;
 public partial class CoordinatorCalibrationTests
 {
     [Fact]
-    public void TwoStageSliderMappingAndRateMathMatchSpecification()
+    public void PowerTierMappingAndRateMathMatchSpecification()
     {
-        // Logical -> RateDirective
-        RateDirective dir37 = RateControl.FromSlider(0.37, 22_000_000_000.0);
-        Assert.Equal(RateMode.Capped, dir37.Mode);
-        Assert.Equal(8_140_000_000L, dir37.TargetHashesPerSecond);
+        var profile = new EfficiencyProfile(
+            FullLoadWatts: 346.0,
+            FullLoadGpuUtil: 85.0,
+            HasPowerSensor: true,
+            Eco: new TierOperatingPoint(0.08, 52.5, 19.0, 1.76e9, "natural-plateau"),
+            Balanced: new TierOperatingPoint(0.22, 96.9, 35.0, 4.84e9, "natural-peak"),
+            Efficiency: new TierOperatingPoint(0.70, 275.0, 70.0, 15.40e9, "upper-mid-peak"),
+            Samples: Array.Empty<EfficiencyCurveSample>());
 
-        RateDirective dir99 = RateControl.FromSlider(0.99, 22_000_000_000.0);
-        Assert.Equal(RateMode.Capped, dir99.Mode);
-        Assert.Equal(21_780_000_000L, dir99.TargetHashesPerSecond);
+        RateDirective dirEco = RateControl.FromTier(PowerTier.Eco, 22_000_000_000.0, profile);
+        Assert.Equal(RateMode.Capped, dirEco.Mode);
+        Assert.Equal(1_760_000_000L, dirEco.TargetHashesPerSecond);
 
-        RateDirective dirZero = RateControl.FromSlider(0.0, 22_000_000_000.0);
-        Assert.Equal(RateMode.Paused, dirZero.Mode);
-        Assert.Equal(0L, dirZero.TargetHashesPerSecond);
+        RateDirective dirBal = RateControl.FromTier(PowerTier.Balanced, 22_000_000_000.0, profile);
+        Assert.Equal(RateMode.Capped, dirBal.Mode);
+        Assert.Equal(4_840_000_000L, dirBal.TargetHashesPerSecond);
 
-        RateDirective dirFull = RateControl.FromSlider(1.0, 22_000_000_000.0);
-        Assert.Equal(RateMode.FullSpeed, dirFull.Mode);
+        RateDirective dirEff = RateControl.FromTier(PowerTier.Efficiency, 22_000_000_000.0, profile);
+        Assert.Equal(RateMode.Capped, dirEff.Mode);
+        Assert.Equal(15_400_000_000L, dirEff.TargetHashesPerSecond);
 
-        // Two-stage UI slider (10..990 = 1%..99%, 991..1099 = resistance detent holding 990/99%, 1100..1120 = FullSpeed 1120)
-        Assert.Equal(0.01, RateControl.UiSliderToLogical(0.0), 6);
-        Assert.Equal(0.01, RateControl.UiSliderToLogical(10.0), 6);
-        Assert.Equal(0.50, RateControl.UiSliderToLogical(500.0), 6);
-        Assert.Equal(0.99, RateControl.UiSliderToLogical(990.0), 6);
-        Assert.Equal(0.99, RateControl.UiSliderToLogical(1060.0), 6); // inside resistance detent buffer
-        Assert.Equal(990.0, RateControl.SnapUiSliderOnRelease(1060.0)); // stays pinned at 99% (990)
-        Assert.Equal(1.0, RateControl.UiSliderToLogical(1100.0), 6);
-        Assert.Equal(1120.0, RateControl.SnapUiSliderOnRelease(1105.0)); // snaps to FullSpeed (1120)
-        Assert.Equal(1.0, RateControl.UiSliderToLogical(1120.0), 6);
-        Assert.Equal(1120.0, RateControl.LogicalToUiSlider(1.0));
-        Assert.Equal(990.0, RateControl.LogicalToUiSlider(0.99));
-        Assert.Equal(10.0, RateControl.LogicalToUiSlider(0.01));
-        Assert.Equal(10.0, RateControl.LogicalToUiSlider(0.0));
+        RateDirective dirYieldHalf = RateControl.FromTier(PowerTier.Balanced, 22_000_000_000.0, profile, yieldScale: 0.5);
+        Assert.Equal(RateMode.Capped, dirYieldHalf.Mode);
+        Assert.Equal(2_420_000_000L, dirYieldHalf.TargetHashesPerSecond);
+
+        RateDirective dirYieldZero = RateControl.FromTier(PowerTier.Balanced, 22_000_000_000.0, profile, yieldScale: 0.0);
+        Assert.Equal(RateMode.Paused, dirYieldZero.Mode);
+        Assert.Equal(0L, dirYieldZero.TargetHashesPerSecond);
+
+        RateDirective dirMax = RateControl.FromTier(PowerTier.Max, 22_000_000_000.0, profile, yieldScale: 0.0);
+        Assert.Equal(RateMode.FullSpeed, dirMax.Mode);
+
+        // Legacy slider -> PowerTier migration (Eco -> Balanced -> Efficiency -> Max)
+        Assert.Equal(PowerTier.Eco, RateControl.TierFromLegacySlider(0.01));
+        Assert.Equal(PowerTier.Eco, RateControl.TierFromLegacySlider(0.30));
+        Assert.Equal(PowerTier.Balanced, RateControl.TierFromLegacySlider(0.31));
+        Assert.Equal(PowerTier.Balanced, RateControl.TierFromLegacySlider(0.50));
+        Assert.Equal(PowerTier.Efficiency, RateControl.TierFromLegacySlider(0.55));
+        Assert.Equal(PowerTier.Efficiency, RateControl.TierFromLegacySlider(0.98));
+        Assert.Equal(PowerTier.Max, RateControl.TierFromLegacySlider(0.99));
+        Assert.Equal(PowerTier.Max, RateControl.TierFromLegacySlider(1.0));
+        Assert.Equal(PowerTier.Max, RateControl.TierFromLegacySlider(double.NaN));
     }
 
     [Fact]
@@ -50,10 +62,12 @@ public partial class CoordinatorCalibrationTests
         try
         {
             var gpu = new GpuDeviceInfo("10DE:2206:00000000:A1:0", 1, "RTX 3080", 0x10DE, 0x2206, 0, 0xA1, 10_000_000_000UL, "32.0.16.1088", true);
-            var validRec = new CalibrationRecord(gpu.DeviceKey, gpu.Name, gpu.DriverVersion, "k1", 20e9, 19e9, true, DateTimeOffset.UtcNow);
+            var validRec = new CalibrationRecord(gpu.DeviceKey, gpu.Name, gpu.DriverVersion, "k1", 20e9, 19e9, true, DateTimeOffset.UtcNow,
+                EfficiencyProfile: EfficiencyProfile.CreateFallback(19e9));
 
             Assert.True(CalibrationValidator.IsValidForDevice(validRec, gpu, "k1", requireFull: true));
             Assert.Equal(19e9, CalibrationValidator.GetBaselineHps(validRec));
+            Assert.False(CalibrationValidator.IsValidForDevice(validRec with { EfficiencyProfile = null }, gpu, "k1", requireFull: true));
             Assert.False(CalibrationValidator.IsValidForDevice(validRec with { DriverVersion = "32.0.15.0000" }, gpu, "k1", requireFull: true));
             Assert.False(CalibrationValidator.IsValidForDevice(validRec with { KernelVersion = "k2" }, gpu, "k1", requireFull: true));
 
@@ -65,7 +79,8 @@ public partial class CoordinatorCalibrationTests
                 backend,
                 stateStore,
                 new DpapiVaultStore(tempDir),
-                new CoordinatorOptions { ExpectedKernelVersionOverride = "k2" });
+                new CoordinatorOptions { ExpectedKernelVersionOverride = "k2" },
+                NullGpuTelemetrySensor.Instance);
             coord.Initialize();
 
             Assert.True(coord.NeedsFullCalibration());
@@ -165,7 +180,7 @@ public partial class CoordinatorCalibrationTests
     }
 
     [Fact]
-    public async Task SliderIsLockedDuringInitialCalibrationAndZeroWasteMultiGpuSearchWorks()
+    public async Task PowerTierIsLockedDuringInitialCalibrationAndZeroWasteMultiGpuSearchWorks()
     {
         string tempDir = Path.Combine(Path.GetTempPath(), "pm-coord-" + Guid.NewGuid().ToString("N")[..8]);
         try
@@ -192,38 +207,42 @@ public partial class CoordinatorCalibrationTests
 
             coordinator.Initialize();
             Assert.Equal(2, coordinator.Devices.Count);
-            Assert.Equal(1.0, coordinator.SliderPosition, 6);
+            Assert.Equal(PowerTier.Max, coordinator.SelectedTier);
             Assert.Equal(0.0, coordinator.LatestTelemetry.TotalBaselineHps);
 
             // Start with 1-hex suffix and AutoPauseOnHit=false so 30s (320ms) measurement completes and captures hits
             coordinator.SetAutoPauseOnHit(false);
             var pattern = KeyIdPattern.Parse("0");
-            var sliderDuringCalibration = new TaskCompletionSource<double>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var tierDuringCalibration = new TaskCompletionSource<PowerTier>(TaskCreationOptions.RunContinuationsAsynchronously);
             int observedCalibration = 0;
             coordinator.TelemetryUpdated += (_, telemetry) =>
             {
                 if (telemetry.State == CoordinatorState.Calibrating && Interlocked.Exchange(ref observedCalibration, 1) == 0)
                 {
-                    coordinator.SetSliderPosition(0.4);
-                    sliderDuringCalibration.TrySetResult(coordinator.SliderPosition);
+                    coordinator.SetPowerTier(PowerTier.Eco);
+                    tierDuringCalibration.TrySetResult(coordinator.SelectedTier);
                 }
             };
 
             await coordinator.StartSearchAsync(pattern);
-            Assert.Equal(1.0, await sliderDuringCalibration.Task.WaitAsync(TimeSpan.FromSeconds(2)), 6);
+            Assert.Equal(PowerTier.Max, await tierDuringCalibration.Task.WaitAsync(TimeSpan.FromSeconds(2)));
 
             await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Running, TimeSpan.FromSeconds(5));
 
             var stateAfterCal = stateStore.Load();
-            Assert.True(stateAfterCal.Calibrations.Values.Single(record => record.DeviceKey == gpu0.DeviceKey).IsFullCalibration);
-            Assert.True(stateAfterCal.Calibrations.Values.Single(record => record.DeviceKey == gpu1.DeviceKey).IsFullCalibration);
-            Assert.True(stateAfterCal.Calibrations.Values.Single(record => record.DeviceKey == gpu0.DeviceKey).MedianHashesPerSecond > 0);
+            CalibrationRecord gpu0Cal = stateAfterCal.Calibrations.Values.Single(record => record.DeviceKey == gpu0.DeviceKey);
+            CalibrationRecord gpu1Cal = stateAfterCal.Calibrations.Values.Single(record => record.DeviceKey == gpu1.DeviceKey);
+            Assert.True(gpu0Cal.IsFullCalibration);
+            Assert.True(gpu1Cal.IsFullCalibration);
+            Assert.NotNull(gpu0Cal.EfficiencyProfile);
+            Assert.NotNull(gpu1Cal.EfficiencyProfile);
+            Assert.True(gpu0Cal.MedianHashesPerSecond > 0);
             Assert.True(coordinator.LatestTelemetry.TotalBaselineHps > 0);
             Assert.True(vault.LoadMatches().Count > 0);
 
-            // Adjust slider to 60% capped mode while running
-            coordinator.SetSliderPosition(0.6);
-            Assert.Equal(0.6, coordinator.SliderPosition, 6);
+            // Switch to Efficiency tier while running
+            coordinator.SetPowerTier(PowerTier.Efficiency);
+            Assert.Equal(PowerTier.Efficiency, coordinator.SelectedTier);
             Assert.False(coordinator.LatestTelemetry.VaultIsFull);
             ulong checkedBeforeCap = coordinator.LatestTelemetry.TotalChecked;
             await WaitUntilAsync(() => coordinator.CurrentState == CoordinatorState.Running &&
@@ -275,7 +294,8 @@ public partial class CoordinatorCalibrationTests
             {
                 state.TargetInput = pattern.Suffix;
                 state.Calibrations[profileKey] = new CalibrationRecord(gpu0.DeviceKey, gpu0.Name, gpu0.DriverVersion,
-                    "fake-kernel-v1", 50_000.0, 50_000.0, true, initialTimestamp, workload);
+                    "fake-kernel-v1", 50_000.0, 50_000.0, true, initialTimestamp, workload,
+                    EfficiencyProfile.CreateFallback(50_000.0));
             });
 
             using var coordinator = new MultiGpuCoordinator(
@@ -288,22 +308,25 @@ public partial class CoordinatorCalibrationTests
                     DynamicMedianInterval = TimeSpan.FromMilliseconds(160),
                     TelemetryInterval = TimeSpan.FromMilliseconds(40),
                     ExpectedKernelVersionOverride = "fake-kernel-v1"
-                });
+                },
+                NullGpuTelemetrySensor.Instance);
 
             coordinator.Initialize();
-            Assert.Equal(1.0, coordinator.SliderPosition, 6);
+            Assert.Equal(PowerTier.Max, coordinator.SelectedTier);
 
             await coordinator.StartSearchAsync(pattern);
             await WaitUntilAsync(() =>
                 stateStore.Load().Calibrations[profileKey].CalibratedAtUtc > initialTimestamp,
                 TimeSpan.FromSeconds(4));
 
-            // Dynamic median updated while running in FullSpeed mode
-            DateTimeOffset updatedAtFullSpeed = stateStore.Load().Calibrations[profileKey].CalibratedAtUtc;
+            // Dynamic median updated while running in FullSpeed mode and preserved efficiency profile
+            CalibrationRecord updatedRec = stateStore.Load().Calibrations[profileKey];
+            DateTimeOffset updatedAtFullSpeed = updatedRec.CalibratedAtUtc;
             Assert.True(updatedAtFullSpeed > initialTimestamp);
+            Assert.NotNull(updatedRec.EfficiencyProfile);
 
-            // Move slider to 95% (Capped mode): dynamic median sampling must immediately stop
-            coordinator.SetSliderPosition(0.95);
+            // Switch to Efficiency tier (Capped mode): dynamic median sampling must immediately stop
+            coordinator.SetPowerTier(PowerTier.Efficiency);
             await Task.Delay(60); // settle in-flight tick
             DateTimeOffset stampedAfterCap = stateStore.Load().Calibrations[profileKey].CalibratedAtUtc;
             await Task.Delay(320); // well past DynamicMedianInterval (160ms)
@@ -355,9 +378,9 @@ public partial class CoordinatorCalibrationTests
             // Partial interrupted calibration must NOT be saved as complete
             Assert.True(coordinator.NeedsFullCalibration());
 
-            // Slider cannot be adjusted before 30s full calibration completes
-            coordinator.SetSliderPosition(0.6);
-            Assert.Equal(1.0, coordinator.SliderPosition, 6);
+            // Power tier cannot be adjusted before 30s full calibration completes
+            coordinator.SetPowerTier(PowerTier.Eco);
+            Assert.Equal(PowerTier.Max, coordinator.SelectedTier);
             await Task.Delay(60);
             Assert.Equal(CoordinatorState.Idle, coordinator.CurrentState);
 

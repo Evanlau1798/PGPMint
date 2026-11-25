@@ -18,34 +18,15 @@ public sealed partial class MainViewModel
         bool activeTargetFound = t.State is not (CoordinatorState.Calibrating or CoordinatorState.Faulted)
             && HasMatchForActivePattern();
 
-        // Before or during the initial 30s measurement, hold slider visually at Full Speed (locked).
-        // Once measurement finishes, restore the persisted/coordinator logical slider position.
-        if (t.State == CoordinatorState.Calibrating || !hasMeasuredBaseline)
-        {
-            _wasCalibrating = true;
-            if (Math.Abs(SliderValue - RateControl.UiSliderFullSpeed) > 0.5)
-            {
-                _suppressSliderCallback = true;
-                SliderValue = RateControl.UiSliderFullSpeed;
-                _suppressSliderCallback = false;
-            }
-        }
-        else if (_wasCalibrating)
-        {
-            _wasCalibrating = false;
-            double restoredUi = RateControl.LogicalToUiSlider(_coordinator.SliderPosition);
-            _suppressSliderCallback = true;
-            SliderValue = restoredUi;
-            _suppressSliderCallback = false;
-        }
+        SelectedTier = t.ActiveTier;
+        DisplayTier = (t.State == CoordinatorState.Calibrating || !hasMeasuredBaseline)
+            ? PowerTier.Max
+            : t.ActiveTier;
 
         ActualRateNumber = FormattingHelpers.FormatHashRateValue(t.TotalActualHps);
         ActualRateUnit = FormattingHelpers.FormatHashRateUnit(t.TotalActualHps);
 
-        double logicalSlider = (t.State == CoordinatorState.Calibrating || !hasMeasuredBaseline)
-            ? 1.0
-            : RateControl.UiSliderToLogical(SliderValue);
-        UpdateTargetCapDisplay(logicalSlider, t);
+        UpdateEfficiencyBadge(DisplayTier, t);
         UpdateTraySpeedupHint(t, forceTrayHintTextUpdate);
 
         double rawProgressPercent;
@@ -200,23 +181,49 @@ public sealed partial class MainViewModel
         }
     }
 
-    private void UpdateTargetCapDisplay(double logicalSlider, CoordinatorTelemetry t)
+    private void UpdateEfficiencyBadge(PowerTier displayTier, CoordinatorTelemetry t)
     {
         if (t.State == CoordinatorState.Stopping)
         {
-            TargetCapText = Loc.Stopping;
+            EfficiencyBadgeText = Loc.Stopping;
+            EfficiencyBadgeTooltip = null;
             return;
         }
 
-        bool hasMeasuredBaseline = t.AllEnabledFullyCalibrated && t.TotalBaselineHps > 0.0;
-        if (t.State == CoordinatorState.Calibrating || !hasMeasuredBaseline || logicalSlider >= 1.0)
+        if (t.State is CoordinatorState.Running or CoordinatorState.Calibrating)
         {
-            TargetCapText = Loc.FullSpeed;
+            if (t.HasPowerSensor && t.TotalPowerWatts > 0.0)
+            {
+                double hpw = t.TotalActualHps > 0.0 ? t.TotalActualHps / t.TotalPowerWatts : 0.0;
+                string effText = FormattingHelpers.FormatEfficiencyPerWatt(hpw);
+                EfficiencyBadgeText = effText;
+                string wattsText = FormattingHelpers.FormatWatts(t.TotalPowerWatts);
+                string tip = Loc.FormatPowerTooltip(wattsText, effText);
+                EfficiencyBadgeTooltip = t.IsOverloadYielding ? $"{tip} ({Loc.YieldingSuffix})" : tip;
+                return;
+            }
+
+            if (t.HasGpuUtilSensor)
+            {
+                int utilPct = (int)Math.Clamp(Math.Round(t.AggregateGpuUtilPercent, MidpointRounding.AwayFromZero), 0.0, 100.0);
+                EfficiencyBadgeText = $"{utilPct}%";
+                string tip = Loc.FormatGpuLoadTooltip(utilPct);
+                EfficiencyBadgeTooltip = t.IsOverloadYielding ? $"{tip} ({Loc.YieldingSuffix})" : tip;
+                return;
+            }
+
+            EfficiencyBadgeText = Loc.GetTierLabel(displayTier);
+            EfficiencyBadgeTooltip = null;
             return;
         }
 
-        int pct = (int)Math.Clamp(Math.Round(logicalSlider * 100.0, MidpointRounding.AwayFromZero), 1.0, 99.0);
-        TargetCapText = $"{pct}%";
+        EfficiencyBadgeText = t.State switch
+        {
+            CoordinatorState.Paused => Loc.Paused,
+            CoordinatorState.Faulted => Loc.Error,
+            _ => Loc.Idle
+        };
+        EfficiencyBadgeTooltip = null;
     }
 
     private void UpdateShowTraySpeedupHint(CoordinatorTelemetry t)
@@ -303,9 +310,10 @@ public sealed partial class MainViewModel
         bool busyCal = t.State is CoordinatorState.Calibrating or CoordinatorState.Stopping;
         bool hasMeasuredBaseline = t.AllEnabledFullyCalibrated && t.TotalBaselineHps > 0.0;
         CanEditTarget = t.State is CoordinatorState.Idle or CoordinatorState.Faulted;
-        IsSliderEnabled = HasHardwareGpu && !busyCal && hasMeasuredBaseline;
+        IsTierSelectorEnabled = HasHardwareGpu && !busyCal && hasMeasuredBaseline;
 
         bool hasValidActiveTarget = KeyIdPattern.TryParse(ActiveTargetSuffix, out _, out _);
+        CanRecalibrate = HasHardwareGpu && CanEditTarget && hasValidActiveTarget;
 
         switch (t.State)
         {
@@ -370,10 +378,17 @@ public sealed partial class MainViewModel
         }
 
         bool canToggle = !ShowSetupWizard && CanPrimaryAction;
+        bool canSelectTier = !ShowSetupWizard && IsTierSelectorEnabled;
         _trayIcon.UpdateMenuState(
             Loc.Open,
             toggleLabel,
             canToggle,
+            Loc.TierEco,
+            Loc.TierBalanced,
+            Loc.TierEfficiency,
+            Loc.TierMax,
+            DisplayTier,
+            canSelectTier,
             Loc.TrayMiniHud,
             ShowMiniHudInTray,
             Loc.Quit,

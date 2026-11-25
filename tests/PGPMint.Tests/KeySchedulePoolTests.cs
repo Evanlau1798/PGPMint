@@ -21,9 +21,10 @@ public sealed class KeySchedulePoolTests
             string profile = CalibrationValidator.ProfileKey(backend.Info.DeviceKey, workload);
             stateStore.Update(s => s.Calibrations[profile] = new CalibrationRecord(
                 backend.Info.DeviceKey, backend.Info.Name, backend.Info.DriverVersion,
-                backend.Info.KernelVersion, 1e9, 1e9, true, DateTimeOffset.UtcNow, workload));
+                backend.Info.KernelVersion, 1e9, 1e9, true, DateTimeOffset.UtcNow, workload,
+                EfficiencyProfile.CreateFallback(1e9)));
 
-            using var coordinator = new MultiGpuCoordinator(backend, stateStore, new DpapiVaultStore(directory));
+            using var coordinator = new MultiGpuCoordinator(backend, stateStore, new DpapiVaultStore(directory), telemetrySensor: NullGpuTelemetrySensor.Instance);
             coordinator.Initialize();
 
             await coordinator.StartSearchAsync(pattern);

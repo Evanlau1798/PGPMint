@@ -59,70 +59,37 @@ public sealed partial class MainViewModel
             !string.Equals(parsed?.Suffix, ActiveTargetSuffix, StringComparison.OrdinalIgnoreCase);
     }
 
-    partial void OnSliderValueChanged(double value)
+    public void SelectPowerTier(PowerTier tier)
     {
-        double snappedUi = RateControl.SnapUiSliderOnRelease(value);
-        if (!_suppressSliderCallback && Math.Abs(snappedUi - value) > 0.5)
-        {
-            _suppressSliderCallback = true;
-            SliderValue = snappedUi;
-            _suppressSliderCallback = false;
-            value = snappedUi;
-        }
-
-        double logical = RateControl.UiSliderToLogical(value);
-        UpdateTargetCapDisplay(logical, _coordinator.LatestTelemetry);
-
-        if (_suppressSliderCallback ||
-            _coordinator.CurrentState == CoordinatorState.Calibrating ||
+        if (_coordinator.CurrentState is CoordinatorState.Calibrating or CoordinatorState.Stopping ||
             !_coordinator.LatestTelemetry.AllEnabledFullyCalibrated)
         {
             return;
         }
 
-        _sliderDirty = true;
-        Volatile.Write(ref _pendingSliderPosition, logical);
-        if (Interlocked.Exchange(ref _hasPendingSlider, 1) == 0)
-        {
-            _sliderDebounceTimer.Change(100, Timeout.Infinite);
-        }
+        _coordinator.SetPowerTier(tier);
+        SelectedTier = _coordinator.SelectedTier;
+        DisplayTier = SelectedTier;
     }
 
-    public void CommitSliderRelease()
+    public async Task RecalibrateAsync()
     {
-        if (_coordinator.CurrentState == CoordinatorState.Calibrating ||
-            !_coordinator.LatestTelemetry.AllEnabledFullyCalibrated)
+        if (!CanRecalibrate)
         {
             return;
         }
 
-        double snappedUi = RateControl.SnapUiSliderOnRelease(SliderValue);
-        if (Math.Abs(snappedUi - SliderValue) > 0.5)
-        {
-            _suppressSliderCallback = true;
-            SliderValue = snappedUi;
-            _suppressSliderCallback = false;
-        }
-
-        if (!_sliderDirty)
+        if (!_coordinator.InvalidateCalibrationsForRecalibration())
         {
             return;
         }
 
-        _sliderDirty = false;
-        double logical = RateControl.UiSliderToLogical(snappedUi);
-        Interlocked.Exchange(ref _hasPendingSlider, 0);
-        _sliderDebounceTimer.Change(Timeout.Infinite, Timeout.Infinite);
-        _coordinator.SetSliderPosition(logical);
-    }
+        _fgFullSpeedEmaHps = 0.0;
+        _trayFullSpeedEmaHps = 0.0;
+        _persistedTrayFullSpeedHps = 0.0;
 
-    private void OnSliderDebounceTick(object? state)
-    {
-        if (Interlocked.Exchange(ref _hasPendingSlider, 0) == 1)
-        {
-            double p = Volatile.Read(ref _pendingSliderPosition);
-            _coordinator.SetSliderPosition(p);
-        }
+        FlashNotice(Loc.Recalibrating);
+        await PrimaryActionAsync();
     }
 
     public async Task PrimaryActionAsync()

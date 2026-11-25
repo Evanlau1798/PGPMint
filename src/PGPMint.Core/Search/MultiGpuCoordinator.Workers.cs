@@ -40,28 +40,44 @@ public sealed partial class MultiGpuCoordinator
                 cursor = AdvanceKeyGroupCursor(keys, cursor, warmupStamps, end, retired);
             }
 
-            var samples = new List<double>();
-            long calStart = Stopwatch.GetTimestamp();
-            long windowStart = calStart;
-            long windowChecked = 0;
-            long totalMeasured = 0;
+            if (ct.IsCancellationRequested || IsCurrentlyPaused())
+            {
+                return null;
+            }
 
+            // Prime sensor baseline tick (D3DKMT delta anchor)
+            UpdateRuntimeSensor(rt, _telemetrySensor.Sample(device.Info));
+
+            double totalBudgetSec = Math.Max(0.05, _options.FullCalibrationDuration.TotalSeconds);
+            double fullBudgetSec = Math.Max(0.02, totalBudgetSec * 0.207); // ~6.2s out of 30s; leaves 7 x 3.4s = 23.8s
+            double fullWarmupSkipSec = totalBudgetSec >= 5.0 ? Math.Min(1.5, fullBudgetSec * 0.25) : 0.0;
+            double fullSampleWindowSec = Math.Min(_options.CalibrationWindow.TotalSeconds, Math.Max(0.02, fullBudgetSec * 0.4));
+
+            var allFullHpsSamples = new List<double>();
+            var settledFullHpsSamples = new List<double>();
+            var allFullWattSamples = new List<double>();
+            var settledFullWattSamples = new List<double>();
+            var allFullUtilSamples = new List<double>();
+            var settledFullUtilSamples = new List<double>();
+
+            long calStart = Stopwatch.GetTimestamp();
+            long stage1Start = calStart;
+            long windowStart = stage1Start;
+            long windowChecked = 0;
+            long stage1TotalMeasured = 0;
+
+            // Stage 1: Full-speed maximum output baseline (~21% of budget, ~6.2s out of 30s)
             while (!ct.IsCancellationRequested && !IsCurrentlyPaused())
             {
-                if (Stopwatch.GetElapsedTime(calStart).TotalSeconds >= _options.FullCalibrationDuration.TotalSeconds)
+                double stage1Elapsed = Stopwatch.GetElapsedTime(stage1Start).TotalSeconds;
+                if (stage1Elapsed >= fullBudgetSec && stage1TotalMeasured > 0)
                 {
                     break;
                 }
 
                 if (cursor >= end)
                 {
-                    ZeroKeyGroup(keys);
-                    keys = Array.Empty<Ed25519KeyPair>();
-                    PreparedKeyGroup nextGroup = keyPool.TakeNext(ct);
-                    keys = nextGroup.Keys;
-                    pubKeys = nextGroup.PublicKeys;
-                    end = CurrentTimestampUpperBound();
-                    cursor = InitialTimestampCursor(end);
+                    RotateKeyGroup(keyPool, ref keys, ref pubKeys, ref end, ref cursor, ct);
                 }
 
                 uint stamps = RateControl.ComputeBatchTimestamps(
@@ -71,17 +87,29 @@ public sealed partial class MultiGpuCoordinator
                     end - cursor);
 
                 long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, batchSizer, ct, failureToken, out bool retired);
-
                 cursor = AdvanceKeyGroupCursor(keys, cursor, stamps, end, retired);
                 windowChecked += batchCandidates;
-                totalMeasured += batchCandidates;
+                stage1TotalMeasured += batchCandidates;
 
                 double windowElapsed = Stopwatch.GetElapsedTime(windowStart).TotalSeconds;
-                if (windowElapsed >= _options.CalibrationWindow.TotalSeconds)
+                if (windowElapsed >= fullSampleWindowSec)
                 {
                     double hps = windowChecked / windowElapsed;
-                    samples.Add(hps);
                     Volatile.Write(ref rt.ActualHps, hps);
+                    GpuSensorSample sensor = _telemetrySensor.Sample(device.Info);
+                    UpdateRuntimeSensor(rt, sensor);
+
+                    allFullHpsSamples.Add(hps);
+                    if (sensor.HasPowerWatts && sensor.PowerWatts > 0.0) allFullWattSamples.Add(sensor.PowerWatts);
+                    if (sensor.HasGpuUtil) allFullUtilSamples.Add(sensor.TotalGpuUtil);
+
+                    if (Stopwatch.GetElapsedTime(stage1Start).TotalSeconds >= fullWarmupSkipSec)
+                    {
+                        settledFullHpsSamples.Add(hps);
+                        if (sensor.HasPowerWatts && sensor.PowerWatts > 0.0) settledFullWattSamples.Add(sensor.PowerWatts);
+                        if (sensor.HasGpuUtil) settledFullUtilSamples.Add(sensor.TotalGpuUtil);
+                    }
+
                     windowStart = Stopwatch.GetTimestamp();
                     windowChecked = 0;
                 }
@@ -92,18 +120,182 @@ public sealed partial class MultiGpuCoordinator
                 return null;
             }
 
-            if (samples.Count == 0 && totalMeasured > 0)
+            List<double> fullHpsSource = settledFullHpsSamples.Count > 0 ? settledFullHpsSamples : allFullHpsSamples;
+            if (fullHpsSource.Count == 0 && stage1TotalMeasured > 0)
             {
-                double elapsed = Math.Max(0.001, Stopwatch.GetElapsedTime(calStart).TotalSeconds);
-                samples.Add(totalMeasured / elapsed);
+                double elapsed = Math.Max(0.001, Stopwatch.GetElapsedTime(stage1Start).TotalSeconds);
+                fullHpsSource.Add(stage1TotalMeasured / elapsed);
+                GpuSensorSample tailSensor = _telemetrySensor.Sample(device.Info);
+                UpdateRuntimeSensor(rt, tailSensor);
+                if (tailSensor.HasPowerWatts && tailSensor.PowerWatts > 0.0) allFullWattSamples.Add(tailSensor.PowerWatts);
+                if (tailSensor.HasGpuUtil) allFullUtilSamples.Add(tailSensor.TotalGpuUtil);
             }
 
-            if (samples.Count == 0)
+            if (fullHpsSource.Count == 0)
             {
                 return null;
             }
 
-            return BuildCalibrationRecordFromSamples(device, pattern, samples, priorPeakHps: 0.0);
+            double baselineHps = ComputeMedian(fullHpsSource);
+            double peakHps = fullHpsSource.Max();
+            double fullLoadWatts = ComputeMedian(settledFullWattSamples.Count > 0 ? settledFullWattSamples : allFullWattSamples);
+            double fullLoadGpuUtil = ComputeMedian(settledFullUtilSamples.Count > 0 ? settledFullUtilSamples : allFullUtilSamples);
+
+            // Stage 2: Zero-waste step-down efficiency curve sweep (~79% of budget, ~23.8s out of 30s)
+            double[] fractions = EfficiencyCurveSelector.DefaultStepDownFractions;
+            double remainingSec = Math.Max(0.0, totalBudgetSec - Stopwatch.GetElapsedTime(calStart).TotalSeconds);
+            var curveSamples = new List<EfficiencyCurveSample>(fractions.Length);
+
+            if (remainingSec > 0.005 && baselineHps > 0.0)
+            {
+                double stepBudgetSec = remainingSec / fractions.Length;
+                double settleSec = stepBudgetSec * 0.66; // ~2.24s settle out of 3.4s (> 2.0s P0->P3/P5 hysteresis)
+                double sensorIntervalSec = Math.Min(0.15, Math.Max(0.02, (stepBudgetSec - settleSec) * 0.25));
+
+                foreach (double frac in fractions)
+                {
+                    if (ct.IsCancellationRequested || IsCurrentlyPaused())
+                    {
+                        return null;
+                    }
+
+                    long targetHps = Math.Max(1L, (long)Math.Round(baselineHps * frac, MidpointRounding.AwayFromZero));
+                    var stepDirective = new RateDirective(RateMode.Capped, targetHps);
+
+                    long stepStart = Stopwatch.GetTimestamp();
+                    double readyTimeSec = stepStart / (double)Stopwatch.Frequency;
+                    long measStart = 0;
+                    long measCandidates = 0;
+                    long stepTotalCandidates = 0;
+                    long lastSensorTick = stepStart;
+                    var stepWatts = new List<double>();
+                    var stepUtils = new List<double>();
+
+                    while (!ct.IsCancellationRequested && !IsCurrentlyPaused())
+                    {
+                        double stepElapsed = Stopwatch.GetElapsedTime(stepStart).TotalSeconds;
+                        if (stepElapsed >= stepBudgetSec && stepTotalCandidates > 0)
+                        {
+                            break;
+                        }
+
+                        if (measStart == 0 && stepElapsed >= settleSec)
+                        {
+                            measStart = Stopwatch.GetTimestamp();
+                            lastSensorTick = measStart;
+                            GpuSensorSample prime = _telemetrySensor.Sample(device.Info);
+                            UpdateRuntimeSensor(rt, prime);
+                        }
+
+                        if (measStart != 0 && Stopwatch.GetElapsedTime(lastSensorTick).TotalSeconds >= sensorIntervalSec)
+                        {
+                            GpuSensorSample s = _telemetrySensor.Sample(device.Info);
+                            UpdateRuntimeSensor(rt, s);
+                            if (s.HasPowerWatts && s.PowerWatts > 0.0) stepWatts.Add(s.PowerWatts);
+                            if (s.HasGpuUtil) stepUtils.Add(s.TotalGpuUtil);
+                            lastSensorTick = Stopwatch.GetTimestamp();
+                        }
+
+                        double nowSec = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
+                        if (nowSec < readyTimeSec)
+                        {
+                            double remainStepMs = Math.Max(0.0, (stepBudgetSec - Stopwatch.GetElapsedTime(stepStart).TotalSeconds) * 1000.0);
+                            if (remainStepMs <= 0.5 && stepTotalCandidates > 0)
+                            {
+                                break;
+                            }
+
+                            int sleepMs = (int)Math.Clamp(Math.Min((readyTimeSec - nowSec) * 1000.0, Math.Max(1.0, remainStepMs)), 1.0, 25.0);
+                            Thread.Sleep(sleepMs);
+                            continue;
+                        }
+
+                        if (cursor >= end)
+                        {
+                            RotateKeyGroup(keyPool, ref keys, ref pubKeys, ref end, ref cursor, ct);
+                        }
+
+                        uint stamps = RateControl.ComputeBatchTimestamps(
+                            batchSizer.NextCandidateLimit,
+                            device.KeysPerBatch,
+                            stepDirective,
+                            end - cursor);
+
+                        long batchCandidates = ScanSearchBatch(device, keys, pubKeys, cursor, stamps, pattern, batchSizer, ct, failureToken, out bool retired);
+                        cursor = AdvanceKeyGroupCursor(keys, cursor, stamps, end, retired);
+                        stepTotalCandidates += batchCandidates;
+                        if (measStart != 0)
+                        {
+                            measCandidates += batchCandidates;
+                            double measElapsedLive = Stopwatch.GetElapsedTime(measStart).TotalSeconds;
+                            if (measElapsedLive >= 0.25)
+                            {
+                                Volatile.Write(ref rt.ActualHps, measCandidates / measElapsedLive);
+                            }
+                        }
+                        else if (stepElapsed >= 0.3)
+                        {
+                            Volatile.Write(ref rt.ActualHps, stepTotalCandidates / stepElapsed);
+                        }
+
+                        double afterSec = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
+                        readyTimeSec = Math.Max(afterSec, readyTimeSec + (batchCandidates / (double)targetHps));
+                    }
+
+                    if (ct.IsCancellationRequested || IsCurrentlyPaused())
+                    {
+                        return null;
+                    }
+
+                    // Ensure at least one final sensor reading per step (covers short test durations)
+                    GpuSensorSample endSample = _telemetrySensor.Sample(device.Info);
+                    UpdateRuntimeSensor(rt, endSample);
+                    if (endSample.HasPowerWatts && endSample.PowerWatts > 0.0) stepWatts.Add(endSample.PowerWatts);
+                    if (endSample.HasGpuUtil) stepUtils.Add(endSample.TotalGpuUtil);
+
+                    double stepHps;
+                    if (measStart != 0 && measCandidates > 0)
+                    {
+                        double measElapsed = Math.Max(0.001, Stopwatch.GetElapsedTime(measStart).TotalSeconds);
+                        stepHps = measCandidates / measElapsed;
+                    }
+                    else
+                    {
+                        double stepElapsed = Math.Max(0.001, Stopwatch.GetElapsedTime(stepStart).TotalSeconds);
+                        stepHps = stepTotalCandidates / stepElapsed;
+                    }
+
+                    Volatile.Write(ref rt.ActualHps, stepHps);
+                    curveSamples.Add(new EfficiencyCurveSample(
+                        RateFraction: frac,
+                        MeasuredHps: stepHps,
+                        MeasuredWatts: ComputeMedian(stepWatts),
+                        MeasuredGpuUtil: ComputeMedian(stepUtils)));
+                }
+            }
+
+            if (ct.IsCancellationRequested || IsCurrentlyPaused())
+            {
+                return null;
+            }
+
+            EfficiencyProfile profile = EfficiencyCurveSelector.Select(
+                baselineHps,
+                fullLoadWatts,
+                fullLoadGpuUtil,
+                curveSamples);
+
+            return new CalibrationRecord(
+                DeviceKey: device.Info.DeviceKey,
+                DeviceName: device.Info.Name,
+                DriverVersion: device.Info.DriverVersion,
+                KernelVersion: device.KernelVersion,
+                PeakHashesPerSecond: peakHps,
+                MedianHashesPerSecond: baselineHps,
+                IsFullCalibration: true,
+                CalibratedAtUtc: DateTimeOffset.UtcNow,
+                WorkloadIdentity: CalibrationValidator.WorkloadIdentity(device.Info, pattern),
+                EfficiencyProfile: profile);
         }
         catch (Exception ex)
         {
@@ -140,8 +332,14 @@ public sealed partial class MultiGpuCoordinator
         int seenRateEpoch = -1;
         RateMode lastMode = RateMode.Paused;
 
-        // Dynamic median tracking: active ONLY while slider is continuously at FullSpeed (100%).
+        var yieldController = new OverloadYieldController();
+        long lastSensorPollTs = Stopwatch.GetTimestamp();
+        double sensorPollIntervalSec = Math.Max(0.05, _options.SensorPollInterval.TotalSeconds);
+        bool sensorPrimed = false;
+
+        // Dynamic median tracking: active ONLY while tier is continuously at Max (FullSpeed).
         var fullSpeedSamples = new List<double>();
+        var fullSpeedWattSamples = new List<double>();
         long dynamicMedianStart = Stopwatch.GetTimestamp();
         int minMedianSamples = Math.Max(1, _options.MinDynamicMedianSamples);
 
@@ -151,10 +349,48 @@ public sealed partial class MultiGpuCoordinator
             while (!ct.IsCancellationRequested)
             {
                 int epochBefore = Volatile.Read(ref _rateEpoch);
-                double slider = IsCurrentlyPaused() ? 0.0 : Volatile.Read(ref _sliderPosition);
-                double deviceBaseline = GetValidatedDeviceBaselineHps(device.Info);
-                RateDirective directive = RateControl.FromSlider(slider, deviceBaseline);
+                bool userPaused = IsCurrentlyPaused();
+                PowerTier activeTier = SelectedTier;
+                CalibrationRecord? calRecord = GetValidatedDeviceCalibration(device.Info);
+                double deviceBaseline = CalibrationValidator.GetBaselineHps(calRecord);
                 int epochAfter = Volatile.Read(ref _rateEpoch);
+
+                if (epochBefore != seenRateEpoch || epochAfter != epochBefore)
+                {
+                    yieldController.Reset();
+                    Volatile.Write(ref rt.IsOverloadYielding, 0);
+                }
+
+                // Poll GPU power & engine utilization sensor periodically (for live MH/W badge + overload yield)
+                double sensorDtSec = Stopwatch.GetElapsedTime(lastSensorPollTs).TotalSeconds;
+                if (!userPaused && (!sensorPrimed || sensorDtSec >= sensorPollIntervalSec))
+                {
+                    GpuSensorSample sensor = _telemetrySensor.Sample(device.Info);
+                    UpdateRuntimeSensor(rt, sensor);
+                    if (activeTier == PowerTier.Max && sensor.HasPowerWatts && sensor.PowerWatts > 0.0)
+                    {
+                        fullSpeedWattSamples.Add(sensor.PowerWatts);
+                    }
+                    if (sensorPrimed)
+                    {
+                        yieldController.Update(activeTier, calRecord?.EfficiencyProfile, sensor, sensorDtSec);
+                    }
+                    else
+                    {
+                        sensorPrimed = true;
+                        if (activeTier == PowerTier.Max)
+                        {
+                            yieldController.Reset();
+                        }
+                    }
+
+                    Volatile.Write(ref rt.IsOverloadYielding, yieldController.IsYielding ? 1 : 0);
+                    lastSensorPollTs = Stopwatch.GetTimestamp();
+                }
+
+                RateDirective directive = userPaused
+                    ? new RateDirective(RateMode.Paused, 0L)
+                    : RateControl.FromTier(activeTier, deviceBaseline, calRecord?.EfficiencyProfile, yieldController.YieldScale);
 
                 double nowSec = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
 
@@ -166,6 +402,7 @@ public sealed partial class MultiGpuCoordinator
                     sampleStart = Stopwatch.GetTimestamp();
                     sampleChecked = 0;
                     fullSpeedSamples.Clear();
+                    fullSpeedWattSamples.Clear();
                     dynamicMedianStart = Stopwatch.GetTimestamp();
 
                     if (directive.Mode == RateMode.Paused)
@@ -178,6 +415,7 @@ public sealed partial class MultiGpuCoordinator
                     if (directive.Mode != RateMode.FullSpeed)
                     {
                         fullSpeedSamples.Clear();
+                        fullSpeedWattSamples.Clear();
                         dynamicMedianStart = Stopwatch.GetTimestamp();
                     }
 
@@ -195,22 +433,48 @@ public sealed partial class MultiGpuCoordinator
                             if (Stopwatch.GetElapsedTime(dynamicMedianStart) >= _options.DynamicMedianInterval &&
                                 fullSpeedSamples.Count >= minMedianSamples)
                             {
-                                double priorPeak = GetStoredDevicePeakHps(device.Info);
-                                CalibrationRecord updated = BuildCalibrationRecordFromSamples(device, pattern, fullSpeedSamples, priorPeak);
+                                CalibrationRecord? current = GetValidatedDeviceCalibration(device.Info);
+                                double priorPeak = current?.PeakHashesPerSecond ?? 0.0;
+                                EfficiencyProfile? preservedProfile = current?.EfficiencyProfile;
+                                if (preservedProfile is { HasPowerSensor: true } && fullSpeedWattSamples.Count >= minMedianSamples)
+                                {
+                                    double medianWatts = ComputeMedian(fullSpeedWattSamples);
+                                    if (medianWatts > 0.0)
+                                    {
+                                        preservedProfile = preservedProfile with { FullLoadWatts = medianWatts };
+                                    }
+                                }
+
+                                CalibrationRecord updated = BuildCalibrationRecordFromSamples(
+                                    device,
+                                    pattern,
+                                    fullSpeedSamples,
+                                    priorPeak,
+                                    preservedProfile);
                                 SaveCalibrationRecord(updated);
                                 fullSpeedSamples.Clear();
+                                fullSpeedWattSamples.Clear();
                                 dynamicMedianStart = Stopwatch.GetTimestamp();
                             }
                         }
                     }
                 }
 
-                if (directive.Mode == RateMode.Paused)
+                if (userPaused)
                 {
                     qosScope?.Dispose();
                     qosScope = null;
                     Volatile.Write(ref rt.ActualHps, 0.0);
+                    Volatile.Write(ref rt.IsOverloadYielding, 0);
                     Thread.Sleep(25);
+                    continue;
+                }
+
+                if (directive.Mode == RateMode.Paused)
+                {
+                    // Overload yield to zero: keep worker awake polling sensors until other GPU workload clears
+                    Volatile.Write(ref rt.ActualHps, 0.0);
+                    Thread.Sleep(40);
                     continue;
                 }
 
@@ -225,13 +489,7 @@ public sealed partial class MultiGpuCoordinator
 
                 if (cursor >= end)
                 {
-                    ZeroKeyGroup(keys);
-                    keys = Array.Empty<Ed25519KeyPair>();
-                    PreparedKeyGroup nextGroup = keyPool.TakeNext(ct);
-                    keys = nextGroup.Keys;
-                    pubKeys = nextGroup.PublicKeys;
-                    end = CurrentTimestampUpperBound();
-                    cursor = InitialTimestampCursor(end);
+                    RotateKeyGroup(keyPool, ref keys, ref pubKeys, ref end, ref cursor, ct);
                 }
 
                 uint stamps = RateControl.ComputeBatchTimestamps(
@@ -263,16 +521,64 @@ public sealed partial class MultiGpuCoordinator
         finally
         {
             qosScope?.Dispose();
-            Volatile.Write(ref rt.ActualHps, 0.0);
+            ResetWorkerRuntime(rt);
             ZeroKeyGroup(keys);
         }
+    }
+
+    private static void RotateKeyGroup(
+        KeySchedulePool keyPool,
+        ref Ed25519KeyPair[] keys,
+        ref byte[][] pubKeys,
+        ref uint end,
+        ref uint cursor,
+        CancellationToken ct)
+    {
+        ZeroKeyGroup(keys);
+        keys = Array.Empty<Ed25519KeyPair>();
+        PreparedKeyGroup nextGroup = keyPool.TakeNext(ct);
+        keys = nextGroup.Keys;
+        pubKeys = nextGroup.PublicKeys;
+        end = CurrentTimestampUpperBound();
+        cursor = InitialTimestampCursor(end);
+    }
+
+    private static void UpdateRuntimeSensor(WorkerRuntimeState rt, GpuSensorSample sensor)
+    {
+        if (sensor.HasPowerWatts && sensor.PowerWatts > 0.0)
+        {
+            Volatile.Write(ref rt.PowerWatts, sensor.PowerWatts);
+            Volatile.Write(ref rt.PowerLimitWatts, sensor.PowerLimitWatts);
+            Volatile.Write(ref rt.HasPowerSensor, 1);
+        }
+
+        if (sensor.HasGpuUtil)
+        {
+            Volatile.Write(ref rt.GpuUtilPercent, Math.Clamp(sensor.TotalGpuUtil, 0.0, 100.0));
+            Volatile.Write(ref rt.HasGpuUtilSensor, 1);
+        }
+    }
+
+    private static double ComputeMedian(List<double> values)
+    {
+        if (values.Count == 0)
+        {
+            return 0.0;
+        }
+
+        var sorted = new List<double>(values);
+        sorted.Sort();
+        return sorted.Count % 2 == 1
+            ? sorted[sorted.Count / 2]
+            : 0.5 * (sorted[sorted.Count / 2 - 1] + sorted[sorted.Count / 2]);
     }
 
     private static CalibrationRecord BuildCalibrationRecordFromSamples(
         IGpuSearchDevice device,
         KeyIdPattern pattern,
         List<double> samples,
-        double priorPeakHps)
+        double priorPeakHps,
+        EfficiencyProfile? existingProfile)
     {
         var sorted = new List<double>(samples);
         sorted.Sort();
@@ -280,6 +586,8 @@ public sealed partial class MultiGpuCoordinator
         double median = sorted.Count % 2 == 1
             ? sorted[sorted.Count / 2]
             : 0.5 * (sorted[sorted.Count / 2 - 1] + sorted[sorted.Count / 2]);
+
+        EfficiencyProfile profile = existingProfile ?? EfficiencyProfile.CreateFallback(median);
 
         return new CalibrationRecord(
             DeviceKey: device.Info.DeviceKey,
@@ -290,7 +598,8 @@ public sealed partial class MultiGpuCoordinator
             MedianHashesPerSecond: median,
             IsFullCalibration: true,
             CalibratedAtUtc: DateTimeOffset.UtcNow,
-            WorkloadIdentity: CalibrationValidator.WorkloadIdentity(device.Info, pattern));
+            WorkloadIdentity: CalibrationValidator.WorkloadIdentity(device.Info, pattern),
+            EfficiencyProfile: profile);
     }
 
     private bool HandleVerifiedHits(
@@ -405,7 +714,7 @@ public sealed partial class MultiGpuCoordinator
     }
 
     private bool IsCurrentlyPaused() =>
-        _pausedExplicitly || _pausedByZeroSlider || Volatile.Read(ref _autoPauseTriggered) != 0;
+        _pausedExplicitly || Volatile.Read(ref _autoPauseTriggered) != 0;
 
     private long ScanSearchBatch(
         IGpuSearchDevice device,

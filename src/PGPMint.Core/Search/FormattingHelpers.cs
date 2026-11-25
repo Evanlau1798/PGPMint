@@ -80,6 +80,49 @@ public static class FormattingHelpers
             : string.Format(CultureInfo.InvariantCulture, "{0:F2} GH/s", ghs);
     }
 
+    public static string FormatEfficiencyPerWatt(double hashesPerWatt)
+    {
+        if (hashesPerWatt <= 0.0 || double.IsNaN(hashesPerWatt) || double.IsInfinity(hashesPerWatt))
+        {
+            return "0.0 MH/W";
+        }
+
+        double mhpw = hashesPerWatt / 1_000_000.0;
+        if (Math.Round(mhpw + 1e-12, 1, MidpointRounding.AwayFromZero) >= 100.0)
+        {
+            double ghpw = hashesPerWatt / 1_000_000_000.0;
+            if (Math.Round(ghpw + 1e-12, 2, MidpointRounding.AwayFromZero) >= 100.0)
+            {
+                double rounded1 = Math.Round(ghpw + 1e-12, 1, MidpointRounding.AwayFromZero);
+                return string.Format(CultureInfo.InvariantCulture, "{0:F1} GH/W", rounded1);
+            }
+
+            double rounded2 = Math.Round(ghpw + 1e-12, 2, MidpointRounding.AwayFromZero);
+            return string.Format(CultureInfo.InvariantCulture, "{0:F2} GH/W", rounded2);
+        }
+
+        if (Math.Round(mhpw + 1e-12, 2, MidpointRounding.AwayFromZero) >= 1.0)
+        {
+            double rounded1 = Math.Round(mhpw + 1e-12, 1, MidpointRounding.AwayFromZero);
+            return string.Format(CultureInfo.InvariantCulture, "{0:F1} MH/W", rounded1);
+        }
+
+        double rounded2Low = Math.Round(mhpw + 1e-12, 2, MidpointRounding.AwayFromZero);
+        return string.Format(CultureInfo.InvariantCulture, "{0:F2} MH/W", rounded2Low);
+    }
+
+    public static string FormatWatts(double watts)
+    {
+        if (watts <= 0.0 || double.IsNaN(watts) || double.IsInfinity(watts))
+        {
+            return "0 W";
+        }
+
+        return watts >= 100.0
+            ? string.Format(CultureInfo.InvariantCulture, "{0:F0} W", watts)
+            : string.Format(CultureInfo.InvariantCulture, "{0:F1} W", watts);
+    }
+
     public static string FormatCheckedCount(ulong count)
     {
         if (count < 10_000UL)

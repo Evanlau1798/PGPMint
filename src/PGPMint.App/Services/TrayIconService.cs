@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using PGPMint.Core.Search;
 
 namespace PGPMint.App.Services;
 
@@ -38,6 +39,10 @@ public sealed class TrayIconService : IDisposable
     private const uint CmdToggle = 1002;
     private const uint CmdToggleMiniHud = 1003;
     private const uint CmdQuit = 1004;
+    private const uint CmdTierEco = 1010;
+    private const uint CmdTierBalanced = 1011;
+    private const uint CmdTierEfficiency = 1012;
+    private const uint CmdTierMax = 1013;
 
     private readonly string _className = "PGPMintTrayHost_" + Guid.NewGuid().ToString("N")[..8];
     private readonly WndProcDelegate _wndProc;
@@ -54,12 +59,19 @@ public sealed class TrayIconService : IDisposable
     private string _openLabel = "Open";
     private string _toggleLabel = "Start";
     private bool _canToggleSearch = true;
+    private string _tierEcoLabel = "Eco";
+    private string _tierBalancedLabel = "Balanced";
+    private string _tierEfficiencyLabel = "Efficiency";
+    private string _tierMaxLabel = "Max";
+    private PowerTier _activeTier = PowerTier.Max;
+    private bool _canSelectTier;
     private string _miniHudLabel = "Floating HUD";
     private bool _miniHudChecked = true;
     private string _quitLabel = "Quit";
 
     public event EventHandler? OpenRequested;
     public event EventHandler? ToggleSearchRequested;
+    public event EventHandler<PowerTier>? PowerTierRequested;
     public event EventHandler? ToggleMiniHudRequested;
     public event EventHandler? QuitRequested;
 
@@ -78,6 +90,12 @@ public sealed class TrayIconService : IDisposable
         string openLabel,
         string toggleLabel,
         bool canToggleSearch,
+        string tierEcoLabel,
+        string tierBalancedLabel,
+        string tierEfficiencyLabel,
+        string tierMaxLabel,
+        PowerTier activeTier,
+        bool canSelectTier,
         string miniHudLabel,
         bool miniHudChecked,
         string quitLabel,
@@ -87,6 +105,12 @@ public sealed class TrayIconService : IDisposable
         _openLabel = openLabel;
         _toggleLabel = toggleLabel;
         _canToggleSearch = canToggleSearch;
+        _tierEcoLabel = tierEcoLabel;
+        _tierBalancedLabel = tierBalancedLabel;
+        _tierEfficiencyLabel = tierEfficiencyLabel;
+        _tierMaxLabel = tierMaxLabel;
+        _activeTier = activeTier;
+        _canSelectTier = canSelectTier;
         _miniHudLabel = miniHudLabel;
         _miniHudChecked = miniHudChecked;
         _quitLabel = quitLabel;
@@ -234,6 +258,18 @@ public sealed class TrayIconService : IDisposable
                 case CmdToggle:
                     ToggleSearchRequested?.Invoke(this, EventArgs.Empty);
                     break;
+                case CmdTierEco:
+                    PowerTierRequested?.Invoke(this, PowerTier.Eco);
+                    break;
+                case CmdTierBalanced:
+                    PowerTierRequested?.Invoke(this, PowerTier.Balanced);
+                    break;
+                case CmdTierEfficiency:
+                    PowerTierRequested?.Invoke(this, PowerTier.Efficiency);
+                    break;
+                case CmdTierMax:
+                    PowerTierRequested?.Invoke(this, PowerTier.Max);
+                    break;
                 case CmdToggleMiniHud:
                     ToggleMiniHudRequested?.Invoke(this, EventArgs.Empty);
                     break;
@@ -281,6 +317,13 @@ public sealed class TrayIconService : IDisposable
 
             AppendMenuW(menu, MfString, CmdOpen, _openLabel);
             AppendMenuW(menu, MfString | (_canToggleSearch ? 0u : (MfGrayed | MfDisabled)), CmdToggle, _toggleLabel);
+            AppendMenuW(menu, MfSeparator, 0, null);
+            uint tierDisabled = _canSelectTier ? 0u : (MfGrayed | MfDisabled);
+            AppendMenuW(menu, MfString | tierDisabled | (_activeTier == PowerTier.Eco ? MfChecked : 0u), CmdTierEco, _tierEcoLabel);
+            AppendMenuW(menu, MfString | tierDisabled | (_activeTier == PowerTier.Balanced ? MfChecked : 0u), CmdTierBalanced, _tierBalancedLabel);
+            AppendMenuW(menu, MfString | tierDisabled | (_activeTier == PowerTier.Efficiency ? MfChecked : 0u), CmdTierEfficiency, _tierEfficiencyLabel);
+            AppendMenuW(menu, MfString | tierDisabled | (_activeTier == PowerTier.Max ? MfChecked : 0u), CmdTierMax, _tierMaxLabel);
+            AppendMenuW(menu, MfSeparator, 0, null);
             AppendMenuW(menu, MfString | (_miniHudChecked ? MfChecked : 0u), CmdToggleMiniHud, _miniHudLabel);
             AppendMenuW(menu, MfSeparator, 0, null);
             AppendMenuW(menu, MfString, CmdQuit, _quitLabel);

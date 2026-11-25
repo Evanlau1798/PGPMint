@@ -27,6 +27,15 @@
                 <Setter Property="MinWidth" Value="32" />
                 <Setter Property="MinHeight" Value="30" />
             </Style>
+
+            <Style x:Key="TierGhostButtonStyle" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="8,0" />
+                <Setter Property="CornerRadius" Value="4" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="FontWeight" Value="Normal" />
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

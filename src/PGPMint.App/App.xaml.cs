@@ -84,6 +84,7 @@ public partial class App : Application
             }
         });
         _trayIcon.ToggleMiniHudRequested += (_, _) => dispatcher.TryEnqueue(() => _viewModel?.ToggleMiniHudInTray());
+        _trayIcon.PowerTierRequested += (_, tier) => dispatcher.TryEnqueue(() => _viewModel?.SelectPowerTier(tier));
         _trayIcon.QuitRequested += (_, _) => dispatcher.TryEnqueue(async () => await RequestQuitAsync());
 
         _miniHud.OpenRequested += (_, _) => dispatcher.TryEnqueue(() => _mainWindow?.ShowAndActivate());

@@ -59,13 +59,14 @@ public sealed class CoordinatorDeviceRecoveryTests
             {
                 stateStore.Update(state => state.Calibrations[profile] =
                     new CalibrationRecord(backend.Info.DeviceKey, backend.Info.Name, backend.Info.DriverVersion,
-                        backend.Info.KernelVersion, 1e9, 1e9, true, DateTimeOffset.UtcNow, workload));
+                        backend.Info.KernelVersion, 1e9, 1e9, true, DateTimeOffset.UtcNow, workload,
+                        EfficiencyProfile.CreateFallback(1e9)));
             }
 
-            using var coordinator = new MultiGpuCoordinator(backend, stateStore, new DpapiVaultStore(directory));
+            using var coordinator = new MultiGpuCoordinator(backend, stateStore, new DpapiVaultStore(directory), telemetrySensor: NullGpuTelemetrySensor.Instance);
             coordinator.Initialize();
             coordinator.SetTargetPattern(pattern);
-            coordinator.SetSliderPosition(1);
+            coordinator.SetPowerTier(PowerTier.Max);
             Assert.Equal(!calibrated, coordinator.NeedsFullCalibration());
             var faulted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             coordinator.TelemetryUpdated += (_, telemetry) =>
