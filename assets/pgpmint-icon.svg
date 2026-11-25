@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="PGPMint">
+  <defs>
+    <linearGradient id="bgGrad" x1="12%" y1="6%" x2="88%" y2="94%">
+      <stop offset="0%" stop-color="#0E2D25"/>
+      <stop offset="52%" stop-color="#081C17"/>
+      <stop offset="100%" stop-color="#05110E"/>
+    </linearGradient>
+
+    <radialGradient id="topGlow" cx="50%" cy="24%" r="60%">
+      <stop offset="0%" stop-color="#34D399" stop-opacity="0.28"/>
+      <stop offset="55%" stop-color="#10B981" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#10B981" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="tileRim" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#6EE7B7" stop-opacity="0.48"/>
+      <stop offset="45%" stop-color="#10B981" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#047857" stop-opacity="0.32"/>
+    </linearGradient>
+
+    <linearGradient id="octStroke" x1="18%" y1="10%" x2="82%" y2="90%">
+      <stop offset="0%" stop-color="#A7F3D0"/>
+      <stop offset="38%" stop-color="#34D399"/>
+      <stop offset="76%" stop-color="#10B981"/>
+      <stop offset="100%" stop-color="#047857"/>
+    </linearGradient>
+
+    <linearGradient id="innerPlate" x1="25%" y1="12%" x2="75%" y2="88%">
+      <stop offset="0%" stop-color="#10362B"/>
+      <stop offset="100%" stop-color="#061713"/>
+    </linearGradient>
+
+    <linearGradient id="keyLight" x1="28%" y1="12%" x2="74%" y2="88%">
+      <stop offset="0%" stop-color="#ECFDF5"/>
+      <stop offset="42%" stop-color="#6EE7B7"/>
+      <stop offset="100%" stop-color="#10B981"/>
+    </linearGradient>
+
+    <linearGradient id="keyFacet" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#34D399" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="emblemShadow" x="-18%" y="-18%" width="136%" height="136%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#020A08" flood-opacity="0.62"/>
+    </filter>
+  </defs>
+
+  <!-- Rounded app tile -->
+  <rect x="64" y="64" width="896" height="896" rx="206" fill="url(#bgGrad)"/>
+  <rect x="64" y="64" width="896" height="896" rx="206" fill="url(#topGlow)"/>
+  <rect x="68" y="68" width="888" height="888" rx="202" fill="none" stroke="url(#tileRim)" stroke-width="8"/>
+
+  <!-- Chamfered minted octagon coin -->
+  <g filter="url(#emblemShadow)">
+    <polygon
+      points="380,192 644,192 832,380 832,644 644,832 380,832 192,644 192,380"
+      fill="url(#innerPlate)"
+      stroke="url(#octStroke)"
+      stroke-width="34"
+      stroke-linejoin="miter"/>
+
+    <!-- Inner precision bezel -->
+    <polygon
+      points="402,240 622,240 784,402 784,622 622,784 402,784 240,622 240,402"
+      fill="none"
+      stroke="#34D399"
+      stroke-opacity="0.22"
+      stroke-width="6"/>
+  </g>
+
+  <!-- Four cardinal mint ticks -->
+  <g stroke="#6EE7B7" stroke-opacity="0.42" stroke-width="10" stroke-linecap="round">
+    <line x1="512" y1="226" x2="512" y2="254"/>
+    <line x1="512" y1="770" x2="512" y2="798"/>
+    <line x1="226" y1="512" x2="254" y2="512"/>
+    <line x1="770" y1="512" x2="798" y2="512"/>
+  </g>
+
+  <!-- Central forged geometric OpenPGP key -->
+  <g filter="url(#emblemShadow)">
+    <path
+      fill="url(#keyLight)"
+      fill-rule="evenodd"
+      d="M 512 286
+         L 632 406
+         L 546 492
+         L 546 574
+         L 632 574
+         L 632 622
+         L 546 622
+         L 546 658
+         L 606 658
+         L 606 704
+         L 546 704
+         L 546 734
+         L 512 762
+         L 478 734
+         L 478 492
+         L 392 406
+         Z
+         M 512 350
+         L 456 406
+         L 512 462
+         L 568 406
+         Z"/>
+    <!-- Subtle top-left specular facet on key head -->
+    <polygon points="512,286 632,406 568,406 512,350 456,406 392,406" fill="url(#keyFacet)"/>
+  </g>
+</svg>

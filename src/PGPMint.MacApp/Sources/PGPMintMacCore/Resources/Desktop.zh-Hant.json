@@ -25,7 +25,7 @@
     "ExportRequired": "請指定 UID 姓名或電子郵件，並輸入非空匯出密碼。",
     "SelectionRequired": "請先選取已儲存金鑰。",
     "LocalFileRequired": "安全匯出需要本機檔案系統路徑。",
-    "PowerTier": "功耗等級（完成校準後可調整）",
+    "PowerTier": "功耗等級",
     "TargetRequired": "請輸入目標 Key ID 結尾。",
     "BackendError": "GPU 探測失敗，請檢查顯示卡驅動與運算執行環境。",
     "UnlockFailed": "無法解鎖金鑰庫。請檢查密碼、資料完整性，以及是否有其他 PGPMint 工作階段。",

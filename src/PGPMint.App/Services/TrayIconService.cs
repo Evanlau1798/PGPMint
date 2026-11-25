@@ -81,7 +81,7 @@ public sealed class TrayIconService : IDisposable
     {
         _wndProc = WindowProc;
         _taskbarCreatedMsg = RegisterWindowMessageW("TaskbarCreated");
-        _hIcon = CreateProgrammaticIcon();
+        _hIcon = AppIconLoader.LoadIcon(32);
         CreateMessageWindow();
         AddTrayIcon();
     }
@@ -344,91 +344,6 @@ public sealed class TrayIconService : IDisposable
         }
     }
 
-    private static IntPtr CreateProgrammaticIcon()
-    {
-        const int size = 32;
-        uint[] pixels = new uint[size * size];
-
-        const double center = (size - 1) / 2.0;
-        for (int y = 0; y < size; y++)
-        {
-            for (int x = 0; x < size; x++)
-            {
-                double dx = Math.Abs(x - center);
-                double dy = Math.Abs(y - center);
-                double d = Math.Max(Math.Max(dx, dy), (dx + dy) * 0.72);
-                double inner = dx + dy;
-
-                uint argb;
-                if (d > 14.5)
-                {
-                    argb = 0x00000000u;
-                }
-                else if (d > 12.6)
-                {
-                    argb = 0xFF0E9F6Eu;
-                }
-                else if (inner < 5.2 && !(dx < 2.2 && dy < 2.2))
-                {
-                    argb = 0xFF34D399u;
-                }
-                else if (dx < 2.2 && dy < 2.2)
-                {
-                    argb = 0xFF0B1F1Au;
-                }
-                else
-                {
-                    argb = 0xFF102A23u;
-                }
-
-                pixels[y * size + x] = argb;
-            }
-        }
-
-        var bmi = new BITMAPINFOHEADER
-        {
-            biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>(),
-            biWidth = size,
-            biHeight = -size,
-            biPlanes = 1,
-            biBitCount = 32,
-            biCompression = 0
-        };
-
-        IntPtr hColor = CreateDIBSection(IntPtr.Zero, ref bmi, 0, out IntPtr bitsPtr, IntPtr.Zero, 0);
-        if (hColor == IntPtr.Zero)
-        {
-            return LoadIconW(IntPtr.Zero, (IntPtr)32512);
-        }
-
-        IntPtr hMask = CreateBitmap(size, size, 1, 1, IntPtr.Zero);
-        try
-        {
-            unsafe
-            {
-                pixels.AsSpan().CopyTo(new Span<uint>((void*)bitsPtr, pixels.Length));
-            }
-
-            var iconInfo = new ICONINFO
-            {
-                fIcon = true,
-                hbmColor = hColor,
-                hbmMask = hMask
-            };
-
-            IntPtr hIcon = CreateIconIndirect(ref iconInfo);
-            return hIcon != IntPtr.Zero ? hIcon : LoadIconW(IntPtr.Zero, (IntPtr)32512);
-        }
-        finally
-        {
-            DeleteObject(hColor);
-            if (hMask != IntPtr.Zero)
-            {
-                DeleteObject(hMask);
-            }
-        }
-    }
-
     public void Dispose()
     {
         if (_disposed)
@@ -504,33 +419,6 @@ public sealed class TrayIconService : IDisposable
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT { public int X; public int Y; }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct BITMAPINFOHEADER
-    {
-        public uint biSize;
-        public int biWidth;
-        public int biHeight;
-        public ushort biPlanes;
-        public ushort biBitCount;
-        public uint biCompression;
-        public uint biSizeImage;
-        public int biXPelsPerMeter;
-        public int biYPelsPerMeter;
-        public uint biClrUsed;
-        public uint biClrImportant;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct ICONINFO
-    {
-        [MarshalAs(UnmanagedType.Bool)]
-        public bool fIcon;
-        public int xHotspot;
-        public int yHotspot;
-        public IntPtr hbmMask;
-        public IntPtr hbmColor;
-    }
-
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool Shell_NotifyIconW(uint dwMessage, ref NOTIFYICONDATAW lpData);
@@ -589,26 +477,9 @@ public sealed class TrayIconService : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool PostMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern IntPtr LoadIconW(IntPtr hInstance, IntPtr lpIconName);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr CreateIconIndirect(ref ICONINFO piconinfo);
-
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DestroyIcon(IntPtr hIcon);
-
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr CreateDIBSection(
-        IntPtr hdc, ref BITMAPINFOHEADER pbmi, uint usage, out IntPtr ppvBits, IntPtr hSection, uint offset);
-
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr CreateBitmap(int nWidth, int nHeight, uint nPlanes, uint nBitCount, IntPtr lpBits);
-
-    [DllImport("gdi32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool DeleteObject(IntPtr hObject);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr GetModuleHandleW(string? lpModuleName);

@@ -12,6 +12,7 @@
     <ProjectReference Include="../PGPMint.Core/PGPMint.Core.csproj" />
     <EmbeddedResource Include="../PGPMint.App/Strings/*.json" Link="Strings/%(Filename)%(Extension)" />
     <EmbeddedResource Include="Strings/*.json" WithCulture="false" />
+    <EmbeddedResource Include="Assets/pgpmint-icon.png" />
     <InternalsVisibleTo Include="PGPMint.Desktop.Tests" />
     <Compile Remove="**/obj/**/*.cs;**/bin/**/*.cs" />
   </ItemGroup>

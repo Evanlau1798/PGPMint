@@ -5,6 +5,7 @@
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <RootNamespace>PGPMint.App</RootNamespace>
     <AssemblyName>PGPMint</AssemblyName>
+    <ApplicationIcon>Assets\PGPMint.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
@@ -41,6 +42,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Strings\*.json" />
+    <EmbeddedResource Include="Assets\PGPMint.ico" />
     <Content Include="Strings\*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

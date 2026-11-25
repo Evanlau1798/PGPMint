@@ -121,6 +121,10 @@ def macos_app(native_binary, resource_bundles, host_published, parent, tag):
             )
     host_published.rmdir()
 
+    app_icon = MACAPP_DIR / "Resources" / "AppIcon.icns"
+    if app_icon.is_file():
+        shutil.copy2(app_icon, contents / "Resources" / "AppIcon.icns")
+
     info = {
         "CFBundleIdentifier": "org.pgpmint.desktop", "CFBundleName": "PGPMint",
         "CFBundleDisplayName": "PGPMint", "CFBundlePackageType": "APPL",
@@ -128,6 +132,8 @@ def macos_app(native_binary, resource_bundles, host_published, parent, tag):
         "CFBundleVersion": tag[1:].split("-")[0], "LSMinimumSystemVersion": "14.0",
         "NSHighResolutionCapable": True,
     }
+    if app_icon.is_file():
+        info["CFBundleIconFile"] = "AppIcon"
     with (contents / "Info.plist").open("wb") as stream:
         plistlib.dump(info, stream)
     return app
@@ -258,6 +264,12 @@ def package(rid, tag, scratch, platform):
     else:
         desktop = stage / "desktop"
         publish("PGPMint.Desktop", desktop, rid, platform, tag)
+        svg_icon = ROOT / "assets" / "pgpmint-icon.svg"
+        if svg_icon.is_file():
+            shutil.copy2(svg_icon, desktop / "pgpmint.svg")
+        png_icon = ROOT / "src" / "PGPMint.Desktop" / "Assets" / "pgpmint-icon.png"
+        if png_icon.is_file():
+            shutil.copy2(png_icon, desktop / "pgpmint.png")
     instructions(stage, rid, tag)
     dist.mkdir(parents=True, exist_ok=True)
     testing = dist / f"TESTING-{rid}.txt"

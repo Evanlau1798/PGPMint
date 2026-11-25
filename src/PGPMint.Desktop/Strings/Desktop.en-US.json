@@ -25,7 +25,7 @@
     "ExportRequired": "Specify a UID name or email and a nonempty export passphrase.",
     "SelectionRequired": "Select a saved key first.",
     "LocalFileRequired": "Choose a local filesystem path for secure export.",
-    "PowerTier": "Power tier (available after calibration)",
+    "PowerTier": "Power tier",
     "TargetRequired": "Enter a target Key ID suffix.",
     "BackendError": "GPU discovery failed. Check the graphics driver and supported compute runtime.",
     "UnlockFailed": "Unable to unlock vault. Check the password, data integrity and whether another PGPMint session is open.",

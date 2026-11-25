@@ -29,7 +29,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menuBar = MenuBarController(
             model: model,
             onShowWindow: { [weak self] in self?.showMainWindow() },
-            onHideWindow: { [weak self] in self?.hideMainWindow() },
             onOpenSettings: { [weak self] in self?.openSettingsWindow() },
             onQuit: { [weak self] in self?.requestQuit() }
         )

@@ -96,6 +96,8 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(info["CFBundleShortVersionString"], "1.2.3")
         self.assertEqual(info["LSMinimumSystemVersion"], "14.0")
         self.assertEqual(info["CFBundlePackageType"], "APPL")
+        self.assertEqual(info["CFBundleIconFile"], "AppIcon")
+        self.assertTrue((app / "Contents/Resources/AppIcon.icns").is_file())
         self.assertTrue((app / "Contents/Helpers/libpgpmint_metal.dylib").is_file())
 
     def test_cross_built_linux_apphosts_have_execute_bits_even_when_source_has_none(self):
@@ -183,9 +185,13 @@ class PackagingTests(unittest.TestCase):
                 self.assertIn("NOT VERIFIED", (stage / "TESTING.txt").read_text())
                 if rid.startswith("osx-"):
                     self.assertTrue((stage / "desktop/PGPMint.app/Contents/MacOS/PGPMint").is_file())
+                    self.assertTrue((stage / "desktop/PGPMint.app/Contents/Resources/AppIcon.icns").is_file())
                     self.assertTrue((stage / "desktop/PGPMint.app/Contents/Helpers/pgpmint-host").is_file())
                     self.assertTrue((stage / "desktop/PGPMint.app/Contents/Helpers/libMoltenVK.dylib").is_file())
                     self.assertTrue((stage / "cli/licenses/LICENSE").is_file())
+                elif rid.startswith("linux-"):
+                    self.assertTrue((stage / "desktop/pgpmint.svg").is_file())
+                    self.assertTrue((stage / "desktop/pgpmint.png").is_file())
                 dist = self.root / rid / "dist"
                 manifest = dist / f"SHA256SUMS-{rid}.txt"
                 self.assertTrue(manifest.is_file())
