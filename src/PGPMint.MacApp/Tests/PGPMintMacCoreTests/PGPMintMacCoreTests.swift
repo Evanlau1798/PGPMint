@@ -91,6 +91,28 @@ struct PGPMintMacCoreTests {
         #expect(model.efficiencyBadgeTooltip == nil)
         #expect(!model.efficiencyBadgeText.contains("W"))
     }
+
+    @Test
+    func processHostTransportReadsShortPipeResponseWithoutBlocking() async throws {
+        // Regression test: interactive stdout pipes must return immediately on short (< 16 KB) lines without waiting for EOF.
+        let script = """
+        while IFS= read -r line; do
+          case "$line" in
+            *shutdown*) exit 0 ;;
+            *) printf '{"type":"response","id":"1","ok":true,"result":{"privatePath":"/tmp/a","publicPath":"/tmp/b"}}\\n' ;;
+          esac
+        done
+        """
+        let transport = ProcessHostTransport(
+            executableOverride: URL(fileURLWithPath: "/bin/sh"),
+            extraArguments: ["-c", script]
+        )
+        try await transport.start()
+        let result = try await transport.sendNoParams(method: "ping", as: ExportMatchResult.self)
+        #expect(result.privatePath == "/tmp/a")
+        #expect(result.publicPath == "/tmp/b")
+        await transport.shutdown()
+    }
 }
 
 private final class MockHostTransport: HostTransport, @unchecked Sendable {

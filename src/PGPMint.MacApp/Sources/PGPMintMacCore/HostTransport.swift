@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public protocol HostTransport: AnyObject, Sendable {
     var events: AsyncStream<HostEventMessage> { get }
@@ -167,19 +168,20 @@ public final class ProcessHostTransport: HostTransport, @unchecked Sendable {
 
     public func shutdown() async {
         lock.withLock { stopping = true }
-        let hasRunningProcess = lock.withLock { process?.isRunning == true }
-        if hasRunningProcess {
-            _ = try? await sendNoParams(method: "shutdown", as: HostStatusSnapshot.self)
-        }
         let (proc, handle) = lock.withLock { () -> (Process?, FileHandle?) in
-            let p = process
-            let h = stdinHandle
-            stdinHandle = nil
-            return (p, h)
+            (process, stdinHandle)
         }
+        if let proc, proc.isRunning, let handle {
+            let reqId = allocateId()
+            if var payload = try? JSONEncoder().encode(EmptyRequest(id: reqId, method: "shutdown")) {
+                payload.append(0x0A)
+                try? handle.write(contentsOf: payload)
+            }
+        }
+        lock.withLock { stdinHandle = nil }
         try? handle?.close()
         if let proc, proc.isRunning {
-            let deadline = Date().addingTimeInterval(2.0)
+            let deadline = Date().addingTimeInterval(2.5)
             while proc.isRunning && Date() < deadline {
                 try? await Task.sleep(nanoseconds: 50_000_000)
             }
@@ -244,24 +246,26 @@ public final class ProcessHostTransport: HostTransport, @unchecked Sendable {
 
     private func startReadingStdout(_ handle: FileHandle) {
         ioQueue.async { [weak self] in
+            let fd = handle.fileDescriptor
             var buffer = Data()
+            var chunk = [UInt8](repeating: 0, count: 16384)
             while true {
-                let chunk: Data
-                do {
-                    guard let data = try handle.read(upToCount: 16384), !data.isEmpty else {
-                        break
+                let n = Darwin.read(fd, &chunk, chunk.count)
+                if n > 0 {
+                    buffer.append(contentsOf: chunk[0..<n])
+                    while let newlineIndex = buffer.firstIndex(of: 0x0A) {
+                        let lineData = Data(buffer[..<newlineIndex])
+                        buffer.removeSubrange(...newlineIndex)
+                        if !lineData.isEmpty {
+                            self?.handleStdoutLine(lineData)
+                        }
                     }
-                    chunk = data
-                } catch {
+                } else if n == 0 {
                     break
-                }
-                buffer.append(chunk)
-                while let newlineIndex = buffer.firstIndex(of: 0x0A) {
-                    let lineData = Data(buffer[..<newlineIndex])
-                    buffer.removeSubrange(...newlineIndex)
-                    if !lineData.isEmpty {
-                        self?.handleStdoutLine(lineData)
-                    }
+                } else if errno == EINTR {
+                    continue
+                } else {
+                    break
                 }
             }
             if !buffer.isEmpty {
@@ -273,10 +277,12 @@ public final class ProcessHostTransport: HostTransport, @unchecked Sendable {
 
     private func startReadingStderr(_ handle: FileHandle) {
         DispatchQueue.global(qos: .utility).async { [weak self] in
+            let fd = handle.fileDescriptor
+            var chunk = [UInt8](repeating: 0, count: 4096)
             while true {
-                do {
-                    guard let data = try handle.read(upToCount: 4096), !data.isEmpty else { break }
-                    if let text = String(data: data, encoding: .utf8) {
+                let n = Darwin.read(fd, &chunk, chunk.count)
+                if n > 0 {
+                    if let text = String(bytes: chunk[0..<n], encoding: .utf8) {
                         self?.lock.withLock {
                             self?.stderrBuffer.append(text)
                             if let count = self?.stderrBuffer.count, count > 4096 {
@@ -284,7 +290,11 @@ public final class ProcessHostTransport: HostTransport, @unchecked Sendable {
                             }
                         }
                     }
-                } catch {
+                } else if n == 0 {
+                    break
+                } else if errno == EINTR {
+                    continue
+                } else {
                     break
                 }
             }
