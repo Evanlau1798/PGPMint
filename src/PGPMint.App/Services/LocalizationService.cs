@@ -342,6 +342,10 @@ public sealed class LocalizationService : ObservableObject
     public string TierBalanced => Get("TierBalanced");
     public string TierEfficiency => Get("TierEfficiency");
     public string TierMax => Get("TierMax");
+    public string TierEcoTooltip => Get("TierEcoTooltip");
+    public string TierBalancedTooltip => Get("TierBalancedTooltip");
+    public string TierEfficiencyTooltip => Get("TierEfficiencyTooltip");
+    public string TierMaxTooltip => Get("TierMaxTooltip");
     public string Recalibrate => Get("Recalibrate");
     public string Recalibrating => Get("Recalibrating");
     public string YieldingBadge => Get("YieldingBadge");

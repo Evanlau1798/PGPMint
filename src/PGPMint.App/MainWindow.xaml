@@ -234,52 +234,64 @@
                                 BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
                                 BorderThickness="1">
                             <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="3">
-                                <Button x:Name="TierEcoButton"
-                                        Grid.Column="0"
-                                        Content="{x:Bind ViewModel.Loc.TierEco, Mode=OneWay}"
-                                        Style="{StaticResource TierGhostButtonStyle}"
-                                        HorizontalAlignment="Stretch"
-                                        Height="30"
-                                        Padding="4,0"
-                                        FontSize="12.5"
-                                        IsEnabled="{x:Bind ViewModel.IsTierSelectorEnabled, Mode=OneWay}"
-                                        Tag="Eco"
-                                        Click="OnTierButtonClick" />
-                                <Button x:Name="TierBalancedButton"
-                                        Grid.Column="1"
-                                        Content="{x:Bind ViewModel.Loc.TierBalanced, Mode=OneWay}"
-                                        Style="{StaticResource TierGhostButtonStyle}"
-                                        HorizontalAlignment="Stretch"
-                                        Height="30"
-                                        Padding="4,0"
-                                        FontSize="12.5"
-                                        IsEnabled="{x:Bind ViewModel.IsTierSelectorEnabled, Mode=OneWay}"
-                                        Tag="Balanced"
-                                        Click="OnTierButtonClick" />
-                                <Button x:Name="TierEfficiencyButton"
-                                        Grid.Column="2"
-                                        Content="{x:Bind ViewModel.Loc.TierEfficiency, Mode=OneWay}"
-                                        Style="{StaticResource TierGhostButtonStyle}"
-                                        HorizontalAlignment="Stretch"
-                                        Height="30"
-                                        Padding="4,0"
-                                        FontSize="12.5"
-                                        IsEnabled="{x:Bind ViewModel.IsTierSelectorEnabled, Mode=OneWay}"
-                                        Tag="Efficiency"
-                                        Click="OnTierButtonClick" />
-                                <Button x:Name="TierMaxButton"
-                                        Grid.Column="3"
-                                        Content="{x:Bind ViewModel.Loc.TierMax, Mode=OneWay}"
-                                        Style="{StaticResource AccentButtonStyle}"
-                                        HorizontalAlignment="Stretch"
-                                        Height="30"
-                                        Padding="4,0"
-                                        CornerRadius="4"
-                                        FontSize="12.5"
-                                        FontWeight="SemiBold"
-                                        IsEnabled="{x:Bind ViewModel.IsTierSelectorEnabled, Mode=OneWay}"
-                                        Tag="Max"
-                                        Click="OnTierButtonClick" />
+                                <Border Grid.Column="0"
+                                        Background="Transparent"
+                                        ToolTipService.ToolTip="{x:Bind ViewModel.Loc.TierEcoTooltip, Mode=OneWay}">
+                                    <Button x:Name="TierEcoButton"
+                                            Content="{x:Bind ViewModel.Loc.TierEco, Mode=OneWay}"
+                                            Style="{StaticResource TierGhostButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Height="30"
+                                            Padding="4,0"
+                                            FontSize="12.5"
+                                            IsEnabled="{x:Bind ViewModel.IsTierSelectorEnabled, Mode=OneWay}"
+                                            Tag="Eco"
+                                            Click="OnTierButtonClick" />
+                                </Border>
+                                <Border Grid.Column="1"
+                                        Background="Transparent"
+                                        ToolTipService.ToolTip="{x:Bind ViewModel.Loc.TierBalancedTooltip, Mode=OneWay}">
+                                    <Button x:Name="TierBalancedButton"
+                                            Content="{x:Bind ViewModel.Loc.TierBalanced, Mode=OneWay}"
+                                            Style="{StaticResource TierGhostButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Height="30"
+                                            Padding="4,0"
+                                            FontSize="12.5"
+                                            IsEnabled="{x:Bind ViewModel.IsTierSelectorEnabled, Mode=OneWay}"
+                                            Tag="Balanced"
+                                            Click="OnTierButtonClick" />
+                                </Border>
+                                <Border Grid.Column="2"
+                                        Background="Transparent"
+                                        ToolTipService.ToolTip="{x:Bind ViewModel.Loc.TierEfficiencyTooltip, Mode=OneWay}">
+                                    <Button x:Name="TierEfficiencyButton"
+                                            Content="{x:Bind ViewModel.Loc.TierEfficiency, Mode=OneWay}"
+                                            Style="{StaticResource TierGhostButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Height="30"
+                                            Padding="4,0"
+                                            FontSize="12.5"
+                                            IsEnabled="{x:Bind ViewModel.IsTierSelectorEnabled, Mode=OneWay}"
+                                            Tag="Efficiency"
+                                            Click="OnTierButtonClick" />
+                                </Border>
+                                <Border Grid.Column="3"
+                                        Background="Transparent"
+                                        ToolTipService.ToolTip="{x:Bind ViewModel.Loc.TierMaxTooltip, Mode=OneWay}">
+                                    <Button x:Name="TierMaxButton"
+                                            Content="{x:Bind ViewModel.Loc.TierMax, Mode=OneWay}"
+                                            Style="{StaticResource AccentButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Height="30"
+                                            Padding="4,0"
+                                            CornerRadius="4"
+                                            FontSize="12.5"
+                                            FontWeight="SemiBold"
+                                            IsEnabled="{x:Bind ViewModel.IsTierSelectorEnabled, Mode=OneWay}"
+                                            Tag="Max"
+                                            Click="OnTierButtonClick" />
+                                </Border>
                             </Grid>
                         </Border>
 

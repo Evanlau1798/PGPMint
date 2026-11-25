@@ -1150,7 +1150,7 @@ public sealed class PowerTierEfficiencyTests
         HashSet<string> zhKeys = zhDoc.RootElement.GetProperty("strings").EnumerateObject().Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
 
         Assert.Equal(enKeys, zhKeys);
-        foreach (string required in new[] { "TierEco", "TierBalanced", "TierEfficiency", "TierMax", "Recalibrate", "Recalibrating", "PowerTooltipFormat", "GpuLoadTooltipFormat", "YieldingBadge", "YieldingSuffix" })
+        foreach (string required in new[] { "TierEco", "TierBalanced", "TierEfficiency", "TierMax", "TierEcoTooltip", "TierBalancedTooltip", "TierEfficiencyTooltip", "TierMaxTooltip", "Recalibrate", "Recalibrating", "PowerTooltipFormat", "GpuLoadTooltipFormat", "YieldingBadge", "YieldingSuffix" })
         {
             Assert.Contains(required, enKeys);
             Assert.False(string.IsNullOrWhiteSpace(enDoc.RootElement.GetProperty("strings").GetProperty(required).GetString()));
