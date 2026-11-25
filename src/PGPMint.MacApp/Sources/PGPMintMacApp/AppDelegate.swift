@@ -1,10 +1,11 @@
 import AppKit
+import os
 import PGPMintMacCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private static let defaultWidth: CGFloat = 460
-    private static let maxAutoStretchMatches = 5
+    private static let logger = Logger(subsystem: "org.pgpmint.desktop", category: "window")
 
     let powerManager = MacPowerActivityManager()
     let loc = LocalizationStore()
@@ -13,7 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var menuBar: MenuBarController?
     private weak var mainWindow: NSWindow?
     private var terminating = false
-    private var lastAutoHeightKey = ""
+    private var lastMeasuredHeight: CGFloat = 0
+    private var hasAppliedInitialSize = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -33,7 +35,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Task {
             await model.bootstrap()
             menuBar?.refresh()
-            adjustWindowHeight(force: true)
         }
     }
 
@@ -44,35 +45,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.title = "PGPMint"
         window.titlebarAppearsTransparent = false
         window.isReleasedWhenClosed = false
-        adjustWindowHeight(force: true)
+        if lastMeasuredHeight > 100 {
+            applyWindowHeight(lastMeasuredHeight, animate: false)
+        }
     }
 
-    func adjustWindowHeight(force: Bool = false) {
-        guard let window = mainWindow else { return }
-        let visibleRows = min(model.matches.count, Self.maxAutoStretchMatches)
-        let hasError = !model.errorText.isEmpty
-        let mode: String = !model.isUnlocked ? "unlock" : (model.showSetupWizard ? "setup" : "dash")
-        let key = "\(mode)|\(visibleRows)|\(hasError)|\(model.isSearching)|\(model.devices.count)"
-        if !force && key == lastAutoHeightKey { return }
-        lastAutoHeightKey = key
-
-        DispatchQueue.main.async { [weak window] in
-            guard let window, let contentView = window.contentView else { return }
-            contentView.layoutSubtreeIfNeeded()
-            let currentWidth = max(Self.defaultWidth, window.contentRect(forFrameRect: window.frame).width)
-            let fittingHeight = contentView.fittingSize.height
-            let screenMax = (window.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
-            let clampedHeight = min(max(fittingHeight, 260), screenMax - 80)
-            let targetFrameSize = window.frameRect(
-                forContentRect: NSRect(origin: .zero, size: NSSize(width: currentWidth, height: clampedHeight))
-            ).size
-
-            var frame = window.frame
-            let topY = frame.maxY
-            frame.size = targetFrameSize
-            frame.origin.y = topY - frame.size.height
-            window.setFrame(frame, display: true, animate: !force)
+    func updateWindowHeight(to measuredHeight: CGFloat) {
+        let rounded = ceil(measuredHeight)
+        guard rounded > 100 else { return }
+        if abs(rounded - lastMeasuredHeight) < 2 && hasAppliedInitialSize {
+            return
         }
+        lastMeasuredHeight = rounded
+        applyWindowHeight(rounded, animate: hasAppliedInitialSize)
+    }
+
+    private func applyWindowHeight(_ contentHeight: CGFloat, animate: Bool) {
+        guard let window = mainWindow else { return }
+        let screenMax = (window.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
+        let clampedHeight = min(max(contentHeight, 260), screenMax - 80)
+        let currentContent = window.contentRect(forFrameRect: window.frame)
+        let targetWidth = max(Self.defaultWidth, currentContent.width)
+
+        window.contentMinSize = NSSize(width: 390, height: clampedHeight)
+        if abs(currentContent.height - clampedHeight) < 2 && abs(currentContent.width - targetWidth) < 2 {
+            hasAppliedInitialSize = true
+            return
+        }
+
+        let targetFrameSize = window.frameRect(
+            forContentRect: NSRect(origin: .zero, size: NSSize(width: targetWidth, height: clampedHeight))
+        ).size
+
+        var frame = window.frame
+        let topY = frame.maxY
+        frame.size = targetFrameSize
+        frame.origin.y = topY - frame.size.height
+        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame, frame.origin.y < visible.minY {
+            frame.origin.y = visible.minY
+        }
+
+        Self.logger.info("Resize main window content to \(Int(targetWidth))x\(Int(clampedHeight))")
+        window.setFrame(frame, display: true, animate: animate)
+        hasAppliedInitialSize = true
     }
 
     func showMainWindow() {

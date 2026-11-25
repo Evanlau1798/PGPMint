@@ -8,16 +8,15 @@ struct PGPMintMacApp: App {
 
     var body: some Scene {
         Window("PGPMint", id: "main") {
-            RootContentView(model: delegate.model) {
-                delegate.adjustWindowHeight()
+            RootContentView(model: delegate.model) { measuredHeight in
+                delegate.updateWindowHeight(to: measuredHeight)
             }
             .background(WindowAccessor { window in
                 delegate.attachMainWindow(window)
             })
-            .frame(minWidth: 390, idealWidth: 460, minHeight: 320)
+            .frame(minWidth: 390, idealWidth: 460)
         }
-        .defaultSize(width: 460, height: 434)
-        .windowResizability(.contentMinSize)
+        .defaultSize(width: 460, height: 420)
         .commands {
             CommandGroup(replacing: .newItem) {}
         }
@@ -29,28 +28,43 @@ struct PGPMintMacApp: App {
     }
 }
 
+private struct ContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        if next > 0 { value = next }
+    }
+}
+
 private struct RootContentView: View {
     @Bindable var model: AppModel
-    let onLayoutStateChanged: () -> Void
+    let onMeasuredHeight: (CGFloat) -> Void
 
     var body: some View {
-        Group {
-            if !model.isUnlocked {
-                UnlockView(model: model)
-            } else if model.showSetupWizard {
-                SetupWizardView(model: model)
-            } else {
-                DashboardView(model: model)
+        VStack(spacing: 0) {
+            Group {
+                if !model.isUnlocked {
+                    UnlockView(model: model)
+                } else if model.showSetupWizard {
+                    SetupWizardView(model: model)
+                } else {
+                    DashboardView(model: model)
+                }
             }
+            .fixedSize(horizontal: false, vertical: true)
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: ContentHeightKey.self, value: geo.size.height)
+                }
+            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onChange(of: model.isUnlocked) { _, _ in onLayoutStateChanged() }
-        .onChange(of: model.showSetupWizard) { _, _ in onLayoutStateChanged() }
-        .onChange(of: model.matches.count) { _, _ in onLayoutStateChanged() }
-        .onChange(of: model.errorText.isEmpty) { _, _ in onLayoutStateChanged() }
-        .onChange(of: model.isSearching) { _, _ in onLayoutStateChanged() }
-        .onChange(of: model.devices.count) { _, _ in onLayoutStateChanged() }
+        .onPreferenceChange(ContentHeightKey.self) { height in
+            if height > 100 {
+                onMeasuredHeight(height)
+            }
+        }
     }
 }
 
