@@ -7,7 +7,7 @@ using PGPMint.Core.Storage;
 
 namespace PGPMint.Desktop;
 
-public sealed class DesktopSession(IGpuBackend backend, string directory) : IAsyncDisposable
+public sealed class DesktopSession(IGpuBackend backend, string directory, IVaultSecretStore? automaticSecrets = null) : IAsyncDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private VaultSession? _lease;
@@ -18,6 +18,28 @@ public sealed class DesktopSession(IGpuBackend backend, string directory) : IAsy
     public MultiGpuCoordinator? Coordinator { get; private set; }
     public IReadOnlyList<string> GpuDiagnostics => backend is PortableGpuBackend portable ? portable.Diagnostics : [];
 
+    public bool SupportsAutomaticUnlock => automaticSecrets is not null;
+
+    public bool TryUnlockAutomatically()
+    {
+        if (automaticSecrets is null) return false;
+        _gate.Wait();
+        try
+        {
+            if (Coordinator is not null) return true;
+            _lease = AcquireLease();
+            try
+            {
+                var protector = AutomaticVault.TryOpen(_lease, automaticSecrets);
+                if (protector is null) { _lease.Dispose(); _lease = null; return false; }
+                CompleteUnlock(protector);
+                return true;
+            }
+            catch { AbortUnlock(); throw; }
+        }
+        finally { _gate.Release(); }
+    }
+
     public void Unlock(ReadOnlySpan<char> password)
     {
         if (password.IsEmpty || password.IsWhiteSpace()) throw new ArgumentException("A nonempty password is required.");
@@ -25,27 +47,39 @@ public sealed class DesktopSession(IGpuBackend backend, string directory) : IAsy
         try
         {
             if (Coordinator is not null) throw new InvalidOperationException("The vault is already unlocked.");
-            _lease = new VaultSession(DirectoryPath);
+            _lease = AcquireLease();
             try
             {
-                _protector = PasswordSeedProtector.Open(DirectoryPath, password);
-                _vault = new VaultStore(DirectoryPath, _protector);
-                Coordinator = new MultiGpuCoordinator(backend, StateStore, _vault);
-                Coordinator.Initialize();
+                CompleteUnlock(PasswordSeedProtector.Open(DirectoryPath, password));
             }
-            catch
-            {
-                Coordinator?.Dispose();
-                Coordinator = null;
-                _vault = null;
-                _protector?.Dispose();
-                _protector = null;
-                _lease.Dispose();
-                _lease = null;
-                throw;
-            }
+            catch { AbortUnlock(); throw; }
         }
         finally { _gate.Release(); }
+    }
+
+    private VaultSession AcquireLease()
+    {
+        if (DirectoryPath == Path.GetFullPath(AppDataPaths.PasswordVaultDirectory)) AppDataPaths.PreparePasswordVaultDirectory();
+        return new VaultSession(DirectoryPath);
+    }
+
+    private void CompleteUnlock(PasswordSeedProtector protector)
+    {
+        _protector = protector;
+        _vault = new VaultStore(DirectoryPath, protector);
+        Coordinator = new MultiGpuCoordinator(backend, StateStore, _vault);
+        Coordinator.Initialize();
+    }
+
+    private void AbortUnlock()
+    {
+        Coordinator?.Dispose();
+        Coordinator = null;
+        _vault = null;
+        _protector?.Dispose();
+        _protector = null;
+        _lease?.Dispose();
+        _lease = null;
     }
 
     public IReadOnlyList<MatchedKeyRecord> Matches() =>

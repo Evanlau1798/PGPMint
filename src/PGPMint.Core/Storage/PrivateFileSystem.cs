@@ -30,8 +30,23 @@ public static class PrivateFileSystem
 
     public static void CreateDirectory(string path)
     {
-        if (OperatingSystem.IsWindows()) Directory.CreateDirectory(path);
-        else Directory.CreateDirectory(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        if (OperatingSystem.IsWindows()) { Directory.CreateDirectory(path); return; }
+        const UnixFileMode privateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        var missing = new Stack<string>();
+        string current = Path.GetFullPath(path);
+        while (!Directory.Exists(current))
+        {
+            missing.Push(current);
+            current = Path.GetDirectoryName(current) ?? throw new IOException("Cannot create a private filesystem root.");
+        }
+        // The Unix mode overload only protects the final component, not newly created parents.
+        while (missing.TryPop(out string? directory))
+        {
+            Directory.CreateDirectory(directory, privateMode);
+            if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0 || File.GetUnixFileMode(directory) != privateMode)
+                throw new IOException("A new private directory was replaced or does not have owner-only permissions.");
+            if (OperatingSystem.IsMacOS()) MacOsFileAcl.RequireNoAcl(directory);
+        }
         if (OperatingSystem.IsMacOS()) MacOsFileAcl.RequireNoAcl(path);
     }
 

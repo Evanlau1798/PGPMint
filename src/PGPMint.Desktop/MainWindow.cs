@@ -26,7 +26,7 @@ public sealed class MainWindow : Window
     private ComboBox _tier = new();
     private ListBox _matches = new();
     private Button _start = new(), _pause = new(), _stop = new(), _calibrate = new(), _apply = new();
-    private bool _quitting, _allowClose, _busy, _ticking, _closePending;
+    private bool _quitting, _allowClose, _busy, _ticking, _closePending, _automaticUnlockAttempted;
     private long _lastRefresh;
     private string _matchIds = "";
     private PlatformServices? _platform;
@@ -46,7 +46,15 @@ public sealed class MainWindow : Window
         MinHeight = 540;
         BuildUi();
         _timer.Tick += async (_, _) => await TickAsync();
-        Opened += (_, _) => _timer.Start();
+        Opened += async (_, _) =>
+        {
+            _timer.Start();
+            if (!_automaticUnlockAttempted && _session.SupportsAutomaticUnlock)
+            {
+                _automaticUnlockAttempted = true;
+                await RunAsync(async () => { await TryAutomaticUnlockAsync(); });
+            }
+        };
         Closing += async (_, e) =>
         {
             if (_allowClose) return;
@@ -110,7 +118,7 @@ public sealed class MainWindow : Window
         }));
         if (coordinator is null)
         {
-            body.Children.Add(new TextBlock { Text = L("VaultHint"), TextWrapping = TextWrapping.Wrap });
+            body.Children.Add(new TextBlock { Text = L(_session.SupportsAutomaticUnlock ? "SystemVaultHint" : "VaultHint"), TextWrapping = TextWrapping.Wrap });
             _error = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.OrangeRed };
             body.Children.Add(_error);
             Content = new ScrollViewer { Content = body };
@@ -203,6 +211,7 @@ public sealed class MainWindow : Window
 
     private async Task UnlockAsync()
     {
+        if (await TryAutomaticUnlockAsync()) return;
         var input = await new SecretDialog(_strings).ShowDialog<SecretInput?>(this);
         if (input is null) return;
         try { await Task.Run(() => _session.Unlock(input.Password)); }
@@ -210,6 +219,21 @@ public sealed class MainWindow : Window
         _strings.Apply(_session.StateStore.Load().Language);
         BuildUi();
         LanguageChanged?.Invoke();
+    }
+
+    private async Task<bool> TryAutomaticUnlockAsync()
+    {
+        if (!_session.SupportsAutomaticUnlock) return false;
+        _error.Text = L("OpeningSystemVault");
+        bool opened = await Task.Run(_session.TryUnlockAutomatically);
+        if (opened)
+        {
+            _strings.Apply(_session.StateStore.Load().Language);
+            BuildUi();
+            LanguageChanged?.Invoke();
+        }
+        else _error.Text = "";
+        return opened;
     }
 
     private async Task ExportAsync()
@@ -307,6 +331,9 @@ public sealed class MainWindow : Window
         catch (ArgumentException) { _error.Text = L("ExportRequired") + " / " + L("SuffixRuleHint"); }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or PlatformNotSupportedException)
         { _error.Text = L("BackendError"); }
+        catch (Exception) when (_session.Coordinator is null && _session.SupportsAutomaticUnlock
+            && (AutomaticVault.IsAutomatic(_session.DirectoryPath) || !File.Exists(Path.Combine(_session.DirectoryPath, "vault.key.json"))))
+        { _error.Text = L("SystemVaultFailed"); }
         catch (Exception) { _error.Text = L(_session.Coordinator is null ? "UnlockFailed" : "OperationFailed"); }
         finally
         {

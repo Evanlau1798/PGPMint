@@ -52,7 +52,7 @@ public static class Program
             if (options.Command == "benchmark") return await BenchmarkCommand.RunAsync(backend, devices, options);
             return await SearchCommand.RunAsync(backend, devices, options);
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or CryptographicException or NotSupportedException or JsonException
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or InvalidDataException or CryptographicException or NotSupportedException or JsonException
             or UnauthorizedAccessException or DllNotFoundException or EntryPointNotFoundException or BadImageFormatException or FormatException)
         {
             Console.Error.WriteLine(ex.Message);
@@ -74,6 +74,20 @@ public static class Program
 
     internal static string DataDirectory(CommandLine options) => Path.GetFullPath(options.Get("data-dir") ?? AppDataPaths.PasswordVaultDirectory);
 
+    internal static PasswordSeedProtector OpenVaultProtector(VaultSession session, CommandLine options, IVaultSecretStore? automaticSecrets = null)
+    {
+        if (AutomaticVault.IsAutomatic(session.DirectoryPath))
+        {
+            automaticSecrets ??= OperatingSystem.IsMacOS() ? new MacKeychainSecretStore()
+                : throw new PlatformNotSupportedException("This vault requires the original operating-system keychain and user account.");
+            return AutomaticVault.TryOpen(session, automaticSecrets)
+                ?? throw new InvalidDataException("The automatic vault metadata disappeared; the vault was not replaced.");
+        }
+        char[] password = SecretInput.Read("Vault password: ", options.Has("password-stdin"));
+        try { return PasswordSeedProtector.Open(session.DirectoryPath, password); }
+        finally { Array.Clear(password); }
+    }
+
     private const string Help = """
         PGPMint hardware GPU OpenPGP vanity Key IDs
         pgpmint devices [--json] [--backend auto|vulkan|opencl|metal]
@@ -86,9 +100,10 @@ public static class Program
         pgpmint export --key KEYID --name NAME [--email EMAIL] --output DIRECTORY
                        [--data-dir PATH] [--password-stdin]
 
-        Search and export prompt for the vault password without echoing it.
-        --password-stdin reads one line for the vault, plus a second export-passphrase
-        line for export (empty permits an unprotected OpenPGP export).
+        Search and export prompt for a password unless the vault uses the macOS keychain.
+        --password-stdin reads one line for a password vault, then the export passphrase
+        for export (empty permits an unprotected OpenPGP export). Keychain vaults only
+        read the export-passphrase line and require an unlocked desktop login session.
         Passwords must never be passed as command-line arguments. Ctrl+C saves progress.
         Benchmark uses isolated disposable data; it does not open the user's vault.
         """;

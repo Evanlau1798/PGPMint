@@ -8,6 +8,23 @@ namespace PGPMint.Tests;
 public sealed class VaultPermissionTests
 {
     [UnixFact]
+    public void NestedPrivateDirectoryCreationSecuresEveryNewParentWithoutChangingExistingParents()
+    {
+        if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+        string root = Path.Combine(Path.GetTempPath(), "PGPMint-parent-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(root);
+            UnixFileMode original = File.GetUnixFileMode(root);
+            PrivateFileSystem.CreateDirectory(Path.Combine(root, "PGPMint", "shader-cache", "vulkan"));
+            foreach (string relative in new[] { "PGPMint", "PGPMint/shader-cache", "PGPMint/shader-cache/vulkan" })
+                Assert.Equal((UnixFileMode)0x1C0, File.GetUnixFileMode(Path.Combine(root, relative)));
+            Assert.Equal(original, File.GetUnixFileMode(root));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [UnixFact]
     public void ExistingSharedDirectoriesAreRejectedWithoutChangingPermissionsOrContents()
     {
         if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();

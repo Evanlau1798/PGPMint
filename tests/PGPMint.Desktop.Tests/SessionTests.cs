@@ -8,6 +8,44 @@ namespace PGPMint.Desktop.Tests;
 
 public sealed class SessionTests : IDisposable
 {
+    [Fact]
+    public async Task SystemVaultUnlocksAndReopensWithoutRequestingAHumanPassword()
+    {
+        var store = new TestSystemStore();
+        await using (var session = new DesktopSession(new NoGpu(), _directory, store))
+        {
+            Assert.True(session.TryUnlockAutomatically());
+            Assert.NotNull(session.Coordinator);
+            Assert.Empty(session.Matches());
+        }
+        await using var reopened = new DesktopSession(new NoGpu(), _directory, store);
+        Assert.True(reopened.TryUnlockAutomatically());
+        Assert.Equal(1, store.Created);
+    }
+
+    [Fact]
+    public async Task ExistingPasswordVaultKeepsItsPasswordWithASystemStoreAvailable()
+    {
+        using (PasswordSeedProtector.Open(_directory, "existing password")) { }
+        var store = new TestSystemStore();
+        await using var session = new DesktopSession(new NoGpu(), _directory, store);
+        Assert.False(session.TryUnlockAutomatically());
+        Assert.Null(session.Coordinator);
+        Assert.Equal(0, store.Created);
+        Assert.False(AutomaticVault.IsAutomatic(_directory));
+        session.Unlock("existing password");
+        Assert.NotNull(session.Coordinator);
+    }
+
+    internal sealed class TestSystemStore : IVaultSecretStore
+    {
+        private readonly Dictionary<string, char[]> _secrets = [];
+        public string Kind => "test-system-keychain";
+        internal int Created;
+        public char[]? Read(string account) => _secrets.TryGetValue(account, out var secret) ? (char[])secret.Clone() : null;
+        public void Create(string account, ReadOnlySpan<char> secret) { _secrets.Add(account, secret.ToArray()); Created++; }
+        public void Delete(string account) { Array.Clear(_secrets[account]); _secrets.Remove(account); }
+    }
     private readonly string _directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         ".codex", "tmp", "pgpmint-desktop-tests", Guid.NewGuid().ToString("N"));
     private sealed class NoGpu : IGpuBackend

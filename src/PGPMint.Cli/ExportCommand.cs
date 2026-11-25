@@ -9,11 +9,9 @@ internal static class ExportCommand
     internal static int Run(CommandLine options)
     {
         string directory = Program.DataDirectory(options);
+        if (!options.Has("data-dir")) AppDataPaths.PreparePasswordVaultDirectory();
         using var lease = new VaultSession(directory);
-        char[] password = SecretInput.Read("Vault password: ", options.Has("password-stdin"));
-        PasswordSeedProtector protector;
-        try { protector = PasswordSeedProtector.Open(directory, password); }
-        finally { Array.Clear(password); }
+        PasswordSeedProtector protector = Program.OpenVaultProtector(lease, options);
         using (protector)
         {
             var vault = new VaultStore(directory, protector);

@@ -10,11 +10,9 @@ internal static class SearchCommand
     {
         var pattern = KeyIdPattern.Parse(options.Get("pattern")!);
         string directory = Program.DataDirectory(options);
+        if (!options.Has("data-dir")) AppDataPaths.PreparePasswordVaultDirectory();
         using var lease = new VaultSession(directory);
-        char[] password = SecretInput.Read("Vault password: ", options.Has("password-stdin"));
-        PasswordSeedProtector protector;
-        try { protector = PasswordSeedProtector.Open(directory, password); }
-        finally { Array.Clear(password); }
+        PasswordSeedProtector protector = Program.OpenVaultProtector(lease, options);
         using (protector)
         using (var coordinator = new MultiGpuCoordinator(new SelectedBackend(backend, devices), new AppStateStore(directory), new VaultStore(directory, protector)))
         using (var cancelled = new CancellationTokenSource())

@@ -62,17 +62,27 @@ GPU drivers. macOS GPU availability depends on the host, including on CI runners
 ./pgpmint export --key YOUR_KEY_ID --name "Your Name" --output ./exported
 ```
 
-The CLI prompts for passwords without echoing them. For automation,
+The CLI prompts for passwords without echoing them. Existing macOS keychain vaults
+unlock through the original user's login keychain; this requires an unlocked
+desktop login session and may request system authorization. For automation,
 `--password-stdin` reads the vault password from standard input; export reads a
-second line for the OpenPGP passphrase. Never pass a password as an argument or
+second line for the OpenPGP passphrase. A keychain vault consumes only the export
+passphrase line. Never pass a password as an argument or
 print it in a script log. Search stops after its first saved match by default;
 Ctrl+C stops safely and saves progress.
 
-Linux/macOS vaults use password-derived Argon2id and AES-256-GCM protection and
-user-only file permissions. Keep both `hits.vault.json` and `vault.key.json` when
-backing up a vault. Use a dedicated vault directory. On Unix, an existing directory
+New macOS desktop vaults store a random unlock secret in the login keychain, so
+no extra vault password is needed. Existing password vaults remain password
+protected; new CLI and Linux vaults use a user password for headless operation.
+All portable vaults use Argon2id and AES-256-GCM and user-only file permissions.
+Keep the complete data directory when backing up, including `vault.key.json` and
+`vault.unlock.json` when present. Keychain vault backups also need the original
+keychain secret; export passphrase-protected OpenPGP keys for portable recovery.
+PGPMint refuses to replace missing or inaccessible keychain secrets.
+Use a dedicated vault directory. On Unix, an existing custom directory
 must already have mode `0700`; PGPMint refuses broader permissions without changing
 the directory. Explicitly secure your dedicated vault directory before reopening it.
+Only PGPMint's fixed default directory may have legacy cache permissions tightened.
 On macOS, private vault and export paths with explicit or inherited ACL entries
 are refused; choose a dedicated location without ACLs. Parent ACLs are never changed.
 The desktop and CLI exclude simultaneous sessions using the

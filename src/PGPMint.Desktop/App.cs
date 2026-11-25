@@ -17,7 +17,8 @@ public sealed class App : Application
         {
             lifetime.ShutdownMode = ShutdownMode.OnExplicitShutdown;
             string directory = AppDataPaths.PasswordVaultDirectory;
-            var session = new DesktopSession(GpuBackendFactory.CreateDefault(), directory);
+            var session = new DesktopSession(GpuBackendFactory.CreateDefault(), directory,
+                OperatingSystem.IsMacOS() ? new MacKeychainSecretStore() : null);
             var strings = new LocalizationService();
             var window = new MainWindow(session, strings);
             var platform = new PlatformServices(window, session, strings);

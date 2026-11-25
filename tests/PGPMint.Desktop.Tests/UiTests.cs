@@ -153,6 +153,56 @@ public sealed class UiTests
         finally { app.PropertyChanged -= Attached; await window.QuitAsync(); }
     }
 
+    [AvaloniaFact]
+    public async Task SystemVaultStartupDoesNotShowAHumanPasswordDialog()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "PGPMint-auto-ui-" + Guid.NewGuid().ToString("N"));
+        await using var session = new DesktopSession(new EmptyBackend(), directory, new SessionTests.TestSystemStore());
+        var window = new MainWindow(session, new LocalizationService());
+        try
+        {
+            window.Show();
+            var deadline = System.Diagnostics.Stopwatch.StartNew();
+            while (session.Coordinator is null && deadline.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(20);
+            Assert.NotNull(session.Coordinator);
+            Assert.Empty(window.OwnedWindows);
+            Assert.True(PGPMint.Core.Storage.AutomaticVault.IsAutomatic(directory));
+        }
+        finally { await window.QuitAsync(); if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    [AvaloniaFact]
+    public async Task SystemVaultFailureLeavesTheWindowUsableAndDoesNotRequestAHumanPassword()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "PGPMint-failed-auto-ui-" + Guid.NewGuid().ToString("N"));
+        var store = new FailedSystemStore();
+        await using var session = new DesktopSession(new EmptyBackend(), directory, store);
+        var strings = new LocalizationService();
+        var window = new MainWindow(session, strings);
+        try
+        {
+            window.Show();
+            var deadline = System.Diagnostics.Stopwatch.StartNew();
+            while (!window.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == strings["SystemVaultFailed"])
+                && deadline.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(20);
+            Assert.Contains(window.GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == strings["SystemVaultFailed"]);
+            Assert.Null(session.Coordinator);
+            Assert.Empty(window.OwnedWindows);
+            Assert.True(window.IsVisible);
+            using var released = new PGPMint.Core.Storage.VaultSession(directory);
+            Assert.False(PGPMint.Core.Storage.AutomaticVault.IsAutomatic(directory));
+        }
+        finally { await window.QuitAsync(); if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    private sealed class FailedSystemStore : PGPMint.Core.Storage.IVaultSecretStore
+    {
+        public string Kind => "test-failure";
+        public char[]? Read(string account) => throw new IOException("keychain locked");
+        public void Create(string account, ReadOnlySpan<char> secret) => throw new IOException("keychain locked");
+        public void Delete(string account) => throw new IOException("keychain locked");
+    }
+
     private sealed class EmptyBackend : IGpuBackend
     {
         public IReadOnlyList<GpuDeviceInfo> EnumerateHardwareGpus() => [];
