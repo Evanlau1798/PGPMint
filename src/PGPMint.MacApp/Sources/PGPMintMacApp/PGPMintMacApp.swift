@@ -46,7 +46,7 @@ struct RootContentView: View {
                 }
             )
         }
-        .frame(maxWidth: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(nsColor: .windowBackgroundColor))
         .onPreferenceChange(ContentHeightKey.self) { height in
             if height > 100 {

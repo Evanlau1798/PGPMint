@@ -204,8 +204,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         fallbackTask.cancel()
         menuBar?.refresh()
 
-        // Allow one SwiftUI layout cycle for the resolved initial view (Dashboard / Setup / Unlock)
-        // before computing the final height and ordering the window onto screen.
+        // Flush SwiftUI layout offscreen for the resolved view (Dashboard / Setup / Unlock)
+        // so ContentHeightKey reports the exact inner height before showing the window.
+        mainHostingController?.view.frame = NSRect(x: 0, y: 0, width: Self.defaultWidth, height: 420)
+        mainHostingController?.view.layoutSubtreeIfNeeded()
         try? await Task.sleep(nanoseconds: 45_000_000)
         presentInitialMainWindow()
     }
@@ -224,15 +226,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func measureCurrentContentHeight(width: CGFloat) -> CGFloat {
         guard let hosting = mainHostingController else {
-            return max(lastMeasuredHeight, 410)
+            return max(lastMeasuredHeight, 380)
         }
-        hosting.view.frame = NSRect(x: 0, y: 0, width: width, height: max(lastMeasuredHeight, 410))
+        hosting.view.frame = NSRect(x: 0, y: 0, width: width, height: max(lastMeasuredHeight, 380))
         hosting.view.layoutSubtreeIfNeeded()
-        let fitted = ceil(hosting.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height)
-        if fitted > 100 {
-            return fitted
+        if lastMeasuredHeight > 100 {
+            Self.logger.info("Using PreferenceKey contentHeight=\(Int(self.lastMeasuredHeight))")
+            return lastMeasuredHeight
         }
-        return lastMeasuredHeight > 100 ? lastMeasuredHeight : 410
+        let safeTop = hosting.view.safeAreaInsets.top
+        let fitted = ceil(hosting.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height - safeTop)
+        Self.logger.info("Using sizeThatFits contentHeight=\(Int(fitted)) (safeTop=\(Int(safeTop)))")
+        return fitted > 100 ? fitted : 390
     }
 
     private func applyWindowSize(contentHeight: CGFloat, forceDefaultWidth: Bool, animate: Bool) {
