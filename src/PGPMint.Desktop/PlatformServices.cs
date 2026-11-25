@@ -29,14 +29,15 @@ public sealed class PlatformServices : IAsyncDisposable
         _strings = strings;
         _tray = new TrayIcon { ToolTipText = "PGPMint", Icon = CreateIcon(), IsVisible = true };
         _tray.Clicked += (_, _) => _window.ShowWindow();
-        TrayIcon.SetIcons(Application.Current!, new TrayIcons { _tray });
         UpdateMenu();
+        TrayIcon.SetIcons(Application.Current!, new TrayIcons { _tray });
         _window.LanguageChanged += UpdateMenu;
     }
 
     private void UpdateMenu()
     {
-        var menu = new NativeMenu();
+        var menu = _tray.Menu ?? new NativeMenu();
+        menu.Items.Clear();
         void Item(string key, Func<Task> action)
         {
             var item = new NativeMenuItem(_strings[key]);

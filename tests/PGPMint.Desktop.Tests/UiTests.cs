@@ -127,6 +127,32 @@ public sealed class UiTests
         Assert.Equal("auto", strings.Language);
     }
 
+    [AvaloniaFact]
+    public async Task TrayHasAMenuBeforeAttachingAndKeepsItsNativeMenuIdentity()
+    {
+        await using var session = new DesktopSession(new EmptyBackend(), Path.Combine(Path.GetTempPath(), "unused-tray"));
+        var window = new MainWindow(session, new LocalizationService());
+        bool attachedWithMenu = false;
+        var app = Avalonia.Application.Current!;
+        void Attached(object? sender, Avalonia.AvaloniaPropertyChangedEventArgs change)
+        {
+            if (change.Property == TrayIcon.IconsProperty)
+                attachedWithMenu = TrayIcon.GetIcons(app)?.Single().Menu is not null;
+        }
+        app.PropertyChanged += Attached;
+        try
+        {
+            await using var platform = new PlatformServices(window, session, new LocalizationService());
+            Assert.True(attachedWithMenu);
+            var icon = TrayIcon.GetIcons(app)!.Single();
+            var menu = icon.Menu;
+            typeof(PlatformServices).GetMethod("UpdateMenu", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(platform, null);
+            Assert.Same(menu, icon.Menu);
+            Assert.Equal(6, icon.Menu!.Items.Count);
+        }
+        finally { app.PropertyChanged -= Attached; await window.QuitAsync(); }
+    }
+
     private sealed class EmptyBackend : IGpuBackend
     {
         public IReadOnlyList<GpuDeviceInfo> EnumerateHardwareGpus() => [];

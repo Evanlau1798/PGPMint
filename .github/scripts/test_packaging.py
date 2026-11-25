@@ -49,6 +49,7 @@ class PackagingTests(unittest.TestCase):
         self.assertTrue((contents / "Resources/Microsoft.CSharp.dll").is_file())
         self.assertEqual((contents / "Resources/Microsoft.CSharp.dll").read_bytes(), b"MZmanaged")
         self.assertTrue((contents / "Frameworks/libpgpmint_metal.dylib").is_file())
+        self.assertTrue((contents / "Resources/libpgpmint_metal.dylib").is_file())
         for name in ("Microsoft.CSharp.dll", "PGPMint.Desktop.runtimeconfig.json", "libpgpmint_metal.dylib"):
             link = contents / "MacOS" / name
             self.assertTrue(link.is_symlink())

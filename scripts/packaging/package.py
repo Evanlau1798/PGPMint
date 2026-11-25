@@ -76,6 +76,8 @@ def macos_app(published, parent, tag):
         shutil.move(str(item), destination)
         if location != "MacOS":
             (contents / "MacOS" / item.name).symlink_to(Path("..") / location / item.name, target_is_directory=destination.is_dir())
+        if location != "Resources":
+            (contents / "Resources" / item.name).symlink_to(Path("..") / location / item.name)
     published.rmdir()
     info = {
         "CFBundleIdentifier": "org.pgpmint.desktop", "CFBundleName": "PGPMint",
