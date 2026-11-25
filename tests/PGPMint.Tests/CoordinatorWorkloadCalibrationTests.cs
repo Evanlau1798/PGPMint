@@ -130,6 +130,94 @@ public sealed class CoordinatorWorkloadCalibrationTests
         }
     }
 
+    [Fact]
+    public async Task ReconciledBackendDriverVersionEnablesTierSwitchingAndPersistsCalibration()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "pm-reconcile-driver-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var enumeratedInfo = new GpuDeviceInfo("metal:000000010000052b", 0, "Apple M3", 0, 0, 0, 0, 0,
+                "Darwin 24.6.0", false, "Metal", "metal-sha1-v1")
+            {
+                BackendDriverVersion = "Darwin 24.6.0"
+            };
+            var runtimeInfo = enumeratedInfo with
+            {
+                BackendName = "Vulkan",
+                DriverVersion = "1.4.2",
+                BackendDriverVersion = "1.4.2",
+                KernelVersion = "vulkan-sha1-four-v4",
+                KernelConfiguration = new GpuKernelConfiguration(4, 128, 1, "ubo-spirv-v4")
+            };
+
+            var backend = new SwitchingBackend(enumeratedInfo, runtimeInfo);
+            var stateStore = new AppStateStore(directory);
+            var options = new CoordinatorOptions
+            {
+                FullCalibrationDuration = TimeSpan.FromMilliseconds(75),
+                CalibrationWindow = TimeSpan.FromMilliseconds(25)
+            };
+            var pattern = KeyIdPattern.Parse("000000000000");
+
+            using (var coordinator = new MultiGpuCoordinator(backend, stateStore, new DpapiVaultStore(directory), options))
+            {
+                coordinator.Initialize();
+                var runningTcs = new TaskCompletionSource<CoordinatorTelemetry>(TaskCreationOptions.RunContinuationsAsynchronously);
+                coordinator.TelemetryUpdated += (_, t) =>
+                {
+                    if (t.State == CoordinatorState.Running)
+                    {
+                        runningTcs.TrySetResult(t);
+                    }
+                };
+
+                await coordinator.StartSearchAsync(pattern);
+                CoordinatorTelemetry runningSnap = await runningTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+                // Calibration completed on reconciled runtime backend/driver must immediately unlock baseline & tier switching while running.
+                Assert.True(runningSnap.AllEnabledFullyCalibrated);
+                Assert.True(runningSnap.TotalBaselineHps > 0);
+                Assert.False(coordinator.NeedsFullCalibration());
+
+                coordinator.SetPowerTier(PowerTier.Balanced);
+                Assert.Equal(PowerTier.Balanced, coordinator.SelectedTier);
+                Assert.Equal(PowerTier.Balanced, coordinator.LatestTelemetry.ActiveTier);
+
+                await coordinator.StopAsync();
+            }
+
+            // Reopening with the same state store must recognize the reconciled calibration immediately on StartSearchAsync without re-calibrating.
+            using (var reopened = new MultiGpuCoordinator(backend, stateStore, new DpapiVaultStore(directory),
+                new CoordinatorOptions { FullCalibrationDuration = TimeSpan.FromSeconds(30), CalibrationWindow = TimeSpan.FromMilliseconds(25) }))
+            {
+                reopened.Initialize();
+                reopened.SetTargetPattern(pattern);
+                var runningTcs = new TaskCompletionSource<CoordinatorTelemetry>(TaskCreationOptions.RunContinuationsAsynchronously);
+                reopened.TelemetryUpdated += (_, t) =>
+                {
+                    if (t.State == CoordinatorState.Running)
+                    {
+                        runningTcs.TrySetResult(t);
+                    }
+                };
+
+                await reopened.StartSearchAsync(pattern);
+                CoordinatorTelemetry runningSnap = await runningTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.True(runningSnap.AllEnabledFullyCalibrated);
+                Assert.True(runningSnap.TotalBaselineHps > 0);
+                Assert.Equal(PowerTier.Balanced, runningSnap.ActiveTier);
+                await reopened.StopAsync();
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
     private static async Task CalibrateAsync(MultiGpuCoordinator coordinator, KeyIdPattern pattern)
     {
         var running = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -152,6 +240,12 @@ public sealed class CoordinatorWorkloadCalibrationTests
                 running.TrySetResult();
             }
         }
+    }
+
+    private sealed class SwitchingBackend(GpuDeviceInfo enumeratedInfo, GpuDeviceInfo runtimeInfo) : IGpuBackend
+    {
+        public IReadOnlyList<GpuDeviceInfo> EnumerateHardwareGpus() => [enumeratedInfo];
+        public IGpuSearchDevice CreateDevice(GpuDeviceInfo info) => new CalibrationDevice(runtimeInfo);
     }
 
     private sealed class CalibrationBackend(GpuDeviceInfo? info = null) : IGpuBackend

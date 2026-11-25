@@ -177,7 +177,7 @@ extension AppModel {
     }
 
     public func setPowerTier(_ tier: String) async {
-        guard isTierSelectorEnabled else { return }
+        guard isTierSelectorEnabled && tier != displayTier else { return }
         await runAction {
             let status = try await self.transport.send(
                 method: "setPowerTier",

@@ -4,7 +4,7 @@ import PGPMintMacCore
 
 struct DashboardView: View {
     @Bindable var model: AppModel
-    @Environment(\.openSettings) private var openSettings
+    let onOpenSettings: () -> Void
 
     @State private var exportTarget: HostMatchDto?
     @State private var pendingDelete: HostMatchDto?
@@ -78,7 +78,7 @@ struct DashboardView: View {
             }
             Spacer()
             Button {
-                openSettings()
+                onOpenSettings()
             } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 14))

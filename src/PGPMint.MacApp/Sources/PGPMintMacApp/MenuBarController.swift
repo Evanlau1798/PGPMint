@@ -79,6 +79,20 @@ final class MenuBarController: NSObject {
             let toggleKey = (model.isSearching || model.isPaused) ? "Stop" : "Start"
             let toggleItem = addItem(title: model.loc.text(toggleKey), action: #selector(handlePrimaryToggle))
             toggleItem.isEnabled = model.canPrimaryAction
+
+            let tierMenu = NSMenu(title: model.loc.text("PowerTier"))
+            for tier in ["Eco", "Balanced", "Efficiency", "Max"] {
+                let item = NSMenuItem(title: model.loc.tierLabel(tier), action: #selector(handleSelectTier(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = tier
+                item.state = (model.displayTier == tier) ? .on : .off
+                item.isEnabled = model.isTierSelectorEnabled
+                tierMenu.addItem(item)
+            }
+            let tierParent = NSMenuItem(title: model.loc.text("PowerTier"), action: nil, keyEquivalent: "")
+            tierParent.submenu = tierMenu
+            tierParent.isEnabled = model.isTierSelectorEnabled
+            menu.addItem(tierParent)
         }
 
         menu.addItem(.separator())
@@ -107,4 +121,8 @@ final class MenuBarController: NSObject {
     @objc private func handleSettings() { onOpenSettings() }
     @objc private func handleQuit() { onQuit() }
     @objc private func handlePrimaryToggle() { Task { await model.primaryAction() } }
+    @objc private func handleSelectTier(_ sender: NSMenuItem) {
+        guard let tier = sender.representedObject as? String else { return }
+        Task { await model.setPowerTier(tier) }
+    }
 }

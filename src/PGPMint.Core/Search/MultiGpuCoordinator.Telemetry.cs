@@ -89,15 +89,19 @@ public sealed partial class MultiGpuCoordinator
             {
                 if (string.Equals(list[i].DeviceKey, device.Info.DeviceKey, StringComparison.Ordinal))
                 {
-                    if (!string.Equals(list[i].BackendName, device.Info.BackendName, StringComparison.Ordinal) ||
+                    if (!string.Equals(list[i].Name, device.Info.Name, StringComparison.Ordinal) ||
+                        !string.Equals(list[i].BackendName, device.Info.BackendName, StringComparison.Ordinal) ||
                         !string.Equals(list[i].KernelVersion, device.KernelVersion, StringComparison.Ordinal) ||
+                        !string.Equals(list[i].DriverVersion, device.Info.DriverVersion, StringComparison.Ordinal) ||
                         !string.Equals(list[i].BackendDriverVersion, device.Info.BackendDriverVersion, StringComparison.Ordinal) ||
                         list[i].KernelConfiguration != device.Info.KernelConfiguration)
                     {
                         list[i] = list[i] with
                         {
+                            Name = device.Info.Name,
                             BackendName = device.Info.BackendName,
                             KernelVersion = device.KernelVersion,
+                            DriverVersion = device.Info.DriverVersion,
                             BackendDriverVersion = device.Info.BackendDriverVersion,
                             KernelConfiguration = device.Info.KernelConfiguration
                         };
