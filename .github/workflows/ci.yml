@@ -78,6 +78,11 @@ jobs:
       - name: Select runner-local packaging scratch
         run: echo "PACKAGE_SCRATCH=$RUNNER_TEMP/pgpmint-packaging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
 
+      # Avoid MoltenVK argument encoders on Intel's paravirtual GPU.
+      - name: Configure Intel virtual GPU compatibility
+        if: matrix.target == 'macos-x64'
+        run: echo 'MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0' >> "$GITHUB_ENV"
+
       - name: Verify no emojis in tracked files
         if: matrix.target == 'windows-x64'
         shell: pwsh

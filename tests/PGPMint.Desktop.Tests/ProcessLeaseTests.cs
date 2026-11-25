@@ -7,8 +7,8 @@ public sealed class ProcessLeaseTests
 {
     private static ProcessStartInfo Command(string command, string unixCommand)
     {
-        var info = new ProcessStartInfo(OperatingSystem.IsWindows() ? "powershell.exe" : "/bin/sh");
-        string[] args = OperatingSystem.IsWindows() ? ["-NoProfile", "-NonInteractive", "-Command", command] : ["-c", unixCommand];
+        var info = new ProcessStartInfo(OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh");
+        string[] args = OperatingSystem.IsWindows() ? ["/d", "/c", command] : ["-c", unixCommand];
         foreach (string arg in args) info.ArgumentList.Add(arg);
         return info;
     }
@@ -16,7 +16,7 @@ public sealed class ProcessLeaseTests
     [Fact]
     public async Task ReadyProcessRemainsOwnedUntilDisposedAndIsReaped()
     {
-        var info = Command("[Console]::WriteLine('READY'); [Console]::ReadLine() | Out-Null", "printf 'READY\\n'; read -r line");
+        var info = Command("echo READY&set /p pgpmint_line=", "printf 'READY\\n'; read -r line");
         var lease = await ProcessLease.StartAsync(info, "READY", TimeSpan.FromSeconds(5));
         int id = lease.ProcessId;
         Assert.True(lease.IsRunning);
@@ -28,13 +28,13 @@ public sealed class ProcessLeaseTests
     [Fact]
     public async Task FailedReadinessIsNotReportedAsSuccessfulInhibition()
     {
-        await Assert.ThrowsAsync<InvalidOperationException>(() => ProcessLease.StartAsync(Command("exit 9", "exit 9"), "READY", TimeSpan.FromSeconds(5)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ProcessLease.StartAsync(Command("exit /b 9", "exit 9"), "READY", TimeSpan.FromSeconds(5)));
     }
 
     [Fact]
     public async Task MissingReadinessTimesOutAndKillsTheOwnedProcess()
     {
-        var info = Command("[Console]::ReadLine() | Out-Null", "read -r line");
+        var info = Command("set /p pgpmint_line=", "read -r line");
         await Assert.ThrowsAsync<TimeoutException>(() => ProcessLease.StartAsync(info, "READY", TimeSpan.FromMilliseconds(300)));
     }
 }
