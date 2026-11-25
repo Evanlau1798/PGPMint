@@ -24,6 +24,21 @@ public sealed class MacKeychainSecretStoreTests
     {
         string directory = Path.Combine(Path.GetTempPath(), "PGPMint-other-keychain-" + Guid.NewGuid().ToString("N"));
         PrivateFileSystem.CreateDirectory(directory);
+        try
+        {
+            using var canonical = Process.Start(new ProcessStartInfo("/bin/pwd")
+                { WorkingDirectory = directory, ArgumentList = { "-P" }, UseShellExecute = false, RedirectStandardOutput = true })!;
+            if (!canonical.WaitForExit(10000))
+            {
+                canonical.Kill(entireProcessTree: true);
+                canonical.WaitForExit();
+                throw new TimeoutException("Cannot resolve the physical keychain fixture directory.");
+            }
+            Assert.Equal(0, canonical.ExitCode);
+            // security reports physical paths, including /private/var behind macOS's /var alias.
+            directory = canonical.StandardOutput.ReadToEnd().TrimEnd('\r', '\n');
+        }
+        catch { Directory.Delete(directory); throw; }
         string keychain = Path.Combine(directory, "other.keychain-db");
         string originalDefault = Security("default-keychain\n").Trim().Trim('"');
         string login = Security("login-keychain\n").Trim().Trim('"');
