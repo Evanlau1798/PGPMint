@@ -56,8 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !force && key == lastAutoHeightKey { return }
         lastAutoHeightKey = key
 
-        DispatchQueue.main.async { [weak self, weak window] in
-            guard let self, let window, let contentView = window.contentView else { return }
+        DispatchQueue.main.async { [weak window] in
+            guard let window, let contentView = window.contentView else { return }
             contentView.layoutSubtreeIfNeeded()
             let currentWidth = max(Self.defaultWidth, window.contentRect(forFrameRect: window.frame).width)
             let fittingHeight = contentView.fittingSize.height
