@@ -54,7 +54,7 @@ Unlike command-line tools that require installing Python or the NVIDIA CUDA Tool
 The Windows WinUI application (`src/PGPMint.App`) remains the flagship Windows product, now updated alongside macOS and Linux with the unified PGPMint brand icon (`assets/pgpmint-icon.svg`).
 
 - **macOS (`src/PGPMint.MacApp` + `src/PGPMint.Host`)**: Native **SwiftUI + AppKit** desktop app (`macOS 14+`, `macos-arm64` and `macos-x64` packages) backed by a bundled self-contained `.NET 10` sidecar helper (`pgpmint-host`) communicating over private anonymous `stdin`/`stdout` NDJSON pipes. Private key seeds never cross IPC to the UI process, and closing `stdin` stops GPU workers and releases the exclusive `VaultSession`. Supports Login Keychain automatic unlock for new vaults (keeping password unlock for existing vaults), menu bar live hash rate readout with 4-tier switching, `IOKit` idle sleep assertion (`System sleep is inhibited while searching`), native Metal (`libpgpmint_metal.dylib`) and MoltenVK Vulkan drivers.
-- **Linux (`src/PGPMint.Desktop`)**: Redesigned **Avalonia 12.2.0** XAML desktop app (`linux-x64` and `linux-arm64`) featuring a Setup Wizard, minimalist 3-card dashboard, separate Settings window, 4 calibrated power tiers (`Eco`, `Balanced`, `Efficiency`, `Max`) with per-tier hover tooltips, silent `/usr/bin/systemd-inhibit` sleep prevention during active search, `StatusNotifierWatcher` system tray integration, and native Vulkan/OpenCL compute backends. Software CPU renderers are excluded; WSL is a Linux testing environment rather than a supported GPU target.
+- **Linux (`src/PGPMint.Desktop`)**: Redesigned **Avalonia 12.2.0** XAML desktop app (`linux-x64` and `linux-arm64`) featuring a Setup Wizard, minimalist 3-card dashboard, separate Settings window, 4 calibrated power tiers (`Eco`, `Balanced`, `Efficiency`, `Max`) with per-tier hover tooltips and native NVIDIA NVML (`libnvidia-ml.so.1`) live board power and `MH/W` telemetry, silent `/usr/bin/systemd-inhibit` sleep prevention during active search, `StatusNotifierWatcher` system tray integration, and native Vulkan/OpenCL compute backends. Software CPU renderers are excluded; WSL is a Linux testing environment rather than a supported GPU target.
 
 Download the platform test packages from the successful **CI** run on `main` in
 [GitHub Actions](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml).
@@ -186,6 +186,58 @@ The current **v4 engine** eliminates constant-cache register spill (workgroup 12
 
 On the same RTX 3080 under concurrent dual-stream NVDEC hardware video decoding (3%–11% decoder load), counterbalanced 2-round `MultiGpuCoordinator` averages held **21.35 GH/s** (`-8.08%`) on Vulkan vs **18.98 GH/s** (`-18.14%`) on OpenCL, making Vulkan the default Tier-1 backend.
 
+### NVIDIA GeForce RTX 5090 (Linux x64, 450 W Enforced Cap)
+
+Measured on an **NVIDIA GeForce RTX 5090** (32 GiB VRAM, Ubuntu 22.04.5 LTS, Driver `595.91.07`, enforced **450.00 W** cap vs `575.00 W` default) using `PGPMint v1.2.1` + native Linux NVML (`libnvidia-ml.so.1`) on the 13-hex suffix `***1145141919810` (see [Acknowledgements & Cloud GPU Warning](#acknowledgements--cloud-gpu-usage-notice)).
+
+| Device | Backend | Kernel / Workgroup | Micro Median | End-to-End (`MAX`) | Notes |
+|---|---|---|---:|---:|---|
+| **RTX 5090 (450 W)** | **OpenCL** | `opencl-sha1-four-v4` / `64` | **83.93 GH/s** | **76.63 GH/s** | Peak micro throughput |
+| **RTX 5090 (450 W)** | **OpenCL** | `opencl-sha1-four-v4` / `128` | **83.32 GH/s** | **76.18 GH/s** | CLI `search` default (`cmem0-v4`) |
+| **RTX 5090 (450 W)** | **OpenCL** | `opencl-sha1-four-v4` / `256` | 81.60 GH/s | 75.97 GH/s | — |
+| RTX 5090 (450 W) | Vulkan | `vulkan-sha1-four-v4` / `64`–`256` | 56.75–57.42 GH/s | 54.86–55.03 GH/s | Headless EGL ICD (`nvidia_egl_icd.json`) |
+| RTX 3090 | OpenCL | `opencl-sha1-four-v4` / `128` | — | 24.97 GH/s | Earlier Linux container calibration |
+| RTX 3080 (Windows) | Vulkan | `vulkan-sha1-four-v4` / `128` | 23.20–23.82 GH/s | 22.51–23.23 GH/s | `346.61 W` (`64.95 MH/W` full load) |
+
+<p align="center">
+  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint RTX 5090 throughput, board power, and MH/W curve across 0% to 100% target rate" width="100%" />
+</p>
+
+<details>
+<summary><strong>Complete 21-Point Settled RTX 5090 Power-Efficiency Curve &amp; 180s Stability Data (OpenCL, 4x128)</strong></summary>
+
+Each point (`100%` `FullSpeed`, `95%`–`5%` under PGPMint 50 ms duty-cycle pacing) settled for 3 s before 5 s steady-state NVML measurement (`0%` = 5 s idle). All search steps counted directly toward persisted progress.
+
+| Target Load | Throughput (GH/s) | Median Power (W) | Yield (MH/W) | GPU Util (%) | Core / Mem Clock (MHz) | Temp (C) | P-State | Power Cap Flags |
+|---:|---:|---:|---:|---:|---|---:|:---:|---|
+| **100%** | **77.671** | **449.99** | **172.61** | 100 | 2460 / 13801 | 67 | P1 | `SwPowerCap(50/50)` |
+| **95%** | 72.912 | 449.94 | 162.05 | 89 | 2610 / 13801 | 69 | P1 | `SwPowerCap(51/51)` |
+| **90%** | 69.595 | 450.05 | 154.64 | 85 | 2640 / 13801 | 71 | P1 | `SwPowerCap(52/52)` |
+| **85%** | 66.138 | 450.22 | 146.90 | 78 | 2685 / 13801 | 72 | P1 | `SwPowerCap(52/52)` |
+| **80%** | 62.075 | 434.58 | 142.84 | 74 | 2707 / 13801 | 73 | P1 | `SwPowerCap(51/51)` |
+| **75%** | 58.264 | 414.47 | 140.57 | 69 | 2715 / 13801 | 72 | P1 | `SwPowerCap(52/52)` |
+| **70%** | 54.541 | 395.45 | 137.92 | 65 | 2722 / 13801 | 72 | P1 | `SwPowerCap(52/52)` |
+| **65%** | 50.677 | 375.36 | 135.01 | 60 | 2737 / 13801 | 72 | P1 | `SwPowerCap(36/52)` |
+| **60%** | 46.848 | 355.71 | 131.70 | 55 | 2745 / 13801 | 71 | P1 | `SwPowerCap(15/52)` |
+| **55%** | 42.859 | 335.41 | 127.78 | 51 | 2752 / 13801 | 71 | P1 | `SwPowerCap(5/52)` |
+| **50%** | 39.055 | 315.02 | 123.98 | 46 | 2767 / 13801 | 69 | P1 | `None` |
+| **45%** | 35.103 | 291.53 | 120.41 | 40 | 2767 / 13801 | 70 | P1 | `None` |
+| **40%** | 31.205 | 258.84 | 120.56 | 35 | 2580 / 13801 | 67 | P1 | `None` |
+| **35%** | 27.370 | 235.32 | 116.31 | 32 | 2565 / 13801 | 65 | P1 | `None` |
+| **30%** | 23.404 | 213.20 | 109.78 | 27 | 2550 / 13801 | 64 | P1 | `None` |
+| **25%** | 19.584 | 190.85 | 102.61 | 23 | 2542 / 13801 | 61 | P1 | `None` |
+| **20%** | 15.601 | 169.27 | 92.17 | 19 | 2527 / 13801 | 60 | P1 | `None` |
+| **15%** | 11.745 | 148.12 | 79.30 | 13 | 2520 / 13801 | 58 | P1 | `None` |
+| **10%** | 7.832 | 126.09 | 62.12 | 9 | 2505 / 13801 | 57 | P1 | `None` |
+| **5%** | 3.879 | 104.79 | 37.02 | 5 | 2497 / 13801 | 55 | P1 | `None` |
+| **0% (Idle)** | 0.000 | 28.32 | — | 0 | 195 / 405 | 52 | P8 | `None` |
+
+- **Why `100%` (`Max`) peaks at `172.61 MH/W`**: Under the 450 W power limit, continuous full load settles around `2460 MHz` with ~2.66x the RTX 3080's per-watt yield (`64.95 MH/W`). Below `100%`, PGPMint's 50 ms duty-cycle pacing keeps GDDR7 at `13801 MHz` in `P1` (~105 W static floor at 5%), while `85%–95%` short bursts boost higher (`2610–2685 MHz`) and still saturate `450 W`. At `40%`, the core drops from `2767` to `2580 MHz`, cutting `32.7 W` and forming a slight efficiency knee (`120.56 MH/W`).
+- **Live 4-Tier Validation (5 s settle + 10 s `MultiGpuCoordinator`)**: `Max` `76.680 GH/s @ 449.99 W` (`170.40 MH/W`), `Efficiency` (`62.6%`) `49.743 GH/s @ 362.77 W` (`137.12 MH/W`), `Balanced` (`31.3%`) `24.242 GH/s @ 217.69 W` (`111.36 MH/W`), `Eco` (`7.7%`) `6.136 GH/s @ 115.89 W` (`52.95 MH/W`).
+- **180-Second Sustained `Max` Stability**: Mean **`74.695 GH/s`** (median **`74.726 GH/s`**, UI rolling window `76.1 -> 74.4 GH/s`), mean power **`448.71 W`** (**`166.47 MH/W`**), temperature stabilizing `70 C -> 80 C` (`0/180` thermal throttling, `179/180` `SwPowerCap`).
+
+</details>
+
 ### Expected Average Wait Time (at 20 GH/s)
 
 | Suffix Length | Search Space ($16^k$) | Expected Average Time |
@@ -281,6 +333,15 @@ dotnet publish src\PGPMint.App\PGPMint.App.csproj -p:Platform=x64 -c Release -r 
 # Publish trimmed standalone compressed single-file executable (ARM64)
 dotnet publish src\PGPMint.App\PGPMint.App.csproj -p:Platform=ARM64 -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true
 ```
+
+---
+
+## Acknowledgements & Cloud GPU Usage Notice
+
+Special thanks to **[gputw.ai](https://gputw.ai)** for providing the GPU compute resources used for the RTX 5090 (and RTX 3090) benchmark and power-efficiency curve testing in this repository.
+
+> [!WARNING]
+> **Cloud / Rented GPU Anti-Mining Risk Notice**: PGPMint performs sustained, compute-bound GPU SHA-1 hashing (`opencl-sha1-four-v4` / `vulkan-sha1-four-v4`). To cloud infrastructure telemetry and automated abuse-detection systems, its GPU utilization, clock profile, and continuous board power draw closely resemble cryptocurrency proof-of-work mining. **Do not start continuous PGPMint workloads on rented or cloud GPU instances without first reviewing the provider's Terms of Service / Acceptable Use Policy and obtaining explicit confirmation where required**, as unverified prolonged runs may trigger automated anti-mining enforcement and result in account suspension or termination.
 
 ---
 

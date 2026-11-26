@@ -54,7 +54,7 @@ PGPMint 利用显卡算力高速生成 **OpenPGP v4（`Ed25519Legacy`）** 密�
 Windows WinUI 3 应用（`src/PGPMint.App`）继续作为 Windows 主力版本，并与 macOS、Linux 同步采用统一的 PGPMint 矢量品牌图标（[assets/pgpmint-icon.svg](assets/pgpmint-icon.svg)）。
 
 - **macOS（`src/PGPMint.MacApp` + `src/PGPMint.Host`）**：专为 macOS 14+ 打造的纯原生 **SwiftUI + AppKit** 桌面应用（提供 `macos-arm64` 与 `macos-x64`），通过私有匿名 `stdin`/`stdout` NDJSON 管道驱动随包内置的 `.NET 10` 独立后台助手（`pgpmint-host`）。私钥种子绝不跨进程传给界面；关闭管道后立即停止 GPU 并释放独占 `VaultSession`。新密钥库可通过登录钥匙串自动解锁（已有密码库保持密码解锁），菜单栏支持实时算力读取与 4 档切换，并内置 `IOKit` 防休眠、原生 Metal（`libpgpmint_metal.dylib`）与 MoltenVK Vulkan 支持。当前采用 ad-hoc 签名（未经过 Apple 公证），首次打开可能需在「系统设置」中手动放行。
-- **Linux（`src/PGPMint.Desktop`）**：重新设计的 **Avalonia 12.2.0** XAML 桌面应用（提供 `linux-x64` 与 `linux-arm64`），包含初始设置向导、极简三卡片主界面、独立设置窗口、带悬停规则说明的四档功耗选择器、静默 `/usr/bin/systemd-inhibit` 防休眠、`StatusNotifierWatcher` 系统托盘集成及原生 Vulkan / OpenCL 后端（排除 CPU 软件渲染器）。
+- **Linux（`src/PGPMint.Desktop`）**：重新设计的 **Avalonia 12.2.0** XAML 桌面应用（提供 `linux-x64` 与 `linux-arm64`），包含初始设置向导、极简三卡片主界面、独立设置窗口、带悬停规则说明及原生 NVIDIA NVML（`libnvidia-ml.so.1`）实时功耗和 `MH/W` 遥测的四档功耗选择器、静默 `/usr/bin/systemd-inhibit` 防休眠、`StatusNotifierWatcher` 系统托盘集成及原生 Vulkan / OpenCL 后端（排除 CPU 软件渲染器）。
 - **跨平台命令行工具（`src/PGPMint.Cli`）**：
 
 ```sh
@@ -124,6 +124,58 @@ git config --global commit.gpgsign true
 - **Apple M3（macOS 15.6.1 `macos-arm64`）**：MoltenVK 实机约 **2.25 GH/s**。
 - **Intel Alder Lake UHD（`ADL GT2`，Rocky Linux 9.8 `linux-x64`、Mesa 25.2.7 Vulkan）**：实机校准峰值约 **566.99 MH/s**（中位 **561.90 MH/s**）。
 
+### NVIDIA GeForce RTX 5090（Linux x64，450 W 功耗上限）
+
+于 **NVIDIA GeForce RTX 5090**（32 GiB VRAM、Ubuntu 22.04.5 LTS、驱动 `595.91.07`、容器限制 **450.00 W** 上限／默认 `575.00 W`）配合 `PGPMint v1.2.1` 与原生 Linux NVML（`libnvidia-ml.so.1`），在 13 位后缀 `***1145141919810` 上完成全套实测（算力致谢与云端风险提示见[致谢与云端 GPU 使用警示](#致谢与云端-gpu-使用警示)）。
+
+| 设备 | 后端 | Kernel / Workgroup | Micro 中位数 | 端到端 Coordinator（Max） | 备注 |
+|---|---|---|---:|---:|---|
+| **RTX 5090（450 W）** | **OpenCL** | `opencl-sha1-four-v4` / `64` | **83.93 GH/s** | **76.63 GH/s** | 微基准最高 |
+| **RTX 5090（450 W）** | **OpenCL** | `opencl-sha1-four-v4` / `128` | **83.32 GH/s** | **76.18 GH/s** | CLI `search` 默认配置（`cmem0-v4`） |
+| **RTX 5090（450 W）** | **OpenCL** | `opencl-sha1-four-v4` / `256` | 81.60 GH/s | 75.97 GH/s | — |
+| RTX 5090（450 W） | Vulkan | `vulkan-sha1-four-v4` / `64`–`256` | 56.75–57.42 GH/s | 54.86–55.03 GH/s | 需无头 EGL ICD（`nvidia_egl_icd.json`） |
+| RTX 3090 | OpenCL | `opencl-sha1-four-v4` / `128` | — | 24.97 GH/s | 先前 Linux 容器校准中位数 |
+| RTX 3080（Windows） | Vulkan | `vulkan-sha1-four-v4` / `128` | 23.20–23.82 GH/s | 22.51–23.23 GH/s | 满载 `346.61 W`（`64.95 MH/W`） |
+
+<p align="center">
+  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint RTX 5090 在 0% 至 100% 负载下的算力、整卡功耗与每瓦效率曲线" width="100%" />
+</p>
+
+<details>
+<summary><strong>展开查看 RTX 5090 完整 21 点算力／每瓦效率曲线与 180 秒稳定性数据（OpenCL, 4x128）</strong></summary>
+
+每个阶梯（`100%` 全速、`95%`–`5%` 为 PGPMint 50 ms 周期切片限速）均先稳定 3 秒再以 NVML 稳态采样 5 秒（`0%` 为待机 5 秒），所有计算候选均计入持久进度（零浪费）。
+
+| 目标比例 | 实测算力 (GH/s) | 功耗中位数 (W) | 每瓦获得 (MH/W) | GPU 利用率 (%) | 核心 / 显存频率 (MHz) | 温度 (C) | P-State | 限电标志 |
+|---:|---:|---:|---:|---:|---|---:|:---:|---|
+| **100%** | **77.671** | **449.99** | **172.61** | 100 | 2460 / 13801 | 67 | P1 | `SwPowerCap(50/50)` |
+| **95%** | 72.912 | 449.94 | 162.05 | 89 | 2610 / 13801 | 69 | P1 | `SwPowerCap(51/51)` |
+| **90%** | 69.595 | 450.05 | 154.64 | 85 | 2640 / 13801 | 71 | P1 | `SwPowerCap(52/52)` |
+| **85%** | 66.138 | 450.22 | 146.90 | 78 | 2685 / 13801 | 72 | P1 | `SwPowerCap(52/52)` |
+| **80%** | 62.075 | 434.58 | 142.84 | 74 | 2707 / 13801 | 73 | P1 | `SwPowerCap(51/51)` |
+| **75%** | 58.264 | 414.47 | 140.57 | 69 | 2715 / 13801 | 72 | P1 | `SwPowerCap(52/52)` |
+| **70%** | 54.541 | 395.45 | 137.92 | 65 | 2722 / 13801 | 72 | P1 | `SwPowerCap(52/52)` |
+| **65%** | 50.677 | 375.36 | 135.01 | 60 | 2737 / 13801 | 72 | P1 | `SwPowerCap(36/52)` |
+| **60%** | 46.848 | 355.71 | 131.70 | 55 | 2745 / 13801 | 71 | P1 | `SwPowerCap(15/52)` |
+| **55%** | 42.859 | 335.41 | 127.78 | 51 | 2752 / 13801 | 71 | P1 | `SwPowerCap(5/52)` |
+| **50%** | 39.055 | 315.02 | 123.98 | 46 | 2767 / 13801 | 69 | P1 | `None` |
+| **45%** | 35.103 | 291.53 | 120.41 | 40 | 2767 / 13801 | 70 | P1 | `None` |
+| **40%** | 31.205 | 258.84 | 120.56 | 35 | 2580 / 13801 | 67 | P1 | `None` |
+| **35%** | 27.370 | 235.32 | 116.31 | 32 | 2565 / 13801 | 65 | P1 | `None` |
+| **30%** | 23.404 | 213.20 | 109.78 | 27 | 2550 / 13801 | 64 | P1 | `None` |
+| **25%** | 19.584 | 190.85 | 102.61 | 23 | 2542 / 13801 | 61 | P1 | `None` |
+| **20%** | 15.601 | 169.27 | 92.17 | 19 | 2527 / 13801 | 60 | P1 | `None` |
+| **15%** | 11.745 | 148.12 | 79.30 | 13 | 2520 / 13801 | 58 | P1 | `None` |
+| **10%** | 7.832 | 126.09 | 62.12 | 9 | 2505 / 13801 | 57 | P1 | `None` |
+| **5%** | 3.879 | 104.79 | 37.02 | 5 | 2497 / 13801 | 55 | P1 | `None` |
+| **0%（待机）** | 0.000 | 28.32 | — | 0 | 195 / 405 | 52 | P8 | `None` |
+
+- **为何 `100%` 全速反而是最高能效点（`172.61 MH/W`）**：在 450 W 功耗墙约束下，满载核心稳定在 `2460 MHz` 高能效区间，每瓦产出达到 RTX 3080（`64.95 MH/W`）的 **2.66 倍**；而 50 ms 时间切片限速使 GPU 维持在 `P1`（GDDR7 `13801 MHz`，5% 负载仍耗 `104.79 W`），且 `85%–95%` 短脉冲反而拉升核心至 `2610–2685 MHz` 并依旧触及 `450 W` 上限。降至 `40%` 时核心回落至 `2580 MHz`，功耗骤降 `32.7 W` 并出现效率拐点（`120.56 MH/W`）。
+- **四档位实时切换验证（5 秒稳定 + 10 秒 `MultiGpuCoordinator`）**：`Max` `76.680 GH/s @ 449.99 W`（`170.40 MH/W`）、`Efficiency`（`62.6%`）`49.743 GH/s @ 362.77 W`（`137.12 MH/W`）、`Balanced`（`31.3%`）`24.242 GH/s @ 217.69 W`（`111.36 MH/W`）、`Eco`（`7.7%`）`6.136 GH/s @ 115.89 W`（`52.95 MH/W`）。
+- **180 秒满载稳定性**：1 秒区间平均 **`74.695 GH/s`**（中位数 **`74.726 GH/s`**，UI 窗口由 `76.1` 平稳收敛至 `74.4 GH/s`），平均功耗 **`448.71 W`**（**`166.47 MH/W`**），温度稳定在 `70 C -> 80 C`（`0/180` 热降频、`179/180` `SwPowerCap`）。
+
+</details>
+
 ### 预期平均等待时间（按 20 GH/s 估算）
 
 | 后缀长度 | 搜索空间（$16^k$） | 预期平均时间 |
@@ -171,6 +223,15 @@ dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64 -c Release 
 # 使用打包脚本生成指定平台发行包
 python scripts/packaging/package.py --rid win-x64 --tag v1.2.1 --platform x64 --scratch C:\pgpmint-dist
 ```
+
+---
+
+## 致谢与云端 GPU 使用警示
+
+特别感谢 **[gputw.ai](https://gputw.ai)** 提供本次 RTX 5090（以及此前 RTX 3090）性能基准测试与算力／每瓦效率曲线测量所需的 GPU 算力支持。
+
+> [!WARNING]
+> **云端／租用 GPU 反挖矿检测风险提示**：PGPMint 在搜索 OpenPGP Key ID 时会进行长时间、高满载的 GPU SHA-1 哈希演算（`opencl-sha1-four-v4` / `vulkan-sha1-four-v4`），其计算特征、GPU 占用与持续功耗表现与**加密货币挖矿（Proof-of-Work Mining）极为相似**。**在未提前确认服务商使用条款（Terms of Service / Acceptable Use Policy）或获得许可之前，请勿直接在租用或云端 GPU 实例上启动长时间计算**，否则可能触发后台的反挖矿检测机制并导致**账号被封禁或停用**。
 
 ---
 
