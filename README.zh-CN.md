@@ -134,11 +134,12 @@ git config --global commit.gpgsign true
 | **RTX 5090（450 W）** | **OpenCL** | `opencl-sha1-four-v4` / `128` | **83.32 GH/s** | **76.18 GH/s** | CLI `search` 默认配置（`cmem0-v4`） |
 | **RTX 5090（450 W）** | **OpenCL** | `opencl-sha1-four-v4` / `256` | 81.60 GH/s | 75.97 GH/s | — |
 | RTX 5090（450 W） | Vulkan | `vulkan-sha1-four-v4` / `64`–`256` | 56.75–57.42 GH/s | 54.86–55.03 GH/s | 需无头 EGL ICD（`nvidia_egl_icd.json`） |
-| RTX 3090 | OpenCL | `opencl-sha1-four-v4` / `128` | — | 24.97 GH/s | 先前 Linux 容器校准中位数 |
+| RTX 3090 | OpenCL | `opencl-sha1-four-v4` / `128` | — | 24.29–25.37 GH/s | 单卡基准（`300 W` 上限、`81.20 MH/W`） |
+| **RTX 3090 x2 NVLink** | **OpenCL** | `opencl-sha1-four-v4` / `128` | — | **49.43–50.41 GH/s** | 双卡合计 `600 W` 上限（`82.54 MH/W`；长时热稳态 `46.42 GH/s`） |
 | RTX 3080（Windows） | Vulkan | `vulkan-sha1-four-v4` / `128` | 23.20–23.82 GH/s | 22.51–23.23 GH/s | 满载 `346.61 W`（`64.95 MH/W`） |
 
 <p align="center">
-  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint GPU 功耗能效曲线（功耗 W 对实测算力 GH/s），对比 RTX 5090（OpenCL，450 W 限制）与 RTX 3080（Vulkan）" width="100%" />
+  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint GPU 功耗能效曲线（功耗 W 对实测算力 GH/s），对比 RTX 5090（OpenCL，450 W 限制）、RTX 3090 x2 NVLink（OpenCL，600 W 限制）与 RTX 3080（Vulkan）" width="100%" />
 </p>
 
 <details>
@@ -174,6 +175,16 @@ git config --global commit.gpgsign true
 - **图表标注四档位落点（`EfficiencyCurveSelector`）**：RTX 5090（启用高待机功耗 `Eco` 适配）：`节能`（`10%`）`7.83 GH/s @ 126.09 W`（`62.12 MH/W`）、`平衡`（`40%`）`31.20 GH/s @ 258.84 W`（`120.56 MH/W`）、`效率`（`70%`）`54.54 GH/s @ 395.45 W`（`137.92 MH/W`）、`全速`（`100%`）`77.67 GH/s @ 450.00 W`（`172.61 MH/W`）；RTX 3080（Windows Vulkan）：`节能`（`11%`）`2.71 GH/s @ 56.47 W`（`48.03 MH/W`）、`平衡`（`23%`）`5.39 GH/s @ 108.99 W`（`49.42 MH/W`）、`效率`（`67%`）`15.88 GH/s @ 301.49 W`（`52.69 MH/W`）、`全速`（`100%`）`22.51 GH/s @ 346.61 W`（`64.95 MH/W`）。
 - **四档位实时切换验证（5 秒稳定 + 10 秒 `MultiGpuCoordinator`，v1.2.1 基准）**：`Max` `76.680 GH/s @ 449.99 W`（`170.40 MH/W`）、`Efficiency`（`62.6%`）`49.743 GH/s @ 362.77 W`（`137.12 MH/W`）、`Balanced`（`31.3%`）`24.242 GH/s @ 217.69 W`（`111.36 MH/W`）、`Eco`（`7.7%`）`6.136 GH/s @ 115.89 W`（`52.95 MH/W`）。
 - **180 秒满载稳定性**：1 秒区间平均 **`74.695 GH/s`**（中位数 **`74.726 GH/s`**，UI 窗口由 `76.1` 平稳收敛至 `74.4 GH/s`），平均功耗 **`448.71 W`**（**`166.47 MH/W`**），温度稳定在 `70 C -> 80 C`（`0/180` 热降频、`179/180` `SwPowerCap`）。
+
+</details>
+
+<details>
+<summary><strong>展开查看 RTX 3090 x2 NVLink 双卡实测摘要（OpenCL, 4x128, 单卡 300 W 限制）</strong></summary>
+
+- **硬件与拓扑**：双张 NVIDIA GeForce RTX 3090（各 24 GiB、4 通道 NVLink `NV4`、容器单卡限制 `300.00 W`／双卡合计 `600.00 W` 上限）、Ubuntu 22.04.5 LTS、驱动 `595.99.02`。
+- **单卡对双卡扩展率**：单卡实测 `24.289 GH/s`（`299.1 W`、`81.20 MH/W`）；双卡 30 秒官方校准合计 `50.414 GH/s`（`GPU 0`：`25.042 GH/s`、`GPU 1`：`25.372 GH/s`；21 点满载稳态 `49.429 GH/s @ 598.83 W`、`82.54 MH/W`，扩展率 **`2.03x`**）。
+- **四档位落点（`power_curve_settled.csv`）**：`节能`（`5%`、`power-floor-fallback`）`2.52 GH/s @ 277.99 W`（`9.08 MH/W`）、`平衡`（`15%`）`7.56 GH/s @ 319.29 W`（`23.68 MH/W`）、`效率`（`55%`）`27.06 GH/s @ 523.91 W`（`51.64 MH/W`）、`全速`（`100%`）`49.43 GH/s @ 598.83 W`（`82.54 MH/W`）。因 `P2` 低载底噪高达 `278 W`（占满载 `46.4%`），`IsHighIdlePowerFloor` 自动识别并展示全速建议提示。
+- **60 秒连续满载稳定性**：堆叠槽位 `GPU 0` 在 `82–83 C` 触发温控降频（`299 -> 242 W`），`GPU 1` 维持 `66 C / 299 W`，双卡连续稳态平均为 **`46.416 GH/s @ 550.6 W`（`84.31 MH/W`）**。
 
 </details>
 
