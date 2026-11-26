@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using PGPMint.Core.Search;
 using PGPMint.Core.Storage;
 
@@ -17,10 +18,29 @@ internal static class SearchCommand
         using (var coordinator = new MultiGpuCoordinator(new SelectedBackend(backend, devices), new AppStateStore(directory), new VaultStore(directory, protector)))
         using (var cancelled = new CancellationTokenSource())
         {
-            ConsoleCancelEventHandler cancel = (_, e) => { e.Cancel = true; cancelled.Cancel(); };
+            void RequestCancel()
+            {
+                try { cancelled.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+
+            ConsoleCancelEventHandler cancel = (_, e) => { e.Cancel = true; RequestCancel(); };
             Console.CancelKeyPress += cancel;
+            PosixSignalRegistration? sigTerm = null;
             try
             {
+                try
+                {
+                    sigTerm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx =>
+                    {
+                        ctx.Cancel = true;
+                        RequestCancel();
+                    });
+                }
+                catch (PlatformNotSupportedException)
+                {
+                }
+
                 coordinator.Initialize();
                 coordinator.MatchFound += (_, match) => Console.WriteLine($"Found {match.KeyId} ({match.Fingerprint}); encrypted and saved.");
                 await coordinator.StartSearchAsync(pattern);
@@ -29,13 +49,15 @@ internal static class SearchCommand
                 while (!cancelled.IsCancellationRequested && timer.Elapsed.TotalSeconds < duration)
                 {
                     if (coordinator.CurrentState is CoordinatorState.Faulted or CoordinatorState.Idle or CoordinatorState.Paused) break;
-                    await Task.Delay(250);
+                    try { await Task.Delay(250, cancelled.Token); }
+                    catch (OperationCanceledException) { break; }
                 }
             }
             finally
             {
                 await coordinator.StopAsync();
                 Console.CancelKeyPress -= cancel;
+                sigTerm?.Dispose();
             }
             var telemetry = coordinator.LatestTelemetry;
             Console.WriteLine($"Checked {telemetry.SessionChecked}; saved keys {telemetry.TotalMatchesCount}; state {telemetry.State}.");

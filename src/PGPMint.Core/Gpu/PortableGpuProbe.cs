@@ -24,19 +24,38 @@ internal static class PortableGpuProbe
                 throw new InvalidOperationException("GPU oracle: cancellation contract mismatch.");
         }
 
-        // shortcut: bounded startup comparison, use sustained platform calibration for performance acceptance.
-        const uint count = 65536;
-        if (device.MaxCandidatesPerBatch < count * 4L) throw new NotSupportedException("GPU batch ceiling is below the selection workload.");
-        for (int i = 0; i < 16; i++) Dispatch();
-        var samples = new double[31];
+        const uint initialCount = 65536;
+        const uint maxTimedCount = 1u << 25;
+        const double targetDispatchSeconds = 0.002;
+        const int warmupDispatches = 16;
+        const int minSteadyWarmups = 4;
+        const int timedDispatches = 31;
+
+        if (device.MaxCandidatesPerBatch < initialCount * 4L) throw new NotSupportedException("GPU batch ceiling is below the selection workload.");
+        uint maxCount = pattern.FixedHexLength <= 4
+            ? initialCount
+            : (uint)Math.Min(device.MaxCandidatesPerBatch / 4L, maxTimedCount);
+        uint count = initialCount;
+        for (int i = 0; i < warmupDispatches; i++)
+        {
+            long warmupStart = Stopwatch.GetTimestamp();
+            Dispatch(count);
+            double warmupSeconds = Stopwatch.GetElapsedTime(warmupStart).TotalSeconds;
+            if (i < warmupDispatches - minSteadyWarmups && count < maxCount && warmupSeconds < targetDispatchSeconds)
+            {
+                count = (uint)Math.Min((ulong)maxCount, (ulong)count * 2UL);
+            }
+        }
+
+        var samples = new double[timedDispatches];
         for (int i = 0; i < samples.Length; i++)
         {
             long start = Stopwatch.GetTimestamp();
-            Dispatch();
+            Dispatch(count);
             samples[i] = Stopwatch.GetElapsedTime(start).TotalSeconds;
         }
         Array.Sort(samples);
-        return count * 4 / Math.Max(samples[15], 1.0 / Stopwatch.Frequency);
+        return (double)count * 4.0 / Math.Max(samples[15], 1.0 / Stopwatch.Frequency);
 
         void Verify(KeyIdPattern oraclePattern, int capacity)
         {
@@ -51,7 +70,8 @@ internal static class PortableGpuProbe
             }
         }
 
-        void Dispatch() => RequireComplete(device.ScanBatch(keys, 1700000000, count, pattern, 1, SearchResultMode.FindOne), count);
+        void Dispatch(uint batchCount) =>
+            RequireComplete(device.ScanBatch(keys, 1700000000, batchCount, pattern, 1, SearchResultMode.FindOne), batchCount);
     }
 
     private static void RequireComplete(SearchBatchResult result, uint count)
