@@ -58,6 +58,10 @@
     <Style Selector="Button.tier-ghost:pointerover /template/ ContentPresenter#PART_ContentPresenter">
       <Setter Property="Background" Value="{DynamicResource SubtleSurfaceHoverBg}" />
     </Style>
+    <Style Selector="Button.tier-ghost:disabled /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}" />
+    </Style>
     <Style Selector="Button.tier-active">
       <Setter Property="Background" Value="{DynamicResource AccentButtonBg}" />
       <Setter Property="Foreground" Value="{DynamicResource AccentButtonFg}" />
