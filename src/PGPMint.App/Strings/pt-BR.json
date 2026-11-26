@@ -70,6 +70,7 @@
     "SingleHashProbabilityFormat": "Probabilidade por hash: {0}",
     "TraySpeedupMeasuredFormat": "Feche para a bandeja para ~{0}% mais velocidade",
     "TraySpeedupGenericHint": "Feche a janela para a bandeja para liberar recursos de GPU da interface",
+    "HighIdlePowerHint": "Alto consumo em repouso da GPU detectado (múltiplos monitores ou modo desempenho máximo); o modo Máx oferece maior eficiência por watt",
     "NoResults": "Sem resultados",
     "VaultFullError": "O cofre de chaves está cheio. Exporte as chaves desejadas e exclua um registro para liberar espaço.",
     "VaultSaveFailedError": "Não foi possível salvar a chave encontrada. Busca interrompida; verifique o acesso ao cofre.",

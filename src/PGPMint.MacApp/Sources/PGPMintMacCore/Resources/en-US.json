@@ -70,6 +70,7 @@
     "SingleHashProbabilityFormat": "Single-hash hit probability: {0}",
     "TraySpeedupMeasuredFormat": "Close window to tray for ~{0}% faster speed",
     "TraySpeedupGenericHint": "Close window to tray to free UI GPU resources for higher speed",
+    "HighIdlePowerHint": "High idle GPU power detected (e.g. multi-monitor or max-performance mode); Max tier offers higher efficiency per watt",
     "NoResults": "No results",
     "VaultFullError": "The key vault is full. Export any key you want to keep, then delete a record to make room.",
     "VaultSaveFailedError": "Could not save the matched key. Search stopped. Check access to the vault and try again.",

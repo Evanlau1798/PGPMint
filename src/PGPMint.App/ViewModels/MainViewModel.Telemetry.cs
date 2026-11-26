@@ -246,13 +246,23 @@ public sealed partial class MainViewModel
         EfficiencyBadgeTooltip = null;
     }
 
+    private bool ShouldShowHighIdlePowerHint(CoordinatorTelemetry t) =>
+        !HasMatches &&
+        t.State == CoordinatorState.Running &&
+        t.AllEnabledFullyCalibrated &&
+        t.TotalBaselineHps > 0.0 &&
+        t.HasHighIdlePowerFloor &&
+        t.ActiveTier != PowerTier.Max;
+
     private void UpdateShowTraySpeedupHint(CoordinatorTelemetry t)
     {
         bool hasMeasuredBaseline = t.AllEnabledFullyCalibrated && t.TotalBaselineHps > 0.0;
-        ShowTraySpeedupHint = MinimizeToTrayOnClose &&
-                              !HasMatches &&
-                              t.State == CoordinatorState.Running &&
-                              hasMeasuredBaseline;
+        bool showHighIdle = ShouldShowHighIdlePowerHint(t);
+        bool showTray = MinimizeToTrayOnClose &&
+                        !HasMatches &&
+                        t.State == CoordinatorState.Running &&
+                        hasMeasuredBaseline;
+        ShowTraySpeedupHint = showHighIdle || showTray;
     }
 
     private void UpdateTraySpeedupHint(CoordinatorTelemetry t, bool forceUiUpdate = false)
@@ -300,6 +310,13 @@ public sealed partial class MainViewModel
             _trayFullSpeedEmaHps = 0.0;
         }
 
+        bool showHighIdle = ShouldShowHighIdlePowerHint(t);
+        if (showHighIdle != _showingHighIdlePowerHint)
+        {
+            _showingHighIdlePowerHint = showHighIdle;
+            forceUiUpdate = true;
+        }
+
         long nowHintTick = Environment.TickCount64;
         if (!forceUiUpdate &&
             !string.IsNullOrEmpty(TraySpeedupHintText) &&
@@ -309,6 +326,12 @@ public sealed partial class MainViewModel
         }
 
         _lastTrayHintUiUpdateTick = nowHintTick;
+
+        if (showHighIdle)
+        {
+            TraySpeedupHintText = Loc.HighIdlePowerHint;
+            return;
+        }
 
         double refTrayHps = Math.Max(_persistedTrayFullSpeedHps, t.TotalBaselineHps);
         double fgHps = _fgFullSpeedEmaHps > 0.0 ? _fgFullSpeedEmaHps : (activeFullSpeed && !_mainWindowInTray ? t.TotalActualHps : 0.0);

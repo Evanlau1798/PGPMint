@@ -70,6 +70,7 @@
     "SingleHashProbabilityFormat": "Probabilité par hachage : {0}",
     "TraySpeedupMeasuredFormat": "Réduire dans la barre pour ~{0}% de gain",
     "TraySpeedupGenericHint": "Fermez la fenêtre vers la zone de notification pour libérer le GPU",
+    "HighIdlePowerHint": "Consommation GPU au repos élevée détectée (multi-écran ou mode performances maximales) ; le mode Max offre un meilleur rendement par watt",
     "NoResults": "Aucun résultat",
     "VaultFullError": "Le coffre est plein. Exportez les clés souhaitées puis supprimez une entrée.",
     "VaultSaveFailedError": "Impossible d'enregistrer la clé trouvée. Recherche arrêtée ; vérifiez l'accès au coffre.",

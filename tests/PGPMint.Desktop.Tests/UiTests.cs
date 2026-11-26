@@ -290,6 +290,47 @@ public sealed class UiTests
         finally { await window.QuitAsync(); if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
 
+    [Fact]
+    public void EmptyResultsHintShowsHighIdlePowerWarningOnNonMaxAndRestoresTrayHintOnMax()
+    {
+        var strings = new LocalizationService();
+        strings.Apply("zh-Hant");
+
+        static CoordinatorTelemetry MakeTelemetry(CoordinatorState state, PowerTier tier, bool highIdle) =>
+            new(
+                State: state,
+                CalibrationRemainingSeconds: 0.0,
+                TotalActualHps: 10e9,
+                TotalTargetHps: 10_000_000_000,
+                IsFullSpeed: tier == PowerTier.Max,
+                TotalBaselineHps: 78e9,
+                AllEnabledFullyCalibrated: true,
+                SessionChecked: 1000,
+                TotalChecked: 1000,
+                TotalMatchesCount: 0,
+                CumulativeProbability: 0.0,
+                EstimatedMeanWait: TimeSpan.FromMinutes(1),
+                ErrorMessage: null,
+                Devices: [])
+            {
+                ActiveTier = tier,
+                HasHighIdlePowerFloor = highIdle
+            };
+
+        Assert.Equal((true, strings["HighIdlePowerHint"]),
+            DesktopDisplayMapper.ComputeEmptyResultsHint(MakeTelemetry(CoordinatorState.Running, PowerTier.Balanced, true), hasMatches: false, minimizeToTrayOnClose: false, strings));
+        Assert.Equal((true, strings["HighIdlePowerHint"]),
+            DesktopDisplayMapper.ComputeEmptyResultsHint(MakeTelemetry(CoordinatorState.Running, PowerTier.Eco, true), hasMatches: false, minimizeToTrayOnClose: true, strings));
+        Assert.Equal((true, strings["TraySpeedupGenericHint"]),
+            DesktopDisplayMapper.ComputeEmptyResultsHint(MakeTelemetry(CoordinatorState.Running, PowerTier.Max, true), hasMatches: false, minimizeToTrayOnClose: true, strings));
+        Assert.Equal((false, string.Empty),
+            DesktopDisplayMapper.ComputeEmptyResultsHint(MakeTelemetry(CoordinatorState.Running, PowerTier.Max, true), hasMatches: false, minimizeToTrayOnClose: false, strings));
+        Assert.Equal((true, strings["TraySpeedupGenericHint"]),
+            DesktopDisplayMapper.ComputeEmptyResultsHint(MakeTelemetry(CoordinatorState.Running, PowerTier.Balanced, false), hasMatches: false, minimizeToTrayOnClose: true, strings));
+        Assert.Equal((false, string.Empty),
+            DesktopDisplayMapper.ComputeEmptyResultsHint(MakeTelemetry(CoordinatorState.Running, PowerTier.Balanced, true), hasMatches: true, minimizeToTrayOnClose: true, strings));
+    }
+
     private sealed class FailedSystemStore : PGPMint.Core.Storage.IVaultSecretStore
     {
         public string Kind => "test-failure";

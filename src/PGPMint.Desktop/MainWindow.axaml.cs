@@ -291,8 +291,9 @@ public sealed partial class MainWindow : Window
         EtaText.Text = d.EtaText;
 
         if (d.ErrorText is not null) { ErrorBannerText.Text = d.ErrorText; ErrorBanner.IsVisible = true; }
-        TrayHintText.IsVisible = matches.Count == 0 && state.MinimizeToTrayOnClose &&
-            t.State is CoordinatorState.Running or CoordinatorState.Calibrating && t.AllEnabledFullyCalibrated;
+        var (hintVisible, hintText) = DesktopDisplayMapper.ComputeEmptyResultsHint(t, matches.Count > 0, state.MinimizeToTrayOnClose, _strings);
+        TrayHintText.Text = hintText;
+        TrayHintText.IsVisible = hintVisible;
         RenderMatches(matches);
         _settingsWindow?.RefreshDynamicState();
     }

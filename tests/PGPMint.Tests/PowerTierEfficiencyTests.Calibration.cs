@@ -329,11 +329,21 @@ public sealed partial class PowerTierEfficiencyTests
         HashSet<string> zhKeys = zhDoc.RootElement.GetProperty("strings").EnumerateObject().Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
 
         Assert.Equal(enKeys, zhKeys);
-        foreach (string required in new[] { "TierEco", "TierBalanced", "TierEfficiency", "TierMax", "TierEcoTooltip", "TierBalancedTooltip", "TierEfficiencyTooltip", "TierMaxTooltip", "Recalibrate", "Recalibrating", "PowerTooltipFormat", "GpuLoadTooltipFormat", "YieldingBadge", "YieldingSuffix" })
+        foreach (string required in new[] { "TierEco", "TierBalanced", "TierEfficiency", "TierMax", "TierEcoTooltip", "TierBalancedTooltip", "TierEfficiencyTooltip", "TierMaxTooltip", "Recalibrate", "Recalibrating", "PowerTooltipFormat", "GpuLoadTooltipFormat", "YieldingBadge", "YieldingSuffix", "TraySpeedupGenericHint", "HighIdlePowerHint" })
         {
             Assert.Contains(required, enKeys);
             Assert.False(string.IsNullOrWhiteSpace(enDoc.RootElement.GetProperty("strings").GetProperty(required).GetString()));
             Assert.False(string.IsNullOrWhiteSpace(zhDoc.RootElement.GetProperty("strings").GetProperty(required).GetString()));
+        }
+
+        string stringsDir = Path.Combine(AppContext.BaseDirectory, "Fixtures", "Strings");
+        string[] bundleFiles = Directory.GetFiles(stringsDir, "*.json");
+        Assert.Equal(10, bundleFiles.Length);
+        foreach (string bundleFile in bundleFiles)
+        {
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(bundleFile));
+            string? value = doc.RootElement.GetProperty("strings").GetProperty("HighIdlePowerHint").GetString();
+            Assert.False(string.IsNullOrWhiteSpace(value), $"Missing HighIdlePowerHint in {Path.GetFileName(bundleFile)}");
         }
     }
 

@@ -69,6 +69,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private double _fgFullSpeedEmaHps;
     private long _lastTraySpeedPersistTick;
     private long _lastTrayHintUiUpdateTick = -1000;
+    private bool _showingHighIdlePowerHint;
     private long _lastTrayTooltipTick = -1000;
     private CoordinatorState _lastTrayTooltipState = CoordinatorState.Idle;
 

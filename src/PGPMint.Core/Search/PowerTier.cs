@@ -30,6 +30,8 @@ public sealed record EfficiencyProfile(
     TierOperatingPoint Efficiency,
     IReadOnlyList<EfficiencyCurveSample> Samples)
 {
+    public bool IsHighIdlePowerFloor { get; init; }
+
     public static EfficiencyProfile CreateFallback(
         double fullSpeedHps,
         double fullLoadWatts = 0.0,
@@ -77,6 +79,75 @@ public static class EfficiencyCurveSelector
     public const double RampStartFraction = 0.92;
     public const double RampEndFraction = 0.05;
     public const double RampConcavityExponent = 1.65;
+    public const double HighIdleFloorMinWattRatio = 0.20;
+    public const double HighIdleFloorMaxLowLoadEffRatio = 0.85;
+    public const double HighIdleEcoMaxWattRatio = 0.32;
+
+    public static bool HasHighIdlePowerFloor(CalibrationRecord? record)
+    {
+        if (record?.EfficiencyProfile is not { HasPowerSensor: true } profile)
+        {
+            return false;
+        }
+
+        if (profile.IsHighIdlePowerFloor)
+        {
+            return true;
+        }
+
+        return DetectHighIdlePowerFloor(
+            CalibrationValidator.GetBaselineHps(record),
+            profile.FullLoadWatts,
+            profile.Samples);
+    }
+
+    internal static bool DetectHighIdlePowerFloor(
+        double fullSpeedHps,
+        double fullLoadWatts,
+        IReadOnlyList<EfficiencyCurveSample>? rawSamples)
+    {
+        if (!double.IsFinite(fullSpeedHps) || fullSpeedHps <= 0.0 ||
+            !double.IsFinite(fullLoadWatts) || fullLoadWatts <= 0.0)
+        {
+            return false;
+        }
+
+        List<EfficiencyCurveSample> valid = (rawSamples ?? Array.Empty<EfficiencyCurveSample>())
+            .Where(s => double.IsFinite(s.RateFraction) && s.RateFraction >= MinTierFraction && s.RateFraction <= 0.95 &&
+                        double.IsFinite(s.MeasuredHps) && s.MeasuredHps > 0.0 &&
+                        double.IsFinite(s.MeasuredWatts) && s.MeasuredWatts > 0.0)
+            .OrderByDescending(s => s.RateFraction)
+            .ToList();
+
+        if (valid.Count < 2)
+        {
+            return false;
+        }
+
+        List<EfficiencyCurveSample> samples = SmoothDenseCurve(valid, fullSpeedHps);
+        if (samples.Min(s => s.RateFraction) > 0.20)
+        {
+            return false;
+        }
+
+        double minWatts = samples.Min(s => s.MeasuredWatts);
+        if (minWatts < fullLoadWatts * HighIdleFloorMinWattRatio || fullLoadWatts <= minWatts * 1.25)
+        {
+            return false;
+        }
+
+        List<EfficiencyCurveSample> lowMid = samples
+            .Where(s => s.RateFraction <= MaxBalancedFraction)
+            .ToList();
+        if (lowMid.Count == 0)
+        {
+            return false;
+        }
+
+        double fullMhpw = fullSpeedHps / fullLoadWatts;
+        double bestLowMidMhpw = lowMid.Max(s => s.MeasuredHps / s.MeasuredWatts);
+        return bestLowMidMhpw < fullMhpw * HighIdleFloorMaxLowLoadEffRatio;
+    }
 
     /// <summary>
     /// Smooth concave ramp from 92% down to 5%: traverses upper P0 swiftly while spending
@@ -189,6 +260,7 @@ public static class EfficiencyCurveSelector
         List<EfficiencyCurveSample> rawSamples)
     {
         List<EfficiencyCurveSample> samples = SmoothDenseCurve(rawSamples, fullSpeedHps);
+        bool isHighIdlePowerFloor = DetectHighIdlePowerFloor(fullSpeedHps, fullLoadWatts, rawSamples);
 
         // 1. Balanced tier (low-to-mid power peak efficiency sweet spot, <= MaxBalancedFraction).
         List<EfficiencyCurveSample> balPool = samples
@@ -289,13 +361,28 @@ public static class EfficiencyCurveSelector
             double plateauCeiling = minWatts + Math.Max(8.0, fullLoadWatts * 0.04);
             double minGapBelowBal = Math.Max(12.0, fullLoadWatts * 0.08);
 
-            EfficiencyCurveSample? naturalEco = belowBal
-                .Where(s => s.MeasuredWatts <= plateauCeiling &&
-                            (s.MeasuredWatts <= balWatts * 0.80 || balWatts - s.MeasuredWatts >= minGapBelowBal))
-                .OrderByDescending(s => s.MeasuredHps)
-                .FirstOrDefault();
+            EfficiencyCurveSample? highIdleEco = isHighIdlePowerFloor
+                ? belowBal
+                    .Where(s => s.MeasuredWatts <= fullLoadWatts * HighIdleEcoMaxWattRatio &&
+                                (s.MeasuredWatts <= balWatts * 0.80 || balWatts - s.MeasuredWatts >= minGapBelowBal))
+                    .OrderByDescending(s => s.MeasuredHps / s.MeasuredWatts)
+                    .ThenByDescending(s => s.MeasuredHps)
+                    .FirstOrDefault()
+                : null;
 
-            if (naturalEco is not null && naturalEco.MeasuredWatts <= fullLoadWatts * 0.32)
+            EfficiencyCurveSample? naturalEco = !isHighIdlePowerFloor
+                ? belowBal
+                    .Where(s => s.MeasuredWatts <= plateauCeiling &&
+                                (s.MeasuredWatts <= balWatts * 0.80 || balWatts - s.MeasuredWatts >= minGapBelowBal))
+                    .OrderByDescending(s => s.MeasuredHps)
+                    .FirstOrDefault()
+                : null;
+
+            if (highIdleEco is not null)
+            {
+                ecoPoint = ToPoint(highIdleEco, "high-idle-efficiency");
+            }
+            else if (naturalEco is not null && naturalEco.MeasuredWatts <= fullLoadWatts * 0.32)
             {
                 ecoPoint = ToPoint(naturalEco, "natural-plateau");
             }
@@ -421,7 +508,10 @@ public static class EfficiencyCurveSelector
             Eco: ecoPoint,
             Balanced: balPoint,
             Efficiency: effPoint,
-            Samples: rawSamples);
+            Samples: rawSamples)
+        {
+            IsHighIdlePowerFloor = isHighIdlePowerFloor
+        };
     }
 
     private static EfficiencyProfile SelectByGpuUtilFallback(

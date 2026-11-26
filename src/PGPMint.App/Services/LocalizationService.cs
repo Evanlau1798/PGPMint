@@ -333,6 +333,7 @@ public sealed class LocalizationService : ObservableObject
     public string YieldingSuffix => Get("YieldingSuffix");
 
     public string TraySpeedupGenericHint => Get("TraySpeedupGenericHint");
+    public string HighIdlePowerHint => Get("HighIdlePowerHint");
     public string ProbabilityPrefix => Get("ProbabilityPrefix");
     public string Found => Get("Found");
     public string VaultFullError => Get("VaultFullError");

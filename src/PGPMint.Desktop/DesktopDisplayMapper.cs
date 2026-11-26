@@ -182,6 +182,30 @@ internal static class DesktopDisplayMapper
         };
     }
 
+    public static (bool Visible, string Text) ComputeEmptyResultsHint(
+        CoordinatorTelemetry t,
+        bool hasMatches,
+        bool minimizeToTrayOnClose,
+        LocalizationService strings)
+    {
+        if (hasMatches || !t.AllEnabledFullyCalibrated)
+        {
+            return (false, string.Empty);
+        }
+
+        if (t.State == CoordinatorState.Running && t.HasHighIdlePowerFloor && t.ActiveTier != PowerTier.Max)
+        {
+            return (true, strings["HighIdlePowerHint"]);
+        }
+
+        if (minimizeToTrayOnClose && t.State is CoordinatorState.Running or CoordinatorState.Calibrating)
+        {
+            return (true, strings["TraySpeedupGenericHint"]);
+        }
+
+        return (false, string.Empty);
+    }
+
     public static string Format(string template, params string[] args)
     {
         string result = template;

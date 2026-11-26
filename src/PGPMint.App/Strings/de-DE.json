@@ -70,6 +70,7 @@
     "SingleHashProbabilityFormat": "Trefferwahrscheinlichkeit pro Hash: {0}",
     "TraySpeedupMeasuredFormat": "In den Tray schließen für ~{0}% mehr Tempo",
     "TraySpeedupGenericHint": "Fenster in den Tray schließen, um UI-GPU-Ressourcen freizugeben",
+    "HighIdlePowerHint": "Hohe GPU-Leerlaufleistung erkannt (z. B. Multi-Monitor oder Höchstleistungsmodus); im Max-Modus ist die Effizienz pro Watt höher",
     "NoResults": "Keine Ergebnisse",
     "VaultFullError": "Der Tresor ist voll. Exportieren Sie gewünschte Schlüssel und löschen Sie einen Eintrag.",
     "VaultSaveFailedError": "Gefundener Schlüssel konnte nicht gespeichert werden. Suche gestoppt; Tresorzugriff prüfen.",

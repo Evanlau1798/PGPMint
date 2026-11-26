@@ -70,6 +70,7 @@
     "SingleHashProbabilityFormat": "Probabilidad por hash: {0}",
     "TraySpeedupMeasuredFormat": "Cierra a la bandeja para ~{0}% más de velocidad",
     "TraySpeedupGenericHint": "Cierra la ventana a la bandeja para liberar recursos GPU de la interfaz",
+    "HighIdlePowerHint": "Consumo en reposo de GPU elevado detectado (multimonitor o modo máximo rendimiento); el modo Máx ofrece mayor eficiencia por vatio",
     "NoResults": "Sin resultados",
     "VaultFullError": "El almacén de claves está lleno. Exporta las claves que desees conservar y borra un registro.",
     "VaultSaveFailedError": "No se pudo guardar la clave encontrada. Búsqueda detenida; verifica el acceso al almacén.",

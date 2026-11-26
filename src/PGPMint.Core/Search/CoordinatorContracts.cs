@@ -39,6 +39,7 @@ public sealed record GpuTelemetrySnapshot(
     public bool HasGpuUtilSensor { get; init; }
     public bool IsOverloadYielding { get; init; }
     public bool IsGpuContended { get; init; }
+    public bool IsHighIdlePowerFloor { get; init; }
 }
 
 public sealed record CoordinatorTelemetry(
@@ -67,6 +68,7 @@ public sealed record CoordinatorTelemetry(
     public bool HasGpuUtilSensor { get; init; }
     public bool IsOverloadYielding { get; init; }
     public bool IsGpuContended { get; init; }
+    public bool HasHighIdlePowerFloor { get; init; }
 }
 
 public sealed class CoordinatorOptions

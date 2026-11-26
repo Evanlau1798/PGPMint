@@ -70,6 +70,7 @@
     "SingleHashProbabilityFormat": "단일 해시 일치 확률: {0}",
     "TraySpeedupMeasuredFormat": "트레이로 닫으면 약 ~{0}% 빨라집니다",
     "TraySpeedupGenericHint": "창을 트레이로 닫으면 UI GPU 자원을 확보하여 속도가 향상됩니다",
+    "HighIdlePowerHint": "GPU 유휴 전력이 높게 감지되었습니다(다중 모니터 또는 최고 성능 모드 등). 최고 속도 모드가 와트당 효율이 더 높습니다",
     "NoResults": "결과 없음",
     "VaultFullError": "키 보관함이 가득 찼습니다. 보존할 키를 내보낸 뒤 기록을 삭제하세요.",
     "VaultSaveFailedError": "일치한 키를 저장하지 못해 검색이 중지되었습니다. 보관함 접근 권한을 확인 후 다시 시도하세요.",

@@ -437,4 +437,70 @@ public sealed partial class PowerTierEfficiencyTests
         }
         Assert.True(controller.IsYielding);
     }
+
+    [Fact]
+    public void CurveSelectorDetectsHighIdlePowerFloorAndOptimizesEcoOnRtx5090Curve()
+    {
+        // Real settled RTX 5090 19-point curve locked in P1 (GDDR7 13,801 MHz, 450W power limit, 78.01 GH/s)
+        EfficiencyCurveSample[] rtx5090Samples =
+        [
+            new(0.95, 72.91e9, 449.94, 89.0),
+            new(0.90, 69.60e9, 450.05, 84.5),
+            new(0.85, 66.14e9, 450.22, 78.0),
+            new(0.80, 62.08e9, 434.58, 74.0),
+            new(0.75, 58.26e9, 414.47, 69.0),
+            new(0.70, 54.54e9, 395.45, 65.0),
+            new(0.65, 50.68e9, 375.36, 60.0),
+            new(0.60, 46.85e9, 355.71, 55.0),
+            new(0.55, 42.86e9, 335.41, 51.0),
+            new(0.50, 39.05e9, 315.02, 46.0),
+            new(0.45, 35.10e9, 291.53, 40.0),
+            new(0.40, 31.20e9, 258.84, 35.0),
+            new(0.35, 27.37e9, 235.32, 32.0),
+            new(0.30, 23.40e9, 213.20, 27.0),
+            new(0.25, 19.58e9, 190.85, 23.0),
+            new(0.20, 15.60e9, 169.27, 19.0),
+            new(0.15, 11.75e9, 148.12, 13.0),
+            new(0.10,  7.83e9, 126.09,  9.0),
+            new(0.05,  3.88e9, 104.79,  5.0)
+        ];
+
+        EfficiencyProfile profile = EfficiencyCurveSelector.Select(78.01e9, 450.0, 100.0, rtx5090Samples);
+
+        Assert.True(profile.HasPowerSensor);
+        Assert.True(profile.IsHighIdlePowerFloor);
+        Assert.Equal("high-idle-efficiency", profile.Eco.SelectionMode);
+        Assert.Equal(0.10, profile.Eco.RateFraction, 6);
+        Assert.True(profile.Eco.EstimatedWatts <= 450.0 * EfficiencyCurveSelector.HighIdleEcoMaxWattRatio);
+        Assert.True(profile.Eco.RateFraction < profile.Balanced.RateFraction);
+        Assert.True(profile.Balanced.RateFraction < profile.Efficiency.RateFraction);
+
+        // Legacy persisted record missing IsHighIdlePowerFloor still infers true from saved samples without forcing recalibration
+        var gpu = new GpuDeviceInfo("GPU-5090", 0, "RTX 5090", 0x10DE, 1, 0, 1, 32UL << 30, "595.91.07", true);
+        var legacyProfile = profile with { IsHighIdlePowerFloor = false };
+        var legacyRecord = new CalibrationRecord(
+            gpu.DeviceKey, gpu.Name, gpu.DriverVersion, "opencl-sha1-four-v4",
+            78.15e9, 78.01e9, true, DateTimeOffset.UtcNow, "v3", legacyProfile);
+        Assert.True(EfficiencyCurveSelector.HasHighIdlePowerFloor(legacyRecord));
+
+        // Normal downclocking GPU (RTX 3080) and flat/stuck sensor must NOT trigger IsHighIdlePowerFloor
+        EfficiencyCurveSample[] rtx3080Samples =
+        [
+            new(0.72, 16.92e9, 305.0, 72.0),
+            new(0.26,  6.11e9, 103.0, 31.0),
+            new(0.15,  3.53e9,  60.2, 26.0),
+            new(0.08,  1.88e9,  51.3, 21.0),
+            new(0.05,  1.18e9,  46.4, 17.0)
+        ];
+        Assert.False(EfficiencyCurveSelector.Select(23.5e9, 349.0, 96.0, rtx3080Samples).IsHighIdlePowerFloor);
+
+        EfficiencyCurveSample[] flatSamples =
+        [
+            new(0.60, 6.0e9, 45.0, 92.0),
+            new(0.35, 3.5e9, 45.0, 92.0),
+            new(0.10, 1.0e9, 45.0, 92.0),
+            new(0.05, 0.5e9, 45.0, 92.0)
+        ];
+        Assert.False(EfficiencyCurveSelector.Select(10.0e9, 45.0, 92.0, flatSamples).IsHighIdlePowerFloor);
+    }
 }

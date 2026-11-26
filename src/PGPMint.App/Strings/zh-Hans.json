@@ -70,6 +70,7 @@
     "SingleHashProbabilityFormat": "单次命中概率：{0}",
     "TraySpeedupMeasuredFormat": "关闭窗口至系统托盘可再提速约 ~{0}%",
     "TraySpeedupGenericHint": "关闭窗口至系统托盘以释放界面显存和算力资源",
+    "HighIdlePowerHint": "检测到显卡待机功耗偏高（可能因多显示器或高性能模式），切换至全速每瓦效率更高",
     "NoResults": "暂无结果",
     "VaultFullError": "密钥库已满。请先导出需保留的密钥，再删除一条记录以腾出空间。",
     "VaultSaveFailedError": "无法保存命中的密钥，搜索已停止。请检查密钥库写入权限后重试。",

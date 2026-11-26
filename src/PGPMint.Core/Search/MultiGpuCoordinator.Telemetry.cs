@@ -226,6 +226,7 @@ public sealed partial class MultiGpuCoordinator
         double totalUtilPercent = 0.0;
         bool anyYielding = false;
         bool anyContended = false;
+        bool anyHighIdleFloor = false;
 
         bool isFullSpeed = (_state == CoordinatorState.Calibrating) || (activeTier == PowerTier.Max && !paused);
         ulong sessionChecked;
@@ -250,6 +251,7 @@ public sealed partial class MultiGpuCoordinator
                 bool hasUtil = rt is not null && Volatile.Read(ref rt.HasGpuUtilSensor) != 0;
                 bool isYielding = !paused && activeTier != PowerTier.Max && rt is not null && Volatile.Read(ref rt.IsOverloadYielding) != 0;
                 bool isContended = !paused && rt is not null && Volatile.Read(ref rt.IsGpuContended) != 0;
+                bool isHighIdleFloor = cal is not null && EfficiencyCurveSelector.HasHighIdlePowerFloor(cal);
 
                 RateDirective dir = enabled && !paused
                     ? RateControl.FromTier(activeTier, baseline, cal?.EfficiencyProfile)
@@ -291,6 +293,11 @@ public sealed partial class MultiGpuCoordinator
                     {
                         anyContended = true;
                     }
+
+                    if (isHighIdleFloor)
+                    {
+                        anyHighIdleFloor = true;
+                    }
                 }
 
                 deviceSnaps.Add(new GpuTelemetrySnapshot(
@@ -312,7 +319,8 @@ public sealed partial class MultiGpuCoordinator
                     GpuUtilPercent = gpuUtil,
                     HasGpuUtilSensor = hasUtil,
                     IsOverloadYielding = isYielding,
-                    IsGpuContended = isContended
+                    IsGpuContended = isContended,
+                    IsHighIdlePowerFloor = isHighIdleFloor
                 });
             }
 
@@ -357,7 +365,8 @@ public sealed partial class MultiGpuCoordinator
             AggregateGpuUtilPercent = aggregateUtil,
             HasGpuUtilSensor = anyEnabledHasUtil,
             IsOverloadYielding = anyYielding,
-            IsGpuContended = anyContended
+            IsGpuContended = anyContended,
+            HasHighIdlePowerFloor = anyHighIdleFloor
         };
     }
 

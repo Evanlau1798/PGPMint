@@ -70,6 +70,7 @@
     "SingleHashProbabilityFormat": "單次命中機率：{0}",
     "TraySpeedupMeasuredFormat": "關閉此視窗至系統匣可再加速 ~{0}% 速度",
     "TraySpeedupGenericHint": "關閉此視窗至系統匣可釋放介面顯卡資源以提升速度",
+    "HighIdlePowerHint": "偵測到顯卡待機功耗偏高（可能因多螢幕或高效能模式），切換至全速每瓦效率更高",
     "NoResults": "尚無結果",
     "VaultFullError": "金鑰庫已滿。請先匯出要保留的金鑰，再刪除一筆記錄以騰出空間。",
     "VaultSaveFailedError": "無法保存命中的金鑰。搜尋已停止，請確認金鑰庫可寫入後再試。",

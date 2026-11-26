@@ -70,6 +70,7 @@
     "SingleHashProbabilityFormat": "1 回あたりの一致確率: {0}",
     "TraySpeedupMeasuredFormat": "トレイへ格納すると約 ~{0}% 高速化します",
     "TraySpeedupGenericHint": "ウィンドウをトレイに閉じると UI の GPU リソースが解放され高速化します",
+    "HighIdlePowerHint": "GPUの待機消費電力が高めです（マルチモニターや高パフォーマンス設定など）。フルスピードの方がワット効率が高くなります",
     "NoResults": "結果なし",
     "VaultFullError": "キー保管庫がいっぱいです。必要なキーをエクスポートしてから記録を削除してください。",
     "VaultSaveFailedError": "一致したキーを保存できず検索を停止しました。保管庫へのアクセス権を確認して再試行してください。",
