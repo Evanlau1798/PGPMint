@@ -138,7 +138,7 @@ git config --global commit.gpgsign true
 | RTX 3080（Windows） | Vulkan | `vulkan-sha1-four-v4` / `128` | 23.20–23.82 GH/s | 22.51–23.23 GH/s | 满载 `346.61 W`（`64.95 MH/W`） |
 
 <p align="center">
-  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint RTX 5090 在 0% 至 100% 负载下的算力、整卡功耗与每瓦效率曲线" width="100%" />
+  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint GPU 功耗能效曲线（功耗 W 对实测算力 GH/s），对比 RTX 5090（OpenCL，450 W 限制）与 RTX 3080（Vulkan）" width="100%" />
 </p>
 
 <details>

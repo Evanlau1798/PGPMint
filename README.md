@@ -200,7 +200,7 @@ Measured on an **NVIDIA GeForce RTX 5090** (32 GiB VRAM, Ubuntu 22.04.5 LTS, Dri
 | RTX 3080 (Windows) | Vulkan | `vulkan-sha1-four-v4` / `128` | 23.20–23.82 GH/s | 22.51–23.23 GH/s | `346.61 W` (`64.95 MH/W` full load) |
 
 <p align="center">
-  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint RTX 5090 throughput, board power, and MH/W curve across 0% to 100% target rate" width="100%" />
+  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint GPU efficiency curve (Power W vs Throughput GH/s) comparing RTX 5090 (OpenCL, 450 W cap) and RTX 3080 (Vulkan)" width="100%" />
 </p>
 
 <details>

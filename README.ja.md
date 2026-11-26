@@ -138,7 +138,7 @@ git config --global commit.gpgsign true
 | RTX 3080 (Windows) | Vulkan | `vulkan-sha1-four-v4` / `128` | 23.20–23.82 GH/s | 22.51–23.23 GH/s | 全負荷 `346.61 W`（`64.95 MH/W`） |
 
 <p align="center">
-  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint RTX 5090 における 0%〜100% 負荷の探索速度・消費電力・電力効率カーブ" width="100%" />
+  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint GPU 電力効率カーブ（消費電力 W 対 探索速度 GH/s）、RTX 5090（OpenCL、450 W 制限）と RTX 3080（Vulkan）の比較" width="100%" />
 </p>
 
 <details>
