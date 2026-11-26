@@ -57,7 +57,16 @@ public sealed class SecretDialog : Window
             }
             Close(TakeInput());
         };
-        var cancel = new Button { Content = strings["Cancel"], Height = 34, MinWidth = 76, IsCancel = true };
+        var cancel = new Button
+        {
+            Content = strings["Cancel"],
+            Height = 34,
+            MinWidth = 76,
+            Padding = new Thickness(14, 0),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            IsCancel = true
+        };
         cancel.Click += (_, _) => Close();
         body.Children.Add(new StackPanel
         {
@@ -68,6 +77,7 @@ public sealed class SecretDialog : Window
         });
 
         Content = body;
+        Opened += (_, _) => (export ? UidInput : PasswordInput).Focus();
         Closed += (_, _) => PasswordInput.Text = string.Empty;
     }
 
