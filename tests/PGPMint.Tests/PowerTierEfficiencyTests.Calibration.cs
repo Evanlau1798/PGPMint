@@ -181,7 +181,7 @@ public sealed partial class PowerTierEfficiencyTests
                 new CoordinatorOptions
                 {
                     CalibrationWindow = TimeSpan.FromMilliseconds(50),
-                    DynamicMedianInterval = TimeSpan.FromMilliseconds(260),
+                    DynamicMedianInterval = TimeSpan.FromMilliseconds(700),
                     TelemetryInterval = TimeSpan.FromMilliseconds(35),
                     SensorPollInterval = TimeSpan.FromMilliseconds(35),
                     ExpectedKernelVersionOverride = gpu.KernelVersion
@@ -201,8 +201,8 @@ public sealed partial class PowerTierEfficiencyTests
             sensor.Current = new GpuSensorSample(true, 335.0, 350.0, true, 96.0, 44.0, 32.0);
             await WaitUntilAsync(() => coordinator.LatestTelemetry.IsGpuContended, TimeSpan.FromSeconds(4));
 
-            // Stay contended well past DynamicMedianInterval (260ms): baseline and FullLoadWatts MUST stay untouched
-            await Task.Delay(500);
+            // Stay contended well past DynamicMedianInterval (700ms): baseline and FullLoadWatts MUST stay untouched
+            await Task.Delay(950);
             CalibrationRecord duringGame = stateStore.Load().Calibrations[profileKey];
             Assert.Equal(initialTimestamp, duringGame.CalibratedAtUtc);
             Assert.Equal(23_000_000_000.0, duringGame.MedianHashesPerSecond, 6);

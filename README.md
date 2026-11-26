@@ -2,6 +2,8 @@
 
 # PGPMint
 
+English | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
+
 **GPU generator for custom OpenPGP v4 (`Ed25519`) vanity Key IDs, with native Windows, native macOS, and redesigned Linux desktop apps plus a cross-platform CLI.**
 
 [![CI](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml)
@@ -41,7 +43,7 @@
 
 PGPMint lets you mint custom **OpenPGP v4 (`Ed25519Legacy`)** keys whose 16-character Key ID ends with any hexadecimal pattern you choose (for example `6767 6767 6767` or `0123 4567 89AB`).
 
-Unlike command-line tools that require installing Python or the NVIDIA CUDA Toolkit—or browser tabs that stall in the background—PGPMint ships as a **single portable Windows `.exe`** (~34 MB) with native Fluent / Mica UI, stepless GPU throttling, system tray keep-alive, and ready-to-sign `.asc` export.
+Unlike command-line tools that require installing Python or the NVIDIA CUDA Toolkit—or browser tabs that stall in the background—PGPMint ships as **standalone single-file Windows executables** (GUI + CLI) alongside self-contained **macOS (`macos-arm64` / `macos-x64`)** and **Linux (`linux-x64` / `linux-arm64`)** bundles with power-efficiency tiers, tray/menu bar keep-alive, and ready-to-sign `.asc` export.
 
 ---
 
@@ -51,7 +53,7 @@ Unlike command-line tools that require installing Python or the NVIDIA CUDA Tool
 
 The Windows WinUI application (`src/PGPMint.App`) remains the flagship Windows product, now updated alongside macOS and Linux with the unified PGPMint brand icon (`assets/pgpmint-icon.svg`).
 
-- **macOS (`src/PGPMint.MacApp` + `src/PGPMint.Host`)**: Native **SwiftUI + AppKit** desktop app (`macOS 14+`, `osx-arm64` and `osx-x64`) backed by a bundled self-contained `.NET 10` sidecar helper (`pgpmint-host`) communicating over private anonymous `stdin`/`stdout` NDJSON pipes. Private key seeds never cross IPC to the UI process, and closing `stdin` stops GPU workers and releases the exclusive `VaultSession`. Supports Login Keychain automatic unlock for new vaults (keeping password unlock for existing vaults), menu bar live hash rate readout with 4-tier switching, `IOKit` idle sleep assertion (`System sleep is inhibited while searching`), native Metal (`libpgpmint_metal.dylib`) and MoltenVK Vulkan drivers.
+- **macOS (`src/PGPMint.MacApp` + `src/PGPMint.Host`)**: Native **SwiftUI + AppKit** desktop app (`macOS 14+`, `macos-arm64` and `macos-x64` packages) backed by a bundled self-contained `.NET 10` sidecar helper (`pgpmint-host`) communicating over private anonymous `stdin`/`stdout` NDJSON pipes. Private key seeds never cross IPC to the UI process, and closing `stdin` stops GPU workers and releases the exclusive `VaultSession`. Supports Login Keychain automatic unlock for new vaults (keeping password unlock for existing vaults), menu bar live hash rate readout with 4-tier switching, `IOKit` idle sleep assertion (`System sleep is inhibited while searching`), native Metal (`libpgpmint_metal.dylib`) and MoltenVK Vulkan drivers.
 - **Linux (`src/PGPMint.Desktop`)**: Redesigned **Avalonia 12.2.0** XAML desktop app (`linux-x64` and `linux-arm64`) featuring a Setup Wizard, minimalist 3-card dashboard, separate Settings window, 4 calibrated power tiers (`Eco`, `Balanced`, `Efficiency`, `Max`) with per-tier hover tooltips, silent `/usr/bin/systemd-inhibit` sleep prevention during active search, `StatusNotifierWatcher` system tray integration, and native Vulkan/OpenCL compute backends. Software CPU renderers are excluded; WSL is a Linux testing environment rather than a supported GPU target.
 
 Download the platform test packages from the successful **CI** run on `main` in
@@ -120,7 +122,7 @@ separate acceptance checks.
 
 - **Single-File Portable Executable** — Self-contained compressed `.exe` for `win-x64` and `win-arm64`. No Python, CUDA Toolkit, .NET Runtime, or Windows App Runtime installation required.
 - **Universal Windows Hardware GPU Engine** — Zero-dependency three-tier compute cascade: runs via native Vulkan Compute (`vulkan-1.dll` + programmatic SPIR-V 1.3, `vulkan-sha1-four-v4`) when a Vulkan 1.1+ compute GPU is present for peak sustained throughput, cascades to native `OpenCL.dll` (`opencl-sha1-four-v4`) when Vulkan is unavailable, and falls back transparently to DirectCompute (`D3D11 cs_5_0`, `d3d11-sha1-four-v4`) on any Direct3D 11 Feature Level 11.0+ GPU (including Windows on ARM). Supports multi-GPU parallel search while excluding CPU software renderers and virtual display adapters.
-- **Measured Speed & Two-Stage Throttle**: PGPMint measures each GPU's throughput while searching and reuses valid calibration for the same workload execution path (`1`-`4` hex individually, `5`-`8` hex low-word group, `9`-`16` hex 64-bit group) and GPU configuration. Batch sizes adjust to measured dispatch times. Once calibrated, use `1%-99%` to limit speed or select `MAX` for full speed.
+- **Measured Speed & 4 Power-Efficiency Tiers**: PGPMint measures a 30-second full efficiency curve when the current workload path (`1`-`4` hex individually, `5`-`8` hex low-word group, `9`-`16` hex 64-bit group) or GPU configuration changes. Batch sizes adapt automatically. Once calibrated, switch live between `Eco`, `Balanced`, `Efficiency`, and `Max` with per-tier hover rules and elastic yielding to competing 3D apps.
 - **Zero-Overhead System Tray & Pure-CPU Floating HUD** — Closing the main window minimizes PGPMint to the notification area so WinUI 3 stops consuming GPU rendering cycles. An optional pure-CPU Direct2D/DirectWrite floating Mini HUD tracks live speed, probability, ETA, and progress (auto-hides during fullscreen apps/games).
 - **Minimalist Dashboard & Separate Settings** — Live hash rate, smooth progress bar, cumulative hit probability (hover for single-hash odds; switches cleanly to `Found` once a matching key is stored), scientific-notation checked count, live ETA, and an adaptive results card that expands for up to 5 saved keys.
 - **DPAPI Encrypted Vault & Signing-Ready `.asc` Export** — Every GPU match is double-verified on CPU, encrypted locally using Windows DPAPI (`CurrentUser`), and exported as RFC 9580 / GnuPG-compatible `.secret.asc` and `.public.asc` files with `Certify | Sign` key flags and optional AES-256-CFB passphrase protection.
@@ -130,9 +132,13 @@ separate acceptance checks.
 
 ## Download & Quick Start
 
-1. Download the latest single-file executable from [GitHub Releases](https://github.com/Evanlau1798/PGPMint/releases) (`PGPMint-*-win-x64.exe` or `win-arm64.exe`) and run it directly.
-2. **Initial Setup**: Enter your desired 1-16 hex Key ID suffix (`0-9`, `A-F`, e.g. `01 2345 6789`), choose hardware GPU(s), select your language, and click **Start**.
-3. **Automatic Calibration & Search**: Start searching with a small batch. PGPMint runs the 30-second calibration when the current workload needs a new measurement, and can save a match during calibration. Adjust the throttle slider (`1%-99%` or `MAX`) once calibrated. Press **Stop** to finish the active batch and save progress, or close the window to continue in the system tray.
+1. Download the package for your platform from [GitHub Releases](https://github.com/Evanlau1798/PGPMint/releases):
+   - **Windows GUI**: `PGPMint-*-win-x64.exe` or `PGPMint-*-win-arm64.exe` (single portable `.exe`)
+   - **Windows CLI**: `PGPMint-cli-*-win-x64.exe` or `PGPMint-cli-*-win-arm64.exe` (single portable `.exe`)
+   - **macOS**: `PGPMint-*-macos-arm64.tar.gz` or `PGPMint-*-macos-x64.tar.gz` (`PGPMint.app` + CLI)
+   - **Linux**: `PGPMint-*-linux-x64.tar.gz` or `PGPMint-*-linux-arm64.tar.gz` (`PGPMint.Desktop` + CLI)
+2. **Initial Setup**: Enter your desired 1-16 hex Key ID suffix (`0-9`, `A-F`, e.g. `01 2345 6789`), choose hardware GPU(s), select your language, and finish setup.
+3. **Automatic Calibration & Search**: Start searching with a small batch. PGPMint runs a 30-second curve calibration when needed, and can still save matches during calibration. Once calibrated, switch between `Eco`, `Balanced`, `Efficiency`, and `Max`. Press **Stop** to finish the active batch and save progress, or close the window to continue in the tray / menu bar.
 
 4. **Export Your Key**: When a match appears in the results panel, click `.asc` to export `<KEYID>.secret.asc` and `<KEYID>.public.asc`.
 
@@ -197,7 +203,7 @@ On the same RTX 3080 under concurrent dual-stream NVDEC hardware video decoding 
 | Native Windows 11 UI + System Tray | Yes (WinUI 3 + Mica) | No | No | Browser tab (throttled in background) |
 | Zero Python / CUDA Toolkit Setup | Yes (single `.exe`) | Requires CUDA | Requires runtime | Yes |
 | Universal Windows GPU Fallback | Vulkan + OpenCL + DirectCompute | NVIDIA only | Needs OpenCL ICD | Browser dependent |
-| Multi-GPU + Stepless Rate Cap | Yes (`1%-99%` + `MAX`) | Full speed only | Full speed only | Limited |
+| Multi-GPU + Power-Efficiency Tiers | Yes (`Eco` / `Balanced` / `Efficiency` / `Max`) | Full speed only | Full speed only | Limited |
 | Encrypted Local Vault + Git-Ready `.asc` | Yes (DPAPI + self-sig) | Raw export | Raw export | Manual download |
 
 ---

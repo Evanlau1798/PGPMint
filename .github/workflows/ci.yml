@@ -179,10 +179,14 @@ jobs:
 
       - name: Smoke test the packaged CLI and record diagnostics
         run: |
-          suffix=''
-          if [ "$RUNNER_OS" = Windows ]; then suffix='.exe'; fi
+          if [ "$RUNNER_OS" = Windows ]; then
+            packaged_cli="$PACKAGE_SCRATCH/dist/PGPMint-cli-$PACKAGE_TAG-$BUILD_RID.exe"
+          else
+            pkg_name="${BUILD_RID/#osx-/macos-}"
+            packaged_cli="$PACKAGE_SCRATCH/$BUILD_RID/PGPMint-$PACKAGE_TAG-$pkg_name/cli/pgpmint"
+          fi
           python .github/scripts/ci.py inventory --platform "$BUILD_PLATFORM" \
-            --packaged-cli "$PACKAGE_SCRATCH/$BUILD_RID/PGPMint-$PACKAGE_TAG-$BUILD_RID/cli/pgpmint$suffix"
+            --packaged-cli "$packaged_cli"
 
       - name: Upload downloadable test packages
         uses: actions/upload-artifact@v4

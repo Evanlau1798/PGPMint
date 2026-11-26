@@ -28,15 +28,19 @@ def version_numbers(tag):
     return tag[1:], match[1] + ".0"
 
 
-def single_executable(folder):
+def release_platform_name(rid):
+    return rid.replace("osx-", "macos-", 1)
+
+
+def single_executable(folder, expected_name="PGPMint.exe"):
     files = sorted(path for path in folder.rglob("*") if path.is_file())
-    expected = folder / "PGPMint.exe"
+    expected = folder / expected_name
     if files != [expected]:
-        raise ValueError(f"WinUI single-executable gate failed: {files}")
+        raise ValueError(f"Single-executable gate failed: {files}")
     return expected
 
 
-def publish(project, output, rid, platform, tag, single=False):
+def publish(project, output, rid, platform, tag, single=False, trimmed=True):
     version, file_version = version_numbers(tag)
     args = ["dotnet", "publish", str(ROOT / "src" / project / (project + ".csproj")),
             "-c", "Release", "-r", rid, "--self-contained", "true", f"-p:Platform={platform}",
@@ -44,10 +48,14 @@ def publish(project, output, rid, platform, tag, single=False):
             f"-p:AssemblyVersion={file_version}", "-p:DebugType=none", "-p:DebugSymbols=false",
             "-o", str(output)]
     if single:
-        args += ["-p:PublishSingleFile=true", "-p:PublishTrimmed=true", "-p:TrimMode=partial",
+        args += ["-p:PublishSingleFile=true",
                  "-p:EnableCompressionInSingleFile=true", "-p:IncludeAllContentForSelfExtract=true",
                  "-p:IncludeNativeLibrariesForSelfExtract=true",
                  "-p:AllowedReferenceRelatedFileExtensions=.none"]
+        if trimmed:
+            args += ["-p:PublishTrimmed=true", "-p:TrimMode=partial"]
+        else:
+            args += ["-p:PublishTrimmed=false"]
     else:
         args += ["-p:PublishSingleFile=false", "-p:PublishTrimmed=false"]
     run(args, cwd=ROOT)
@@ -171,9 +179,9 @@ def archive(folder, destination, rid):
     return output
 
 
-def write_checksums(dist, artifacts, rid):
+def write_checksums(dist, artifacts, platform_name):
     dist.mkdir(parents=True, exist_ok=True)
-    manifest = dist / f"SHA256SUMS-{rid}.txt"
+    manifest = dist / f"SHA256SUMS-{platform_name}.txt"
     lines = []
     for artifact in artifacts:
         with artifact.open("rb") as stream:
@@ -186,9 +194,10 @@ def write_checksums(dist, artifacts, rid):
 def instructions(folder, rid, tag):
     windows = rid.startswith("win-")
     mac = rid.startswith("osx-")
-    command = r".\cli\pgpmint.exe" if windows else "./cli/pgpmint"
+    platform_name = release_platform_name(rid)
+    command = f".\\PGPMint-cli-{tag}-{platform_name}.exe" if windows else "./cli/pgpmint"
     backends = ["vulkan", "opencl"] + (["metal"] if mac else [])
-    lines = [f"PGPMint {tag} / {rid}", "", "HARDWARE GPU ACCEPTANCE: NOT VERIFIED.",
+    lines = [f"PGPMint {tag} / {platform_name}", "", "HARDWARE GPU ACCEPTANCE: NOT VERIFIED.",
              "HardwareGpu tests are excluded on hosted CI. devices is inventory, never a GPU pass.",
              "All runtimes are self-contained; .NET installation is not required.",
              "Extract the complete archive; keep the CLI's native libraries beside the executable.",
@@ -235,48 +244,53 @@ def package(rid, tag, scratch, platform):
     work = scratch / rid
     work.mkdir(parents=True, exist_ok=False)
     dist = scratch / "dist"
-    stage = work / f"PGPMint-{tag}-{rid}"
+    dist.mkdir(parents=True, exist_ok=True)
+    platform_name = release_platform_name(rid)
+    stage = work / f"PGPMint-{tag}-{platform_name}"
     stage.mkdir()
-    cli = stage / "cli"
-    publish("PGPMint.Cli", cli, rid, platform, tag)
     artifacts = []
     if rid.startswith("win-"):
+        cli_work = work / "cli"
+        publish("PGPMint.Cli", cli_work, rid, platform, tag, single=True, trimmed=False)
+        cli_exe = single_executable(cli_work, "pgpmint.exe")
+        cli_output = dist / f"PGPMint-cli-{tag}-{platform_name}.exe"
+        shutil.copy2(cli_exe, cli_output)
+        artifacts.append(cli_output)
+
         winui = work / "winui"
-        publish("PGPMint.App", winui, rid, platform, tag, single=True)
-        exe = single_executable(winui)
-        dist.mkdir(parents=True, exist_ok=True)
-        output = dist / f"PGPMint-{tag}-{rid}.exe"
+        publish("PGPMint.App", winui, rid, platform, tag, single=True, trimmed=True)
+        exe = single_executable(winui, "PGPMint.exe")
+        output = dist / f"PGPMint-{tag}-{platform_name}.exe"
         shutil.copy2(exe, output)
         artifacts.append(output)
-    elif rid.startswith("osx-"):
-        host_dir = work / "host-publish"
-        publish("PGPMint.Host", host_dir, rid, platform, tag)
-        runtime = install_moltenvk(scratch / "moltenvk")
-        for destination in (cli, host_dir):
-            if not (destination / "libpgpmint_metal.dylib").is_file():
-                raise ValueError(f"Missing transitive Metal bridge in {destination}")
-            shutil.copy2(runtime / "libMoltenVK.dylib", destination)
-            shutil.copytree(runtime / "licenses", destination / "licenses")
-        native_bin, bundles = build_macos_native_app(rid, work / "swift-build")
-        app = macos_app(native_bin, bundles, host_dir, stage / "desktop", tag)
-        sign_macos(cli)
-        sign_macos(app)
     else:
-        desktop = stage / "desktop"
-        publish("PGPMint.Desktop", desktop, rid, platform, tag)
-        svg_icon = ROOT / "assets" / "pgpmint-icon.svg"
-        if svg_icon.is_file():
-            shutil.copy2(svg_icon, desktop / "pgpmint.svg")
-        png_icon = ROOT / "src" / "PGPMint.Desktop" / "Assets" / "pgpmint-icon.png"
-        if png_icon.is_file():
-            shutil.copy2(png_icon, desktop / "pgpmint.png")
-    instructions(stage, rid, tag)
-    dist.mkdir(parents=True, exist_ok=True)
-    testing = dist / f"TESTING-{rid}.txt"
-    shutil.copy2(stage / "TESTING.txt", testing)
-    artifacts.append(testing)
-    artifacts.append(archive(stage, dist / stage.name, rid))
-    write_checksums(dist, artifacts, rid)
+        cli = stage / "cli"
+        publish("PGPMint.Cli", cli, rid, platform, tag)
+        if rid.startswith("osx-"):
+            host_dir = work / "host-publish"
+            publish("PGPMint.Host", host_dir, rid, platform, tag)
+            runtime = install_moltenvk(scratch / "moltenvk")
+            for destination in (cli, host_dir):
+                if not (destination / "libpgpmint_metal.dylib").is_file():
+                    raise ValueError(f"Missing transitive Metal bridge in {destination}")
+                shutil.copy2(runtime / "libMoltenVK.dylib", destination)
+                shutil.copytree(runtime / "licenses", destination / "licenses")
+            native_bin, bundles = build_macos_native_app(rid, work / "swift-build")
+            app = macos_app(native_bin, bundles, host_dir, stage / "desktop", tag)
+            sign_macos(cli)
+            sign_macos(app)
+        else:
+            desktop = stage / "desktop"
+            publish("PGPMint.Desktop", desktop, rid, platform, tag)
+            svg_icon = ROOT / "assets" / "pgpmint-icon.svg"
+            if svg_icon.is_file():
+                shutil.copy2(svg_icon, desktop / "pgpmint.svg")
+            png_icon = ROOT / "src" / "PGPMint.Desktop" / "Assets" / "pgpmint-icon.png"
+            if png_icon.is_file():
+                shutil.copy2(png_icon, desktop / "pgpmint.png")
+        instructions(stage, rid, tag)
+        artifacts.append(archive(stage, dist / stage.name, rid))
+    write_checksums(dist, artifacts, platform_name)
     return stage
 
 

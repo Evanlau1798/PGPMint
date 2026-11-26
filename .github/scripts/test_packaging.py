@@ -77,6 +77,10 @@ class PackagingTests(unittest.TestCase):
         (self.root / "unexpected.dll").write_bytes(b"dll")
         with self.assertRaises(ValueError):
             self.package.single_executable(self.root)
+        cli_dir = self.root / "cli"
+        cli_dir.mkdir()
+        (cli_dir / "pgpmint.exe").write_bytes(b"cli")
+        self.assertEqual(self.package.single_executable(cli_dir, "pgpmint.exe").name, "pgpmint.exe")
 
     def test_macos_bundle_has_native_executable_and_versioned_metadata(self):
         native_bin = self.root / "PGPMint"
@@ -154,11 +158,22 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(calls[-1], ["codesign", "--verify", "--deep", "--strict", str(folder)])
 
     def test_all_six_bundle_layouts_without_running_dotnet(self):
-        def fake_publish(project, output, rid, platform, tag, single=False):
+        def fake_publish(project, output, rid, platform, tag, single=False, trimmed=True):
             output.mkdir(parents=True)
-            name = "PGPMint.exe" if single else "pgpmint" if project.endswith("Cli") else "pgpmint-host" if project.endswith("Host") else "PGPMint.Desktop"
+            if project.endswith("Cli"):
+                name = "pgpmint.exe" if rid.startswith("win-") else "pgpmint"
+                if rid.startswith("win-"):
+                    self.assertTrue(single)
+                    self.assertFalse(trimmed)
+            elif single:
+                name = "PGPMint.exe"
+                self.assertTrue(trimmed)
+            elif project.endswith("Host"):
+                name = "pgpmint-host"
+            else:
+                name = "PGPMint.Desktop"
             (output / name).write_bytes(b"\xcf\xfa\xed\xfefixture" if rid.startswith("osx-") else b"fixture")
-            if rid.startswith("osx-"):
+            if rid.startswith("osx-") and not single:
                 (output / "libpgpmint_metal.dylib").write_bytes(b"\xcf\xfa\xed\xfenative")
 
         def fake_swift_build(rid, scratch_build):
@@ -179,22 +194,29 @@ class PackagingTests(unittest.TestCase):
              patch.object(self.package, "install_moltenvk", return_value=runtime), \
              patch.object(self.package, "sign_macos"):
             for rid in self.package.RIDS:
+                platform_name = self.package.release_platform_name(rid)
                 stage = self.package.package(rid, "v1.2.3", self.root / rid,
                                              "ARM64" if rid.endswith("arm64") else "x64")
-                self.assertTrue((stage / "TESTING.txt").is_file())
-                self.assertIn("NOT VERIFIED", (stage / "TESTING.txt").read_text())
-                if rid.startswith("osx-"):
-                    self.assertTrue((stage / "desktop/PGPMint.app/Contents/MacOS/PGPMint").is_file())
-                    self.assertTrue((stage / "desktop/PGPMint.app/Contents/Resources/AppIcon.icns").is_file())
-                    self.assertTrue((stage / "desktop/PGPMint.app/Contents/Helpers/pgpmint-host").is_file())
-                    self.assertTrue((stage / "desktop/PGPMint.app/Contents/Helpers/libMoltenVK.dylib").is_file())
-                    self.assertTrue((stage / "cli/licenses/LICENSE").is_file())
-                elif rid.startswith("linux-"):
-                    self.assertTrue((stage / "desktop/pgpmint.svg").is_file())
-                    self.assertTrue((stage / "desktop/pgpmint.png").is_file())
                 dist = self.root / rid / "dist"
-                manifest = dist / f"SHA256SUMS-{rid}.txt"
+                manifest = dist / f"SHA256SUMS-{platform_name}.txt"
                 self.assertTrue(manifest.is_file())
+                self.assertFalse(any("osx-" in p.name or p.name.startswith("TESTING-") or p.suffix == ".zip" for p in dist.iterdir()))
+                if rid.startswith("win-"):
+                    self.assertTrue((dist / f"PGPMint-v1.2.3-{platform_name}.exe").is_file())
+                    self.assertTrue((dist / f"PGPMint-cli-v1.2.3-{platform_name}.exe").is_file())
+                else:
+                    self.assertTrue((stage / "TESTING.txt").is_file())
+                    self.assertIn("NOT VERIFIED", (stage / "TESTING.txt").read_text())
+                    self.assertTrue((dist / f"PGPMint-v1.2.3-{platform_name}.tar.gz").is_file())
+                    if rid.startswith("osx-"):
+                        self.assertTrue((stage / "desktop/PGPMint.app/Contents/MacOS/PGPMint").is_file())
+                        self.assertTrue((stage / "desktop/PGPMint.app/Contents/Resources/AppIcon.icns").is_file())
+                        self.assertTrue((stage / "desktop/PGPMint.app/Contents/Helpers/pgpmint-host").is_file())
+                        self.assertTrue((stage / "desktop/PGPMint.app/Contents/Helpers/libMoltenVK.dylib").is_file())
+                        self.assertTrue((stage / "cli/licenses/LICENSE").is_file())
+                    else:
+                        self.assertTrue((stage / "desktop/pgpmint.svg").is_file())
+                        self.assertTrue((stage / "desktop/pgpmint.png").is_file())
                 for line in manifest.read_text().splitlines():
                     digest, name = line.split("  ")
                     self.assertEqual(hashlib.sha256((dist / name).read_bytes()).hexdigest(), digest)
