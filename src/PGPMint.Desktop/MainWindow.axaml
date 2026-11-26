@@ -22,7 +22,7 @@
       </StackPanel>
 
       <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-        <ComboBox x:Name="UnlockLanguageCombo" MinWidth="132" IsVisible="False" />
+        <ComboBox x:Name="UnlockLanguageCombo" MinWidth="176" IsVisible="False" />
         <Button x:Name="SettingsButton"
                 Classes="icon-ghost"
                 IsVisible="False"
@@ -120,7 +120,7 @@
                      FontSize="13"
                      FontWeight="SemiBold"
                      VerticalAlignment="Center" />
-          <ComboBox x:Name="SetupLanguageCombo" Grid.Column="1" MinWidth="148" />
+          <ComboBox x:Name="SetupLanguageCombo" Grid.Column="1" MinWidth="184" />
         </Grid>
 
         <Button x:Name="SetupStartButton"

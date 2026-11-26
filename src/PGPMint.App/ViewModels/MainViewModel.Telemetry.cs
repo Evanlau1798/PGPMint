@@ -78,7 +78,7 @@ public sealed partial class MainViewModel
         CheckedCountTooltip = FormattingHelpers.FormatCheckedCountExact(t.TotalChecked);
         LiveEtaText = activeTargetFound
             ? "\u2014"
-            : FormattingHelpers.FormatEta(t.EstimatedMeanWait, Loc.IsChinese);
+            : FormattingHelpers.FormatEta(t.EstimatedMeanWait, Loc.EtaFormats);
 
         bool vaultFullCleared = _wasVaultFull && !t.VaultIsFull;
         _wasVaultFull = t.VaultIsFull;

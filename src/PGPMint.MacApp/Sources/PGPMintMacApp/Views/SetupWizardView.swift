@@ -101,7 +101,7 @@ struct SetupWizardView: View {
                                 }
                             }
                             .labelsHidden()
-                            .frame(width: 156)
+                            .frame(width: 176)
                         }
 
                         Button {

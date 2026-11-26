@@ -65,8 +65,10 @@ public sealed partial class SettingsWindow : Window
             LockVaultButton.Content = _strings["Lock"];
             QuitAppButton.Content = _strings["Quit"];
 
-            LanguageCombo.ItemsSource = _strings.Languages;
-            LanguageCombo.SelectedItem = _strings.Language;
+            IReadOnlyList<LanguageOption> options = _strings.LanguageOptions;
+            LanguageCombo.ItemsSource = options;
+            LanguageCombo.SelectedItem = options.FirstOrDefault(o => string.Equals(o.Code, _strings.Language, StringComparison.OrdinalIgnoreCase))
+                ?? options.FirstOrDefault();
             AutomationProperties.SetName(LanguageCombo, _strings["SettingLanguage"]);
 
             AppPersistedState state = _session.StateStore.Load();
@@ -207,11 +209,11 @@ public sealed partial class SettingsWindow : Window
 
     private void OnLanguageSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        if (_syncing || LanguageCombo.SelectedItem is not string code) return;
+        if (_syncing || LanguageCombo.SelectedItem is not LanguageOption option) return;
         try
         {
             ClearError();
-            _ownerWindow.ApplyLanguageSelection(code);
+            _ownerWindow.ApplyLanguageSelection(option.Code);
             ApplyLocalizationAndState();
         }
         catch { ShowError(_strings["OperationFailed"]); }

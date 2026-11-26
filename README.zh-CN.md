@@ -2,7 +2,7 @@
 
 # PGPMint
 
-[English](README.md) | [繁體中文](README.zh-TW.md) | 简体中文
+[English](README.md) | [繁體中文](README.zh-TW.md) | 简体中文 | [日本語](README.ja.md)
 
 **使用显卡算力生成自定义后缀的 OpenPGP v4（`Ed25519`）个性化 Key ID，提供 Windows、macOS 原生应用、Linux 桌面界面及跨平台命令行工具。**
 
@@ -76,6 +76,7 @@ CLI 与便携密钥库使用 Argon2id + AES-256-GCM 加密，严格校验 Unix `
 - **实测算力与四档功耗效率调节**：针对不同后缀长度分组（`1–4` 位、`5–8` 位、`9–16` 位）与显卡配置变动自动执行 30 秒全曲线校准，校准后可实时切换 `Eco` / `Balanced` / `Efficiency` / `Max`，并在其他 3D 应用高负载时自动弹性让道。
 - **零开销系统托盘与纯 CPU 悬浮微窗**：关闭主窗口后最小化至系统托盘以释放 WinUI 渲染占用的显存与算力，并可选开启纯 CPU Direct2D/DirectWrite 悬浮微窗（全屏游戏/视频时自动隐藏）。
 - **DPAPI 加密密钥库与 Git 就绪的 `.asc` 导出**：私密种子使用 Windows DPAPI（`CurrentUser`）本地加密存储（上限 50 条），可导出兼容 RFC 9580 / GnuPG 的 `.secret.asc` 与 `.public.asc`（带 `Certify | Sign` 标志，支持 AES-256-CFB 保护密码）。
+- **内置 10 种主流语言**：Windows、macOS 与 Linux 三平台桌面界面均内置 `English`、`繁體中文`、`简体中文`、`日本語`、`한국어`、`Deutsch`、`Français`、`Español`、`Português (Brasil)` 与 `Русский`（Windows 版另支持在 `PGPMint.exe` 同级目录放置 `Strings/*.json` 扩展语言；CLI 保持英文以保证脚本与诊断一致性）。
 
 ---
 
@@ -168,7 +169,7 @@ dotnet build PGPMint.sln -p:Platform=x64 -c Release
 dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64 -c Release --no-build --filter "Category!=HardwareGpu"
 
 # 使用打包脚本生成指定平台发行包
-python scripts/packaging/package.py --rid win-x64 --tag v1.2.0 --platform x64 --scratch C:\pgpmint-dist
+python scripts/packaging/package.py --rid win-x64 --tag v1.2.1 --platform x64 --scratch C:\pgpmint-dist
 ```
 
 ---

@@ -99,13 +99,25 @@ public sealed class LocalizationService : ObservableObject
             new(AutoLanguageCode, Get("LanguageAuto"))
         };
 
-        foreach (LocaleBundle bundle in _bundles.Values.OrderBy(b => b.Code, StringComparer.OrdinalIgnoreCase))
+        foreach (LocaleBundle bundle in _bundles.Values
+            .OrderBy(b => LocaleResolver.GetSortRank(b.Code))
+            .ThenBy(b => b.Code, StringComparer.OrdinalIgnoreCase))
         {
             list.Add(new LanguageOption(bundle.Code, bundle.NativeName));
         }
 
         return list;
     }
+
+    public EtaFormatStrings EtaFormats => new(
+        LessThanTenthSec: Get("EtaLessThanTenthSec"),
+        SecondsFormat: Get("EtaSecondsFormat"),
+        MinutesFormat: Get("EtaMinutesFormat"),
+        HoursFormat: Get("EtaHoursFormat"),
+        DaysFormat: Get("EtaDaysFormat"),
+        YearsFormat: Get("EtaYearsFormat"),
+        KiloYearsFormat: Get("EtaKiloYearsFormat"),
+        OverMillionYears: Get("EtaOverMillionYears"));
 
     public void ApplySetting(string? setting)
     {
@@ -123,39 +135,8 @@ public sealed class LocalizationService : ObservableObject
         OnPropertyChanged(string.Empty);
     }
 
-    private string ResolveSystemLocale()
-    {
-        CultureInfo ui = CultureInfo.CurrentUICulture;
-        if (_bundles.TryGetValue(ui.Name, out LocaleBundle? exact))
-        {
-            return exact.Code;
-        }
-
-        if (ui.Name.StartsWith("zh-TW", StringComparison.OrdinalIgnoreCase) ||
-            ui.Name.StartsWith("zh-HK", StringComparison.OrdinalIgnoreCase) ||
-            ui.Name.StartsWith("zh-MO", StringComparison.OrdinalIgnoreCase) ||
-            ui.Name.StartsWith("zh-Hant", StringComparison.OrdinalIgnoreCase))
-        {
-            if (_bundles.TryGetValue("zh-Hant", out LocaleBundle? zhHant))
-            {
-                return zhHant.Code;
-            }
-        }
-
-        string twoLetter = ui.TwoLetterISOLanguageName;
-        LocaleBundle? prefixMatch = _bundles.Values.FirstOrDefault(b =>
-            b.Code.StartsWith(twoLetter + "-", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(b.Code, twoLetter, StringComparison.OrdinalIgnoreCase));
-
-        if (prefixMatch is not null)
-        {
-            return prefixMatch.Code;
-        }
-
-        return _bundles.ContainsKey(DefaultFallbackCode)
-            ? DefaultFallbackCode
-            : _bundles.Keys.FirstOrDefault() ?? DefaultFallbackCode;
-    }
+    private string ResolveSystemLocale() =>
+        LocaleResolver.ResolveSystemLocale(CultureInfo.CurrentUICulture.Name, _bundles.Keys, DefaultFallbackCode);
 
     private void LoadEmbeddedBundles()
     {

@@ -29,15 +29,66 @@ struct PGPMintMacCoreTests {
 
     @Test
     @MainActor
-    func localizationLoadsEnglishAndTraditionalChinese() {
+    func localizationLoadsAllBuiltInLocalesAndDisambiguatesSystemLanguage() {
         let loc = LocalizationStore()
+        #expect(loc.languageOptions.count == 11)
+        #expect(loc.languageOptions.map(\.code) == [
+            "auto", "en-US", "zh-Hant", "zh-Hans", "ja-JP", "ko-KR", "de-DE", "fr-FR", "es-ES", "pt-BR", "ru-RU"
+        ])
+
         loc.applySetting("en-US")
         #expect(loc.text("Start") == "Start")
         #expect(loc.text("SystemVaultHint").contains("login keychain"))
+        #expect(Formatting.formatEta(seconds: 5_400, formats: loc.etaFormats) == "~1.5h")
 
         loc.applySetting("zh-Hant")
         #expect(loc.text("Start") == "\u{958B}\u{59CB}")
         #expect(loc.isChinese)
+
+        loc.applySetting("zh-Hans")
+        #expect(loc.text("Start") == "\u{5F00}\u{59CB}")
+        #expect(loc.isChinese)
+        #expect(Formatting.formatEta(seconds: 5_400, formats: loc.etaFormats) == "~1.5 \u{5C0F}\u{65F6}")
+
+        loc.applySetting("ja-JP")
+        #expect(loc.text("Start") == "\u{958B}\u{59CB}")
+        #expect(loc.text("SystemVaultFailed").contains("macOS"))
+        #expect(Formatting.formatEta(seconds: 42.3, formats: loc.etaFormats) == "~42.3\u{79D2}")
+
+        loc.applySetting("ko-KR")
+        #expect(loc.text("Start") == "\u{C2DC}\u{C791}")
+        #expect(Formatting.formatEta(seconds: 42.3, formats: loc.etaFormats) == "~42.3\u{CD08}")
+
+        loc.applySetting("de-DE")
+        #expect(loc.text("Settings") == "Einstellungen")
+        #expect(Formatting.formatEta(seconds: 5_400, formats: loc.etaFormats) == "~1.5 Std.")
+
+        loc.applySetting("fr-FR")
+        #expect(loc.text("Settings") == "Param\u{00E8}tres")
+
+        loc.applySetting("es-ES")
+        #expect(loc.text("Settings") == "Configuraci\u{00F3}n")
+
+        loc.applySetting("pt-BR")
+        #expect(loc.text("Settings") == "Configura\u{00E7}\u{00F5}es")
+
+        loc.applySetting("ru-RU")
+        #expect(loc.text("Settings") == "\u{041D}\u{0430}\u{0441}\u{0442}\u{0440}\u{043E}\u{0439}\u{043A}\u{0438}")
+        #expect(Formatting.formatEta(seconds: 2_000_000 * 365.25 * 86_400, formats: loc.etaFormats) == ">1 \u{043C}\u{043B}\u{043D} \u{043B}.")
+
+        #expect(LocalizationStore.detectSystemLanguage(preferredLanguages: ["zh-TW"]) == "zh-Hant")
+        #expect(LocalizationStore.detectSystemLanguage(preferredLanguages: ["zh-HK"]) == "zh-Hant")
+        #expect(LocalizationStore.detectSystemLanguage(preferredLanguages: ["zh-Hant-TW"]) == "zh-Hant")
+        #expect(LocalizationStore.detectSystemLanguage(preferredLanguages: ["zh-CN"]) == "zh-Hans")
+        #expect(LocalizationStore.detectSystemLanguage(preferredLanguages: ["zh-Hans-CN"]) == "zh-Hans")
+        #expect(LocalizationStore.detectSystemLanguage(preferredLanguages: ["ja-JP"]) == "ja-JP")
+        #expect(LocalizationStore.detectSystemLanguage(preferredLanguages: ["ko"]) == "ko-KR")
+        #expect(LocalizationStore.detectSystemLanguage(preferredLanguages: ["de-AT"]) == "de-DE")
+        #expect(LocalizationStore.detectSystemLanguage(preferredLanguages: ["fr-CA"]) == "fr-FR")
+        #expect(LocalizationStore.detectSystemLanguage(preferredLanguages: ["es-MX"]) == "es-ES")
+        #expect(LocalizationStore.detectSystemLanguage(preferredLanguages: ["pt-PT"]) == "pt-BR")
+        #expect(LocalizationStore.detectSystemLanguage(preferredLanguages: ["ru"]) == "ru-RU")
+        #expect(LocalizationStore.detectSystemLanguage(preferredLanguages: ["sv-SE"]) == "en-US")
     }
 
     @Test

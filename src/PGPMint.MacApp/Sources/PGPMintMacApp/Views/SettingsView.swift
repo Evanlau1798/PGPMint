@@ -21,7 +21,7 @@ struct SettingsView: View {
                             }
                         }
                         .labelsHidden()
-                        .frame(width: 170)
+                        .frame(width: 184)
                     }
                 }
 

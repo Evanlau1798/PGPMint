@@ -29,7 +29,7 @@ struct UnlockView: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(width: 140)
+                    .frame(width: 170)
                 }
 
                 ErrorBannerView(message: model.errorText)

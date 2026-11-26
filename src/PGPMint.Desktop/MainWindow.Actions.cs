@@ -28,8 +28,8 @@ public sealed partial class MainWindow
 
     private void OnLanguageComboChanged(object? sender, SelectionChangedEventArgs e)
     {
-        if (_syncing || sender is not ComboBox combo || combo.SelectedItem is not string code) return;
-        try { ApplyLanguageSelection(code); }
+        if (_syncing || sender is not ComboBox combo || combo.SelectedItem is not LanguageOption option) return;
+        try { ApplyLanguageSelection(option.Code); }
         catch { SetError(L("OperationFailed")); }
     }
 

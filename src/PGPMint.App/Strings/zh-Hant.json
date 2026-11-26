@@ -76,6 +76,14 @@
     "IncompleteSearchResultsError": "GPU 回傳的搜尋結果不完整，搜尋已停止，該批次未計入進度。",
     "NoGpuError": "未偵測到實體顯示卡",
     "HitNotificationTitle": "PGPMint 命中金鑰",
-    "ExportSuccess": "已匯出私鑰與公鑰 (.asc)"
+    "ExportSuccess": "已匯出私鑰與公鑰 (.asc)",
+    "EtaLessThanTenthSec": "<0.1 秒",
+    "EtaSecondsFormat": "~{0} 秒",
+    "EtaMinutesFormat": "~{0} 分",
+    "EtaHoursFormat": "~{0} 小時",
+    "EtaDaysFormat": "~{0} 天",
+    "EtaYearsFormat": "~{0} 年",
+    "EtaKiloYearsFormat": "~{0} 千年",
+    "EtaOverMillionYears": ">100 萬年"
   }
 }

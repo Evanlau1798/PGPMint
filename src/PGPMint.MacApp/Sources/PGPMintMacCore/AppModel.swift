@@ -148,7 +148,7 @@ public final class AppModel {
     public var checkedCountTooltip: String { Formatting.formatCheckedCountExact(telemetry.totalChecked) }
 
     public var liveEtaText: String {
-        activeTargetFound ? "\u{2014}" : Formatting.formatEta(seconds: telemetry.estimatedMeanWaitSeconds, isChinese: loc.isChinese)
+        activeTargetFound ? "\u{2014}" : Formatting.formatEta(seconds: telemetry.estimatedMeanWaitSeconds, formats: loc.etaFormats)
     }
 
     public var efficiencyBadgeText: String {

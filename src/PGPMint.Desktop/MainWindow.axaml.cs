@@ -44,8 +44,7 @@ public sealed partial class MainWindow : Window
         SettingsIcon.Data = Icons.Settings;
 
         _syncing = true;
-        UnlockLanguageCombo.ItemsSource = _strings.Languages;
-        SetupLanguageCombo.ItemsSource = _strings.Languages;
+        SyncLanguageCombos();
         _syncing = false;
         UnlockLanguageCombo.SelectionChanged += OnLanguageComboChanged;
         SetupLanguageCombo.SelectionChanged += OnLanguageComboChanged;
@@ -125,21 +124,40 @@ public sealed partial class MainWindow : Window
         {
             _syncing = true;
             SetupTargetBox.Text = state!.TargetInput;
-            SetupLanguageCombo.SelectedItem = _strings.Language;
             _syncing = false;
+            SyncLanguageCombos();
             RebuildSetupGpus();
             ValidateSetupDraft();
         }
         else if (!unlocked)
         {
-            _syncing = true;
-            UnlockLanguageCombo.SelectedItem = _strings.Language;
-            _syncing = false;
+            SyncLanguageCombos();
+        }
+    }
+
+    private void SyncLanguageCombos()
+    {
+        bool wasSyncing = _syncing;
+        _syncing = true;
+        try
+        {
+            IReadOnlyList<LanguageOption> options = _strings.LanguageOptions;
+            LanguageOption? selected = options.FirstOrDefault(o => string.Equals(o.Code, _strings.Language, StringComparison.OrdinalIgnoreCase))
+                ?? options.FirstOrDefault();
+            UnlockLanguageCombo.ItemsSource = options;
+            UnlockLanguageCombo.SelectedItem = selected;
+            SetupLanguageCombo.ItemsSource = options;
+            SetupLanguageCombo.SelectedItem = selected;
+        }
+        finally
+        {
+            _syncing = wasSyncing;
         }
     }
 
     private void SyncStaticTexts()
     {
+        SyncLanguageCombos();
         AutomationProperties.SetName(UnlockLanguageCombo, L("SettingLanguage"));
         AutomationProperties.SetName(SetupLanguageCombo, L("SettingLanguage"));
         ToolTip.SetTip(SettingsButton, L("Settings"));

@@ -7,6 +7,59 @@ public enum KeyIdValidationStatus: Equatable {
     case tooLong
 }
 
+public struct EtaFormatStrings: Equatable, Sendable {
+    public let lessThanTenthSec: String
+    public let secondsFormat: String
+    public let minutesFormat: String
+    public let hoursFormat: String
+    public let daysFormat: String
+    public let yearsFormat: String
+    public let kiloYearsFormat: String
+    public let overMillionYears: String
+
+    public init(
+        lessThanTenthSec: String,
+        secondsFormat: String,
+        minutesFormat: String,
+        hoursFormat: String,
+        daysFormat: String,
+        yearsFormat: String,
+        kiloYearsFormat: String,
+        overMillionYears: String
+    ) {
+        self.lessThanTenthSec = lessThanTenthSec
+        self.secondsFormat = secondsFormat
+        self.minutesFormat = minutesFormat
+        self.hoursFormat = hoursFormat
+        self.daysFormat = daysFormat
+        self.yearsFormat = yearsFormat
+        self.kiloYearsFormat = kiloYearsFormat
+        self.overMillionYears = overMillionYears
+    }
+
+    public static let english = EtaFormatStrings(
+        lessThanTenthSec: "<0.1s",
+        secondsFormat: "~{0}s",
+        minutesFormat: "~{0}m",
+        hoursFormat: "~{0}h",
+        daysFormat: "~{0}d",
+        yearsFormat: "~{0}y",
+        kiloYearsFormat: "~{0}ky",
+        overMillionYears: ">1My"
+    )
+
+    public static let traditionalChinese = EtaFormatStrings(
+        lessThanTenthSec: "<0.1 \u{79D2}",
+        secondsFormat: "~{0} \u{79D2}",
+        minutesFormat: "~{0} \u{5206}",
+        hoursFormat: "~{0} \u{5C0F}\u{6642}",
+        daysFormat: "~{0} \u{5929}",
+        yearsFormat: "~{0} \u{5E74}",
+        kiloYearsFormat: "~{0} \u{5343}\u{5E74}",
+        overMillionYears: ">100 \u{842C}\u{5E74}"
+    )
+}
+
 public enum Formatting {
     private static let superscriptDigits: [Character] = [
         "\u{2070}", "\u{00B9}", "\u{00B2}", "\u{00B3}", "\u{2074}",
@@ -194,18 +247,27 @@ public enum Formatting {
     }
 
     public static func formatEta(seconds: Double?, isChinese: Bool) -> String {
+        formatEta(seconds: seconds, formats: isChinese ? .traditionalChinese : .english)
+    }
+
+    public static func formatEta(seconds: Double?, formats: EtaFormatStrings) -> String {
         guard let seconds, seconds.isFinite, seconds >= 0 else { return "\u{2014}" }
-        if seconds < 0.1 { return isChinese ? "<0.1 \u{79D2}" : "<0.1s" }
-        if seconds < 60.0 { return String(format: isChinese ? "~%.1f \u{79D2}" : "~%.1fs", seconds) }
+        if seconds < 0.1 { return formats.lessThanTenthSec }
+        if seconds < 60.0 { return formatEtaNumber(formats.secondsFormat, value: seconds) }
         let minutes = seconds / 60.0
-        if minutes < 60.0 { return String(format: isChinese ? "~%.1f \u{5206}" : "~%.1fm", minutes) }
+        if minutes < 60.0 { return formatEtaNumber(formats.minutesFormat, value: minutes) }
         let hours = minutes / 60.0
-        if hours < 24.0 { return String(format: isChinese ? "~%.1f \u{5C0F}\u{6642}" : "~%.1fh", hours) }
+        if hours < 24.0 { return formatEtaNumber(formats.hoursFormat, value: hours) }
         let days = hours / 24.0
-        if days < 365.25 { return String(format: isChinese ? "~%.1f \u{5929}" : "~%.1fd", days) }
+        if days < 365.25 { return formatEtaNumber(formats.daysFormat, value: days) }
         let years = days / 365.25
-        if years < 1_000.0 { return String(format: isChinese ? "~%.1f \u{5E74}" : "~%.1fy", years) }
-        if years < 1_000_000.0 { return String(format: isChinese ? "~%.1f \u{5343}\u{5E74}" : "~%.1fky", years / 1_000.0) }
-        return isChinese ? ">100 \u{842C}\u{5E74}" : ">1My"
+        if years < 1_000.0 { return formatEtaNumber(formats.yearsFormat, value: years) }
+        if years < 1_000_000.0 { return formatEtaNumber(formats.kiloYearsFormat, value: years / 1_000.0) }
+        return formats.overMillionYears
+    }
+
+    private static func formatEtaNumber(_ template: String, value: Double) -> String {
+        let num = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), value)
+        return template.replacingOccurrences(of: "{0}", with: num)
     }
 }

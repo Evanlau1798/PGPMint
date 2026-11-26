@@ -99,8 +99,7 @@ internal static class DesktopDisplayMapper
             : string.Empty;
         string checkedText = FormattingHelpers.FormatCheckedCount(t.TotalChecked);
         string checkedTooltip = FormattingHelpers.FormatCheckedCountExact(t.TotalChecked);
-        bool isChinese = strings.ActiveCode.StartsWith("zh", StringComparison.OrdinalIgnoreCase);
-        string etaText = targetFound ? "\u2014" : FormattingHelpers.FormatEta(t.EstimatedMeanWait, isChinese);
+        string etaText = targetFound ? "\u2014" : FormattingHelpers.FormatEta(t.EstimatedMeanWait, strings.EtaFormats);
 
         string primaryText;
         bool canPrimary;

@@ -13,7 +13,7 @@
       <Border Classes="card">
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
           <TextBlock x:Name="LanguageHeading" Grid.Column="0" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
-          <ComboBox x:Name="LanguageCombo" Grid.Column="1" MinWidth="160" />
+          <ComboBox x:Name="LanguageCombo" Grid.Column="1" MinWidth="184" />
         </Grid>
       </Border>
 

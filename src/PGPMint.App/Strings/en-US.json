@@ -76,6 +76,14 @@
     "IncompleteSearchResultsError": "The GPU returned incomplete search results. Search stopped and the failed batch was excluded from progress.",
     "NoGpuError": "No hardware GPU detected",
     "HitNotificationTitle": "PGPMint Key Matched",
-    "ExportSuccess": "Exported secret & public key (.asc)"
+    "ExportSuccess": "Exported secret & public key (.asc)",
+    "EtaLessThanTenthSec": "<0.1s",
+    "EtaSecondsFormat": "~{0}s",
+    "EtaMinutesFormat": "~{0}m",
+    "EtaHoursFormat": "~{0}h",
+    "EtaDaysFormat": "~{0}d",
+    "EtaYearsFormat": "~{0}y",
+    "EtaKiloYearsFormat": "~{0}ky",
+    "EtaOverMillionYears": ">1My"
   }
 }

@@ -2,7 +2,7 @@
 
 # PGPMint
 
-English | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
+English | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
 **GPU generator for custom OpenPGP v4 (`Ed25519`) vanity Key IDs, with native Windows, native macOS, and redesigned Linux desktop apps plus a cross-platform CLI.**
 
@@ -114,7 +114,7 @@ hardware throughput. Benchmark reports microbenchmarks separately from full
 coordinator measurements, uses disposable isolated data, and does not open the
 user's vault. Compare identical devices, workloads, modes and UI states.
 
-The redesigned desktop apps support English and Traditional Chinese, encrypted vault storage, `.asc` export, GPU selection, automatic workload calibration, four power tiers with hover tooltips, and background operation where a working tray or menu bar is available. The floating Mini HUD remains Windows-only.
+The redesigned desktop apps support 10 built-in languages (`English`, `繁體中文`, `简体中文`, `日本語`, `한국어`, `Deutsch`, `Français`, `Español`, `Português (Brasil)`, and `Русский`), encrypted vault storage, `.asc` export, GPU selection, automatic workload calibration, four power tiers with hover tooltips, and background operation where a working tray or menu bar is available. The CLI stays in English for consistent scripting and diagnostics, and the floating Mini HUD remains Windows-only.
 Hardware validation and sustained performance on each Mac/GPU family remain
 separate acceptance checks.
 
@@ -126,7 +126,7 @@ separate acceptance checks.
 - **Zero-Overhead System Tray & Pure-CPU Floating HUD** — Closing the main window minimizes PGPMint to the notification area so WinUI 3 stops consuming GPU rendering cycles. An optional pure-CPU Direct2D/DirectWrite floating Mini HUD tracks live speed, probability, ETA, and progress (auto-hides during fullscreen apps/games).
 - **Minimalist Dashboard & Separate Settings** — Live hash rate, smooth progress bar, cumulative hit probability (hover for single-hash odds; switches cleanly to `Found` once a matching key is stored), scientific-notation checked count, live ETA, and an adaptive results card that expands for up to 5 saved keys.
 - **DPAPI Encrypted Vault & Signing-Ready `.asc` Export** — Every GPU match is double-verified on CPU, encrypted locally using Windows DPAPI (`CurrentUser`), and exported as RFC 9580 / GnuPG-compatible `.secret.asc` and `.public.asc` files with `Certify | Sign` key flags and optional AES-256-CFB passphrase protection.
-- **Extensible Localization** — Built-in English and Traditional Chinese, plus automatic loading of custom `Strings/*.json` locale files placed next to `PGPMint.exe`.
+- **Extensible Localization** — Built-in support for 10 languages (`English`, `繁體中文`, `简体中文`, `日本語`, `한국어`, `Deutsch`, `Français`, `Español`, `Português (Brasil)`, and `Русский`), plus automatic loading of custom `Strings/*.json` locale files placed next to `PGPMint.exe`.
 
 ---
 
@@ -253,7 +253,7 @@ CPU: Recompute full SHA-1 fingerprint -> Verify suffix -> Encrypt seed via DPAPI
 <details>
 <summary><strong>Adding a Custom Translation</strong></summary>
 
-PGPMint loads built-in locales from embedded resources and automatically merges any JSON file placed in a `Strings/` folder next to `PGPMint.exe` (for example `Strings/ja-JP.json`). Copy [src/PGPMint.App/Strings/en-US.json](src/PGPMint.App/Strings/en-US.json), update `_meta.code` and `_meta.nativeName`, translate the `strings` entries, and restart PGPMint to select it from Settings.
+PGPMint loads built-in locales from embedded resources and automatically merges any JSON file placed in a `Strings/` folder next to `PGPMint.exe` (for example `Strings/it-IT.json`). Copy [src/PGPMint.App/Strings/en-US.json](src/PGPMint.App/Strings/en-US.json), update `_meta.code` and `_meta.nativeName`, translate the `strings` entries, and restart PGPMint to select it from Settings.
 
 </details>
 

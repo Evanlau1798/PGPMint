@@ -40,11 +40,12 @@ public sealed class UiTests
             var settings = new SettingsWindow(window, session, strings);
             settings.Show(window);
             var settingsControls = settings.GetLogicalDescendants().ToArray();
-            var language = settingsControls.OfType<ComboBox>().Single(c => c.Items.Contains("zh-Hant"));
+            var language = settingsControls.OfType<ComboBox>().Single(c => c.Items.OfType<LanguageOption>().Any(o => o.Code == "zh-Hant"));
+            var zhHantOption = language.Items.OfType<LanguageOption>().Single(o => o.Code == "zh-Hant");
             var autoPause = settingsControls.OfType<CheckBox>().First();
             using (var blocked = new FileStream(session.StateStore.StateFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
-                Assert.Null(Record.Exception(() => language.SelectedItem = "zh-Hant"));
+                Assert.Null(Record.Exception(() => language.SelectedItem = zhHantOption));
                 Assert.Null(Record.Exception(() => autoPause.IsChecked = !autoPause.IsChecked));
             }
             Assert.Contains(settingsControls.OfType<TextBlock>(), t => t.Text == strings["OperationFailed"]);
@@ -175,12 +176,38 @@ public sealed class UiTests
     public void ExistingAndDesktopDictionariesSwitchLanguages()
     {
         var strings = new LocalizationService();
+        Assert.Equal(
+            ["auto", "en-US", "zh-Hant", "zh-Hans", "ja-JP", "ko-KR", "de-DE", "fr-FR", "es-ES", "pt-BR", "ru-RU"],
+            strings.LanguageOptions.Select(o => o.Code).ToArray());
+        Assert.Equal("Portugu\u00EAs (Brasil)", strings.LanguageOptions.Single(o => o.Code == "pt-BR").DisplayName);
+
         strings.Apply("en-US");
         Assert.Equal("Start", strings["Start"]);
         Assert.NotEqual("VaultPassword", strings["VaultPassword"]);
+        Assert.Equal("~42.3s", FormattingHelpers.FormatEta(TimeSpan.FromSeconds(42.3), strings.EtaFormats));
+
         strings.Apply("zh-Hant");
-        Assert.Equal("開始", strings["Start"]);
-        Assert.Equal("金鑰庫密碼（必填）", strings["VaultPassword"]);
+        Assert.Equal("\u958B\u59CB", strings["Start"]);
+        Assert.Equal("\u91D1\u9470\u5EAB\u5BC6\u78BC\uFF08\u5FC5\u586B\uFF09", strings["VaultPassword"]);
+
+        strings.Apply("zh-Hans");
+        Assert.Equal("\u5F00\u59CB", strings["Start"]);
+        Assert.Equal("\u5BC6\u94A5\u5E93\u5BC6\u7801\uFF08\u5FC5\u586B\uFF09", strings["VaultPassword"]);
+        Assert.Equal("~42.3 \u79D2", FormattingHelpers.FormatEta(TimeSpan.FromSeconds(42.3), strings.EtaFormats));
+
+        strings.Apply("ja-JP");
+        Assert.Equal("\u958B\u59CB", strings["Start"]);
+        Assert.NotEqual("VaultPassword", strings["VaultPassword"]);
+        Assert.Equal("~42.3\u79D2", FormattingHelpers.FormatEta(TimeSpan.FromSeconds(42.3), strings.EtaFormats));
+
+        foreach (string code in new[] { "ko-KR", "de-DE", "fr-FR", "es-ES", "pt-BR", "ru-RU" })
+        {
+            strings.Apply(code);
+            Assert.Equal(code, strings.ActiveCode);
+            Assert.NotEqual("Start", strings["Start"] == code ? code : "");
+            Assert.NotEqual("VaultPassword", strings["VaultPassword"]);
+        }
+
         strings.Apply("unsupported");
         Assert.Equal("auto", strings.Language);
     }

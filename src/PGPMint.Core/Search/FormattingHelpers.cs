@@ -3,6 +3,37 @@ using System.Text;
 
 namespace PGPMint.Core.Search;
 
+public readonly record struct EtaFormatStrings(
+    string LessThanTenthSec,
+    string SecondsFormat,
+    string MinutesFormat,
+    string HoursFormat,
+    string DaysFormat,
+    string YearsFormat,
+    string KiloYearsFormat,
+    string OverMillionYears)
+{
+    public static readonly EtaFormatStrings English = new(
+        LessThanTenthSec: "<0.1s",
+        SecondsFormat: "~{0}s",
+        MinutesFormat: "~{0}m",
+        HoursFormat: "~{0}h",
+        DaysFormat: "~{0}d",
+        YearsFormat: "~{0}y",
+        KiloYearsFormat: "~{0}ky",
+        OverMillionYears: ">1My");
+
+    public static readonly EtaFormatStrings TraditionalChinese = new(
+        LessThanTenthSec: "<0.1 \u79D2",
+        SecondsFormat: "~{0} \u79D2",
+        MinutesFormat: "~{0} \u5206",
+        HoursFormat: "~{0} \u5C0F\u6642",
+        DaysFormat: "~{0} \u5929",
+        YearsFormat: "~{0} \u5E74",
+        KiloYearsFormat: "~{0} \u5343\u5E74",
+        OverMillionYears: ">100 \u842C\u5E74");
+}
+
 public static class FormattingHelpers
 {
     private static readonly char[] SuperscriptDigits =
@@ -212,7 +243,10 @@ public static class FormattingHelpers
             ToSuperscript(exp));
     }
 
-    public static string FormatEta(TimeSpan? eta, bool isChinese)
+    public static string FormatEta(TimeSpan? eta, bool isChinese) =>
+        FormatEta(eta, isChinese ? EtaFormatStrings.TraditionalChinese : EtaFormatStrings.English);
+
+    public static string FormatEta(TimeSpan? eta, EtaFormatStrings formats)
     {
         if (eta is null)
         {
@@ -220,22 +254,35 @@ public static class FormattingHelpers
         }
 
         double seconds = eta.Value.TotalSeconds;
-        if (seconds < 0.1) return isChinese ? "<0.1 秒" : "<0.1s";
-        if (seconds < 60.0) return string.Format(CultureInfo.InvariantCulture, isChinese ? "~{0:F1} 秒" : "~{0:F1}s", seconds);
+        if (seconds < 0.1) return formats.LessThanTenthSec;
+        if (seconds < 60.0) return FormatEtaNumber(formats.SecondsFormat, seconds, EtaFormatStrings.English.SecondsFormat);
 
         double minutes = seconds / 60.0;
-        if (minutes < 60.0) return string.Format(CultureInfo.InvariantCulture, isChinese ? "~{0:F1} 分" : "~{0:F1}m", minutes);
+        if (minutes < 60.0) return FormatEtaNumber(formats.MinutesFormat, minutes, EtaFormatStrings.English.MinutesFormat);
 
         double hours = minutes / 60.0;
-        if (hours < 24.0) return string.Format(CultureInfo.InvariantCulture, isChinese ? "~{0:F1} 小時" : "~{0:F1}h", hours);
+        if (hours < 24.0) return FormatEtaNumber(formats.HoursFormat, hours, EtaFormatStrings.English.HoursFormat);
 
         double days = hours / 24.0;
-        if (days < 365.25) return string.Format(CultureInfo.InvariantCulture, isChinese ? "~{0:F1} 天" : "~{0:F1}d", days);
+        if (days < 365.25) return FormatEtaNumber(formats.DaysFormat, days, EtaFormatStrings.English.DaysFormat);
 
         double years = days / 365.25;
-        if (years < 1_000.0) return string.Format(CultureInfo.InvariantCulture, isChinese ? "~{0:F1} 年" : "~{0:F1}y", years);
-        if (years < 1_000_000.0) return string.Format(CultureInfo.InvariantCulture, isChinese ? "~{0:F1} 千年" : "~{0:F1}ky", years / 1_000.0);
-        return isChinese ? ">100 萬年" : ">1My";
+        if (years < 1_000.0) return FormatEtaNumber(formats.YearsFormat, years, EtaFormatStrings.English.YearsFormat);
+        if (years < 1_000_000.0) return FormatEtaNumber(formats.KiloYearsFormat, years / 1_000.0, EtaFormatStrings.English.KiloYearsFormat);
+        return formats.OverMillionYears;
+    }
+
+    private static string FormatEtaNumber(string template, double value, string fallbackTemplate)
+    {
+        string numStr = value.ToString("F1", CultureInfo.InvariantCulture);
+        try
+        {
+            return string.Format(CultureInfo.InvariantCulture, template, numStr);
+        }
+        catch (FormatException)
+        {
+            return string.Format(CultureInfo.InvariantCulture, fallbackTemplate, numStr);
+        }
     }
 
     public static string FormatKeyIdSpaced(string keyId16)

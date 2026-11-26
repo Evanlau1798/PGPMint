@@ -31,7 +31,7 @@
                                    VerticalAlignment="Center" />
                         <ComboBox x:Name="LanguageComboBox"
                                   Grid.Column="1"
-                                  MinWidth="168"
+                                  MinWidth="184"
                                   DisplayMemberPath="DisplayName"
                                   SelectedValuePath="Code"
                                   SelectionChanged="OnLanguageSelectionChanged" />
