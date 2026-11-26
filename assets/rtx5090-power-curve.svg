@@ -104,11 +104,11 @@
   <circle cx="701.3" cy="489.4" r="4.2" fill="#111214" stroke="#64B1E8" stroke-width="2.2" />
   <text class="tier-3080" x="724.0" y="516.0" text-anchor="start">Efficiency (67%)</text>
   <text class="tier-3080-sub" x="724.0" y="531.0" text-anchor="start">15.88 GH/s &#183; 301 W</text>
-  <rect class="pill" x="396.5" y="652" width="205.0" height="26" rx="13" />
-  <circle cx="414.0" cy="665" r="4.5" fill="#F9AE6C" />
-  <text class="pill-txt" x="424.5" y="669">RTX 5090 (OpenCL, 450 W Cap)</text>
-  <rect class="pill" x="615.5" y="652" width="188.0" height="26" rx="13" />
-  <circle cx="633.0" cy="665" r="4.5" fill="#64B1E8" />
-  <text class="pill-txt" x="643.5" y="669">RTX 3080 (Vulkan, Windows)</text>
+  <rect class="pill" x="389.5" y="652" width="211.0" height="26" rx="13" />
+  <circle cx="407.0" cy="665" r="4.5" fill="#F9AE6C" />
+  <text class="pill-txt" x="417.5" y="669">RTX 5090 (OpenCL, 450 W Cap)</text>
+  <rect class="pill" x="614.5" y="652" width="196.0" height="26" rx="13" />
+  <circle cx="632.0" cy="665" r="4.5" fill="#64B1E8" />
+  <text class="pill-txt" x="642.5" y="669">RTX 3080 (Vulkan, Windows)</text>
   <text class="footer" x="600" y="699" text-anchor="middle">Native NVML telemetry | Marked tiers: Eco / Balanced / Efficiency / Max | 5090: 21 settled points | 3080: 46 calibration points | pgpmint</text>
 </svg>
