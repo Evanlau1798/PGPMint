@@ -17,7 +17,7 @@
 <table>
   <tr>
     <td align="center" width="33%">
-      <img src="assets/screenshot-dashboard.png" alt="PGPMint on Windows 11 running at 23.08 GH/s" width="360" /><br />
+      <img src="assets/screenshot-dashboard.png" alt="PGPMint on Windows 11 running at 23.61 GH/s" width="360" /><br />
       <sub><strong>Windows 11 (WinUI 3 + Mica)</strong></sub>
     </td>
     <td align="center" width="33%">
