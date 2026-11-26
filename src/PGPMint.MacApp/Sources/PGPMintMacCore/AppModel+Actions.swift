@@ -377,10 +377,11 @@ extension AppModel {
         minimizeToTrayOnClose = status.settings.minimizeToTrayOnClose
 
         if case .valid(let suffix, _, let formatted, let len) = Formatting.validateKeyIdSuffix(status.settings.targetInput) {
+            let previousSuffix = activeTargetSuffix
             activeTargetSuffix = suffix
             activeFormattedPreview = formatted
             activeFixedHexLength = len
-            if draftTargetInput.isEmpty || !showSetupWizard {
+            if draftTargetInput.isEmpty || (!showSetupWizard && suffix != previousSuffix) {
                 draftTargetInput = suffix
             }
             showSetupWizard = status.isUnlocked && !status.settings.hasCompletedSetup

@@ -169,17 +169,20 @@ public final class ProcessHostTransport: HostTransport, @unchecked Sendable {
     public func shutdown() async {
         lock.withLock { stopping = true }
         let (proc, handle) = lock.withLock { () -> (Process?, FileHandle?) in
-            (process, stdinHandle)
+            let currentHandle = stdinHandle
+            stdinHandle = nil
+            return (process, currentHandle)
         }
-        if let proc, proc.isRunning, let handle {
-            let reqId = allocateId()
-            if var payload = try? JSONEncoder().encode(EmptyRequest(id: reqId, method: "shutdown")) {
-                payload.append(0x0A)
-                try? handle.write(contentsOf: payload)
+        writeQueue.sync {
+            if let proc, proc.isRunning, let handle {
+                let reqId = allocateId()
+                if var payload = try? JSONEncoder().encode(EmptyRequest(id: reqId, method: "shutdown")) {
+                    payload.append(0x0A)
+                    try? handle.write(contentsOf: payload)
+                }
             }
+            try? handle?.close()
         }
-        lock.withLock { stdinHandle = nil }
-        try? handle?.close()
         if let proc, proc.isRunning {
             let deadline = Date().addingTimeInterval(2.5)
             while proc.isRunning && Date() < deadline {

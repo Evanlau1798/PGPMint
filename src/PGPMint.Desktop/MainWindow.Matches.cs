@@ -81,10 +81,7 @@ public sealed partial class MainWindow
         deleteBtn.Click += async (_, _) =>
         {
             if (_session.Coordinator is { } c && await ConfirmAsync(this, L("DeleteConfirmTitle"), record.Fingerprint, _strings))
-            {
-                c.DeleteVaultMatch(record.Id);
-                ForceRefresh();
-            }
+                await RunAsync(() => { c.DeleteVaultMatch(record.Id); return Task.CompletedTask; });
         };
         Grid.SetColumn(deleteBtn, 3);
 
@@ -102,10 +99,7 @@ public sealed partial class MainWindow
         if (matches.Count == 0) return;
         string msg = DesktopDisplayMapper.Format(L("ClearAllConfirmFormat"), matches.Count.ToString());
         if (await ConfirmAsync(this, L("ClearAllConfirmTitle"), msg, _strings))
-        {
-            foreach (MatchedKeyRecord record in matches) coordinator.DeleteVaultMatch(record.Id);
-            ForceRefresh();
-        }
+            await RunAsync(() => { coordinator.ClearVaultMatches(); return Task.CompletedTask; });
     }
 
     private async Task ExportRecordAsync(MatchedKeyRecord record)

@@ -218,8 +218,15 @@ public sealed class HostServer(HostSession session, TextReader input, TextWriter
 
     private void WriteEvent(HostEvent evt)
     {
-        string json = JsonSerializer.Serialize(evt, HostJsonContext.Default.HostEvent);
-        WriteLine(json);
+        try
+        {
+            string json = JsonSerializer.Serialize(evt, HostJsonContext.Default.HostEvent);
+            WriteLine(json);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+            // Parent disconnected stdout before stdin EOF completed shutdown.
+        }
     }
 
     private void WriteLine(string json)
