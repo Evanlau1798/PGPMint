@@ -2,21 +2,36 @@
 
 # PGPMint
 
-**GPU generator for custom OpenPGP v4 (`Ed25519`) vanity Key IDs, with a native Windows app and Linux/macOS test builds.**
+**GPU generator for custom OpenPGP v4 (`Ed25519`) vanity Key IDs, with native Windows, native macOS, and redesigned Linux desktop apps plus a cross-platform CLI.**
 
 [![CI](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Evanlau1798/PGPMint?label=Release&color=0078D6)](https://github.com/Evanlau1798/PGPMint/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Windows-10%2F11%20(x64%20%7C%20ARM64)-0078D6.svg)](#system-requirements)
-[![.NET 10 WinUI 3](https://img.shields.io/badge/.NET%2010-WinUI%203-512BD4.svg)](#building-from-source)
+[![Platform](https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-x64%20%7C%20ARM64-0078D6.svg)](#system-requirements)
+[![.NET 10](https://img.shields.io/badge/.NET%2010%20%2B%20SwiftUI%20%2B%20Avalonia-512BD4.svg)](#building-from-source)
 
 [Download](#download--quick-start) · [Features](#features) · [Git Signing](#using-exported-keys-with-git) · [Benchmarks](#benchmarks) · [Build from Source](#building-from-source)
 
 <br />
 
-<img src="assets/screenshot-dashboard.png" alt="PGPMint main window on Windows 11 running at 23.08 GH/s" width="446" />
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src="assets/screenshot-dashboard.png" alt="PGPMint on Windows 11 running at 23.08 GH/s" width="360" /><br />
+      <sub><strong>Windows 11 (WinUI 3 + Mica)</strong></sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="assets/screenshot-macos-dashboard.png" alt="PGPMint native SwiftUI/AppKit app on macOS running at 2.25 GH/s" width="360" /><br />
+      <sub><strong>macOS (Native SwiftUI / AppKit)</strong></sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="assets/screenshot-linux-dashboard.png" alt="PGPMint redesigned Avalonia app on Linux running on Intel UHD Vulkan" width="360" /><br />
+      <sub><strong>Linux (Avalonia 12.2.0 / X11)</strong></sub>
+    </td>
+  </tr>
+</table>
 
-*PGPMint running on Windows 11 (Dark Mica) searching for a 12-hex Key ID suffix at full speed.*
+*PGPMint across Windows, macOS, and Linux searching custom OpenPGP v4 Key ID suffixes with calibrated power tiers.*
 
 </div>
 
@@ -32,13 +47,12 @@ Unlike command-line tools that require installing Python or the NVIDIA CUDA Tool
 
 ## Features
 
-### Linux and macOS test builds
+### macOS and Linux desktop builds
 
-The Windows WinUI application remains available. Linux and macOS use a shared
-Avalonia desktop application and the same search coordinator, CPU verification,
-OpenPGP export and GPU algorithms. Linux uses native Vulkan/OpenCL; macOS uses
-Metal or MoltenVK. Software CPU renderers are excluded. WSL is a Linux testing
-environment, not a separately supported GPU backend.
+The Windows WinUI application (`src/PGPMint.App`) remains the flagship Windows product, now updated alongside macOS and Linux with the unified PGPMint brand icon (`assets/pgpmint-icon.svg`).
+
+- **macOS (`src/PGPMint.MacApp` + `src/PGPMint.Host`)**: Native **SwiftUI + AppKit** desktop app (`macOS 14+`, `osx-arm64` and `osx-x64`) backed by a bundled self-contained `.NET 10` sidecar helper (`pgpmint-host`) communicating over private anonymous `stdin`/`stdout` NDJSON pipes. Private key seeds never cross IPC to the UI process, and closing `stdin` stops GPU workers and releases the exclusive `VaultSession`. Supports Login Keychain automatic unlock for new vaults (keeping password unlock for existing vaults), menu bar live hash rate readout with 4-tier switching, `IOKit` idle sleep assertion (`System sleep is inhibited while searching`), native Metal (`libpgpmint_metal.dylib`) and MoltenVK Vulkan drivers.
+- **Linux (`src/PGPMint.Desktop`)**: Redesigned **Avalonia 12.2.0** XAML desktop app (`linux-x64` and `linux-arm64`) featuring a Setup Wizard, minimalist 3-card dashboard, separate Settings window, 4 calibrated power tiers (`Eco`, `Balanced`, `Efficiency`, `Max`) with per-tier hover tooltips, silent `/usr/bin/systemd-inhibit` sleep prevention during active search, `StatusNotifierWatcher` system tray integration, and native Vulkan/OpenCL compute backends. Software CPU renderers are excluded; WSL is a Linux testing environment rather than a supported GPU target.
 
 Download the platform test packages from the successful **CI** run on `main` in
 [GitHub Actions](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml).
@@ -98,9 +112,7 @@ hardware throughput. Benchmark reports microbenchmarks separately from full
 coordinator measurements, uses disposable isolated data, and does not open the
 user's vault. Compare identical devices, workloads, modes and UI states.
 
-The new desktop supports English/Traditional Chinese, encrypted results, export,
-GPU selection, calibration, four power tiers and background operation where a
-working tray/menu bar is available. The floating Mini HUD remains Windows-only.
+The redesigned desktop apps support English and Traditional Chinese, encrypted vault storage, `.asc` export, GPU selection, automatic workload calibration, four power tiers with hover tooltips, and background operation where a working tray or menu bar is available. The floating Mini HUD remains Windows-only.
 Hardware validation and sustained performance on each Mac/GPU family remain
 separate acceptance checks.
 
@@ -192,8 +204,9 @@ On the same RTX 3080 under concurrent dual-stream NVDEC hardware video decoding 
 
 ## System Requirements
 
-- **OS**: Windows 10 (build 19041 / 2004 or later) or Windows 11 (`x64` or `ARM64`)
-- **GPU**: One or more hardware GPUs supporting Direct3D 11 Feature Level 11.0+ (Vulkan 1.1+ driver or OpenCL ICD optional for maximum throughput with automatic Direct3D 11 fallback; CPU-only / software rendering is intentionally excluded)
+- **Windows**: Windows 10 (build 19041 / 2004 or later) or Windows 11 (`x64` or `ARM64`), with Direct3D 11 Feature Level 11.0+ hardware GPU (Vulkan 1.1+ / OpenCL optional for peak speed).
+- **macOS**: macOS 14 Sonoma or later (`Apple Silicon arm64` or `Intel x64`) with Metal / MoltenVK hardware GPU support.
+- **Linux**: X11 or XWayland session with hardware Vulkan 1.1+ or OpenCL ICD GPU drivers and standard desktop runtime libraries (see `TESTING.txt` inside the archive). CLI usage does not require a graphical session.
 
 ---
 

@@ -1,14 +1,14 @@
-# PGPMint Desktop
+# PGPMint Desktop (Linux Avalonia)
 
-Avalonia 12.2.0 / .NET 10 desktop for Linux and macOS. Windows keeps its WinUI application; the Avalonia project can also run on Windows for managed and headless validation.
+Redesigned Avalonia 12.2.0 / .NET 10 desktop for Linux (`linux-x64` and `linux-arm64`), which also serves as the cross-platform managed and headless test harness. Windows ships its native WinUI 3 app in `src/PGPMint.App`; macOS ships its native SwiftUI/AppKit app + sidecar host in `src/PGPMint.MacApp` and `src/PGPMint.Host`.
 
-The application accepts no password arguments. New macOS vaults open automatically using a random secret in the user's login keychain; macOS may request system authorization. Existing password vaults and Linux use the masked password dialog. It shares the CLI vault location (`Environment.SpecialFolder.LocalApplicationData/PGPMint` on Linux/macOS, `PGPMint-Portable` on Windows) and holds `VaultSession` until the coordinator has stopped and disposed. The Windows validation build uses a separate directory from WinUI's DPAPI vault. Existing formats are not silently converted. Back up the complete directory including the password header and automatic-unlock metadata when present. A keychain backup alone does not provide portable recovery: also export passphrase-protected OpenPGP keys. Missing or inaccessible system secrets fail without replacing stored data.
+The application accepts no password arguments. Linux and portable password vaults unlock with a masked password dialog (`SecretDialog`), share the CLI vault location (`Environment.SpecialFolder.LocalApplicationData/PGPMint` on Linux, `PGPMint-Portable` on Windows), and hold an exclusive `VaultSession` lock until the coordinator has stopped and disposed. The Windows validation build uses a separate directory from WinUI's DPAPI vault; existing formats are never silently converted. Back up the complete directory including the password header, and keep passphrase-protected OpenPGP `.asc` exports for portable recovery.
 
-Configure a target suffix and GPUs, apply settings, and start. Missing calibration runs automatically; Recalibrate invalidates enabled GPU calibration and starts calibration/search for the target. Four power tiers become available after calibration. Results show CPU-verified hits and saved keys separately. Export requires a UID name or email and a nonempty passphrase, then two local file selections. Existing files are always rejected, including after an overwrite prompt. Private files use Core's create-new API with owner-only Unix permissions; the decrypted seed is zeroed in a finally block.
+First launch presents a Setup Wizard to choose the target Key ID suffix, hardware GPU(s), and language. The main dashboard uses a compact 3-card layout (speed readout & honest sensor/tier badge, 4-tier selector with hover tooltips, unified Start/Stop button, progress & probability telemetry, and matched key list with Copy, `.asc` Export, Delete, and Clear All), plus a separate Settings window. Missing workload calibration runs automatically; Recalibrate invalidates enabled GPU calibrations and re-measures. Power tiers (`Eco`, `Balanced`, `Efficiency`, `Max`) unlock after calibration completes. Export requires a UID name or email and a nonempty passphrase, then two local `.asc` save locations; existing files are always rejected and decrypted seeds are zeroed in a `finally` block.
 
-The tray/menu bar provides Show, Hide, Pause, Resume, Stop and Quit. A working native menu and (on Linux) StatusNotifierWatcher are required before hiding; Linux also needs `/usr/bin/gdbus`. If the watcher disappears, the hidden window is restored. Without a tray, closing asks explicitly to stop and quit. Hiding leaves search running and skips UI refresh. Visible telemetry refreshes at most four times per second. MiniHUD and autostart are intentionally absent.
+The system tray menu provides `Open`, `Start`/`Stop`, the `Power tier` submenu, and `Quit`. A working native menu and (on Linux) `org.kde.StatusNotifierWatcher` via `/usr/bin/gdbus` are required before hiding to tray; if the watcher disappears, the hidden window restores automatically. Without a working tray, closing during an active search prompts to stop and quit. Visible telemetry refreshes at most four times per second and pauses when hidden or minimized. MiniHUD and autostart are intentionally absent.
 
-Sleep inhibition uses Linux `/usr/bin/systemd-inhibit` (readiness acknowledged after acquisition) or macOS IOKit assertions. Missing services/permissions are shown as unavailable. The Linux child is owned, closed and reaped on stop, pause, lock or quit. macOS inhibition prevents automatic idle sleep; closing the lid, manual sleep and low battery can still sleep the machine. The Avalonia Windows validation build currently displays sleep inhibition as unavailable; the Windows product remains WinUI.
+On Linux, active searches acquire silent sleep inhibition via `/usr/bin/systemd-inhibit --what=sleep --mode=block` and release/reap the child process on stop, lock, or quit without cluttering the dashboard header.
 
 Build and test separately:
 
@@ -17,13 +17,11 @@ dotnet build tests/PGPMint.Desktop.Tests/PGPMint.Desktop.Tests.csproj -c Release
 dotnet test tests/PGPMint.Desktop.Tests/PGPMint.Desktop.Tests.csproj -c Release -p:Platform=x64 --no-build
 ```
 
-On Linux/macOS, package the selected RID with the .NET 10 SDK:
+Package Linux targets with the .NET 10 SDK (or macOS targets on a macOS host with Xcode Command Line Tools):
 
 ```bash
-python scripts/packaging/package.py --rid linux-x64 --tag v0.0.0-test --platform x64 --scratch /absolute/path/to/packages
-python scripts/packaging/package.py --rid osx-arm64 --tag v0.0.0-test --platform ARM64 --scratch /absolute/path/to/packages
+python scripts/packaging/package.py --rid linux-x64 --tag v1.2.0 --platform x64 --scratch /absolute/path/to/packages
+python scripts/packaging/package.py --rid osx-arm64 --tag v1.2.0 --platform ARM64 --scratch /absolute/path/to/packages
 ```
 
-Supported package targets: linux-x64, linux-arm64, osx-x64 and osx-arm64. macOS packaging requires a macOS host with Xcode Command Line Tools, verifies the native Metal bridge exists, and applies ad-hoc signing. macOS archives contain a `.app`; Linux archives contain the self-contained executable and libraries. Developer ID signing, notarization, distribution/installers and real hardware/platform qualification remain release work. Do not run the macOS archive on another machine as if it were notarized.
-
-Version source: [official NuGet](https://www.nuget.org/packages/Avalonia/12.2.0). Platform behavior: [Avalonia tray documentation](https://docs.avaloniaui.net/controls/navigation/trayicon/), [systemd-inhibit](https://www.freedesktop.org/software/systemd/man/253/systemd-inhibit.html), [Apple idle sleep assertion](https://developer.apple.com/documentation/iokit/kiopmassertiontypepreventuseridlesystemsleep).
+Version source: [Avalonia 12.2.0](https://www.nuget.org/packages/Avalonia/12.2.0). Platform references: [Avalonia TrayIcon](https://docs.avaloniaui.net/controls/navigation/trayicon/), [systemd-inhibit](https://www.freedesktop.org/software/systemd/man/253/systemd-inhibit.html).
