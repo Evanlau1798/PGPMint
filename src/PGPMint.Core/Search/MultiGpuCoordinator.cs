@@ -71,11 +71,26 @@ public sealed partial class MultiGpuCoordinator : IDisposable
         }
         else
         {
-            _telemetrySensor = OperatingSystem.IsWindows() ? new WindowsGpuTelemetrySensor() : NullGpuTelemetrySensor.Instance;
+            _telemetrySensor = CreateDefaultTelemetrySensor();
             _ownsTelemetrySensor = true;
         }
 
         _latestTelemetry = BuildTelemetrySnapshot();
+    }
+
+    internal static IGpuTelemetrySensor CreateDefaultTelemetrySensor()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return new WindowsGpuTelemetrySensor();
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            return new LinuxGpuTelemetrySensor();
+        }
+
+        return NullGpuTelemetrySensor.Instance;
     }
 
     public void Initialize()
