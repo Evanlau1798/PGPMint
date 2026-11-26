@@ -18,8 +18,10 @@ public sealed partial class MainWindow
         MatchesContentPanel.IsVisible = matches.Count > 0;
         if (matches.Count == 0)
         {
+            if (_renderedMatchKey.Length == 0) return;
             _renderedMatchKey = string.Empty;
             MatchesListPanel.Children.Clear();
+            RefreshAutoHeight();
             return;
         }
 
@@ -29,6 +31,14 @@ public sealed partial class MainWindow
         MatchesCountText.Text = $"{L("Saved")}: {matches.Count}";
         MatchesListPanel.Children.Clear();
         foreach (MatchedKeyRecord record in matches) MatchesListPanel.Children.Add(BuildMatchRow(record));
+        RefreshAutoHeight();
+    }
+
+    private void RefreshAutoHeight()
+    {
+        if (SizeToContent != SizeToContent.Height) return;
+        SizeToContent = SizeToContent.Manual;
+        SizeToContent = SizeToContent.Height;
     }
 
     private Control BuildMatchRow(MatchedKeyRecord record)
