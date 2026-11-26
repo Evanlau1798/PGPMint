@@ -120,7 +120,6 @@ public sealed partial class MainWindow : Window
         SetupWizardPanel.IsVisible = unlocked && !setupDone;
         DashboardPanel.IsVisible = unlocked && setupDone;
         SettingsButton.IsVisible = unlocked && setupDone;
-        if (!DashboardPanel.IsVisible) SleepStatusText.IsVisible = false;
 
         if (SetupWizardPanel.IsVisible)
         {
@@ -272,18 +271,6 @@ public sealed partial class MainWindow : Window
         CheckedCountText.Text = d.CheckedText;
         ToolTip.SetTip(CheckedCountText, $"{d.CheckedExactTooltip} \u00B7 {L("Verified")}: {t.SessionWork.VerifiedHits:N0}");
         EtaText.Text = d.EtaText;
-
-        bool showSleep = DashboardPanel.IsVisible && _platform?.Searching == true && !TransientNoticeText.IsVisible;
-        SleepStatusText.IsVisible = showSleep;
-        if (showSleep)
-        {
-            string msg = L(_platform!.SleepProtected ? "SleepProtected" : "SleepUnavailable");
-            SleepStatusText.Text = msg;
-            SleepStatusText.Foreground = _platform.SleepProtected
-                ? (this.FindResource("TextSecondaryBrush") as IBrush ?? Brushes.Gray)
-                : Brush.Parse("#D97706");
-            ToolTip.SetTip(SleepStatusText, msg);
-        }
 
         if (d.ErrorText is not null) { ErrorBannerText.Text = d.ErrorText; ErrorBanner.IsVisible = true; }
         TrayHintText.IsVisible = matches.Count == 0 && state.MinimizeToTrayOnClose &&
