@@ -134,12 +134,12 @@ git config --global commit.gpgsign true
 | **RTX 5090 (450 W)** | **OpenCL** | `opencl-sha1-four-v4` / `128` | **83.32 GH/s** | **76.18 GH/s** | CLI `search` 標準設定（`cmem0-v4`） |
 | **RTX 5090 (450 W)** | **OpenCL** | `opencl-sha1-four-v4` / `256` | 81.60 GH/s | 75.97 GH/s | — |
 | RTX 5090 (450 W) | Vulkan | `vulkan-sha1-four-v4` / `64`–`256` | 56.75–57.42 GH/s | 54.86–55.03 GH/s | ヘッドレス EGL ICD（`nvidia_egl_icd.json`） |
-| RTX 3090 | OpenCL | `opencl-sha1-four-v4` / `128` | — | 24.29–25.37 GH/s | シングル GPU 基準（`300 W` 上限、`81.20 MH/W`） |
+| RTX 3090 | OpenCL | `opencl-sha1-four-v4` / `128` | — | **25.51–25.93 GH/s** | シングル GPU 実測（`300 W` 上限、`85.42 MH/W`、60 秒 `25.10 GH/s @ 66–70 C` 熱制限なし） |
 | **RTX 3090 x2 NVLink** | **OpenCL** | `opencl-sha1-four-v4` / `128` | — | **49.43–50.41 GH/s** | デュアル合計 `600 W` 上限（`82.54 MH/W`；連続熱平衡時 `46.42 GH/s`） |
 | RTX 3080 (Windows) | Vulkan | `vulkan-sha1-four-v4` / `128` | 23.20–23.82 GH/s | 22.51–23.23 GH/s | 全負荷 `346.61 W`（`64.95 MH/W`） |
 
 <p align="center">
-  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint GPU 電力効率カーブ（消費電力 W 対 探索速度 GH/s）、RTX 5090（OpenCL、450 W 制限）・RTX 3090 x2 NVLink（OpenCL、600 W 制限）・RTX 3080（Vulkan）の比較" width="100%" />
+  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint GPU 電力効率カーブ（消費電力 W 対 探索速度 GH/s）、RTX 5090（OpenCL、450 W 制限）・RTX 3090 x2 NVLink（OpenCL、600 W 制限）・RTX 3090（OpenCL、300 W 制限）・RTX 3080（Vulkan）の比較" width="100%" />
 </p>
 
 <details>
@@ -185,6 +185,16 @@ git config --global commit.gpgsign true
 - **シングル対デュアル スケーリング**：単体実測 `24.289 GH/s`（`299.1 W`、`81.20 MH/W`）；デュアル 30 秒キャリブレーション合計 `50.414 GH/s`（`GPU 0`：`25.042 GH/s`、`GPU 1`：`25.372 GH/s`；21 点カーブ最大点 `49.429 GH/s @ 598.83 W`、`82.54 MH/W`、スケール比 **`2.03x`**）。
 - **4 モード動作点（`power_curve_settled.csv`）**：`Eco`（`5%`、`power-floor-fallback`）`2.52 GH/s @ 277.99 W`（`9.08 MH/W`）、`Balanced`（`15%`）`7.56 GH/s @ 319.29 W`（`23.68 MH/W`）、`Efficiency`（`55%`）`27.06 GH/s @ 523.91 W`（`51.64 MH/W`）、`Max`（`100%`）`49.43 GH/s @ 598.83 W`（`82.54 MH/W`）。`P2` 固定により最低負荷でも `278 W`（全負荷の `46.4%`）消費するため、`IsHighIdlePowerFloor` が自動で `Max` 推奨ヒントを有効化します。
 - **60 秒連続安定性（`Max`）**：近接スロット側の `GPU 0` が `82–83 C` でサーマルリミット（`299 -> 242 W`）に達し、`GPU 1` は `66 C / 299 W` を維持して平均 **`46.416 GH/s @ 550.6 W`（`84.31 MH/W`）** で安定。
+
+</details>
+
+<details>
+<summary><strong>RTX 3090 シングル GPU 実測サマリー（OpenCL, 4x128, 300 W 上限）</strong></summary>
+
+- **構成と電力上限**：シングル NVIDIA GeForce RTX 3090（24 GiB VRAM、強制上限 **`300.00 W`**／VBIOS 定格 `420.00 W`）、Ubuntu 22.04.5 LTS、ドライバ `595.99.02`。
+- **キャリブレーションと 21 点カーブ比較**：30 秒計測ピーク **`26.037 GH/s`**（中央値 **`25.933 GH/s @ 298.52 W`**）；21 点カーブ `100%` は **`25.511 GH/s @ 298.65 W`（`85.42 MH/W`）**、アイドル時 `P8` は `36.39 W`。RTX 3080（`22.51 GH/s @ 346.61 W`／`64.95 MH/W`）と比べ、`300 W` 制限下でも **`48 W` 低い消費電力で `+13.3%` のスループット**（電力効率 **`+31.5%`**）を達成しました。
+- **4 モード動作点（`power_curve_settled.csv`）**：`Eco`（`5%`、`power-floor-fallback`）`1.30 GH/s @ 147.79 W`（`8.81 MH/W`）、`Balanced`（`10%`）`2.60 GH/s @ 159.45 W`（`16.33 MH/W`）、`Efficiency`（`45%`）`11.73 GH/s @ 254.96 W`（`46.01 MH/W`）、`Max`（`100%`）`25.51 GH/s @ 298.65 W`（`85.42 MH/W`）。`P2` 固定により最低負荷でも `147.8 W`（全負荷の `49.5%`）を消費するため、`IsHighIdlePowerFloor` が自動で `Max` 推奨ヒントを有効化します。
+- **60 秒連続安定性（`Max`）**：平均 **`25.095 GH/s`**（中央値 **`25.276 GH/s`**）、平均消費電力 **`298.91 W`**（**`83.96 MH/W`**）、温度は **`66 -> 70 C`** で安定し、デュアル構成で発生した熱スロットリングは **`0/60`** でした。
 
 </details>
 

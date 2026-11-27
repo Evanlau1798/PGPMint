@@ -196,12 +196,12 @@ Measured on an **NVIDIA GeForce RTX 5090** (32 GiB VRAM, Ubuntu 22.04.5 LTS, Dri
 | **RTX 5090 (450 W)** | **OpenCL** | `opencl-sha1-four-v4` / `128` | **83.32 GH/s** | **76.18 GH/s** | CLI `search` default (`cmem0-v4`) |
 | **RTX 5090 (450 W)** | **OpenCL** | `opencl-sha1-four-v4` / `256` | 81.60 GH/s | 75.97 GH/s | — |
 | RTX 5090 (450 W) | Vulkan | `vulkan-sha1-four-v4` / `64`–`256` | 56.75–57.42 GH/s | 54.86–55.03 GH/s | Headless EGL ICD (`nvidia_egl_icd.json`) |
-| RTX 3090 | OpenCL | `opencl-sha1-four-v4` / `128` | — | 24.29–25.37 GH/s | Single GPU baseline (`300 W` cap, `81.20 MH/W`) |
+| RTX 3090 | OpenCL | `opencl-sha1-four-v4` / `128` | — | **25.51–25.93 GH/s** | Single GPU (`300 W` cap, `85.42 MH/W`; `25.10 GH/s @ 66–70 C` 60s steady) |
 | **RTX 3090 x2 NVLink** | **OpenCL** | `opencl-sha1-four-v4` / `128` | — | **49.43–50.41 GH/s** | Dual-GPU `600 W` combined cap (`82.54 MH/W`; `46.42 GH/s` thermal steady) |
 | RTX 3080 (Windows) | Vulkan | `vulkan-sha1-four-v4` / `128` | 23.20–23.82 GH/s | 22.51–23.23 GH/s | `346.61 W` (`64.95 MH/W` full load) |
 
 <p align="center">
-  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint GPU efficiency curve (Power W vs Throughput GH/s) comparing RTX 5090 (OpenCL, 450 W cap), RTX 3090 x2 NVLink (OpenCL, 600 W cap), and RTX 3080 (Vulkan)" width="100%" />
+  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint GPU efficiency curve (Power W vs Throughput GH/s) comparing RTX 5090 (OpenCL, 450 W cap), RTX 3090 x2 NVLink (OpenCL, 600 W cap), RTX 3090 (OpenCL, 300 W cap), and RTX 3080 (Vulkan)" width="100%" />
 </p>
 
 <details>
@@ -247,6 +247,16 @@ Each point (`100%` `FullSpeed`, `95%`–`5%` under PGPMint 50 ms duty-cycle paci
 - **Single vs Dual-GPU Scaling**: 1x RTX 3090 standalone `24.289 GH/s` (`299.1 W`, `81.20 MH/W`); 2x RTX 3090 30 s calibration `50.414 GH/s` (`GPU 0`: `25.042 GH/s`, `GPU 1`: `25.372 GH/s`, **`2.03x`** scaling on settled `Max` `49.429 GH/s @ 598.83 W` / `82.54 MH/W`).
 - **4-Tier Operating Points (`power_curve_settled.csv`)**: `Eco` (`5%`, `power-floor-fallback`) `2.52 GH/s @ 277.99 W` (`9.08 MH/W`), `Balanced` (`15%`) `7.56 GH/s @ 319.29 W` (`23.68 MH/W`), `Efficiency` (`55%`) `27.06 GH/s @ 523.91 W` (`51.64 MH/W`), `Max` (`100%`) `49.43 GH/s @ 598.83 W` (`82.54 MH/W`). Because P-State `P2` keeps idle floor at `278 W` (`46.4%` of `600 W`), `IsHighIdlePowerFloor` automatically surfaces the `Max`-tier recommendation hint.
 - **60-Second Sustained `Max` Stability**: Mean **`46.416 GH/s @ 550.6 W` (`84.31 MH/W`)** as stacked-slot `GPU 0` reaches thermal steady-state (`82–83 C`, `299 -> 242 W`) while `GPU 1` remains at `66 C / 299 W`.
+
+</details>
+
+<details>
+<summary><strong>RTX 3090 Single-GPU Benchmark Summary (OpenCL, 4x128, 300 W Enforced Cap)</strong></summary>
+
+- **Hardware & Power Limit**: Standalone NVIDIA GeForce RTX 3090 (24 GiB VRAM, enforced **`300.00 W`** cap vs `420.00 W` default), Ubuntu 22.04.5 LTS, Driver `595.99.02`.
+- **Calibration & 21-Point Curve**: 30 s calibration peaked at **`26.037 GH/s`** (median **`25.933 GH/s @ 298.52 W`**); settled `100%` hit **`25.511 GH/s @ 298.65 W` (`85.42 MH/W`)** while idle at `P8` dropped to `36.39 W`. Compared to RTX 3080 (`22.51 GH/s @ 346.61 W` / `64.95 MH/W`), the `300 W`-capped RTX 3090 delivers **`+13.3%` throughput** at **`-48 W` lower draw** (**`+31.5%` higher yield**).
+- **4-Tier Operating Points (`power_curve_settled.csv`)**: `Eco` (`5%`, `power-floor-fallback`) `1.30 GH/s @ 147.79 W` (`8.81 MH/W`), `Balanced` (`10%`) `2.60 GH/s @ 159.45 W` (`16.33 MH/W`), `Efficiency` (`45%`) `11.73 GH/s @ 254.96 W` (`46.01 MH/W`), `Max` (`100%`) `25.51 GH/s @ 298.65 W` (`85.42 MH/W`). Because P-State `P2` pins low-load draw at `147.8 W` (`49.5%` of `300 W`), `IsHighIdlePowerFloor` automatically triggers the `Max`-tier recommendation hint.
+- **60-Second Sustained `Max` Stability**: Mean **`25.095 GH/s`** (median **`25.276 GH/s`**) at **`298.91 W`** (**`83.96 MH/W`**), stabilizing at **`66 -> 70 C`** with **`0/60` thermal throttling** (avoiding the stacked-slot throttling seen on dual-card `GPU 0`).
 
 </details>
 
