@@ -23,6 +23,6 @@
     <Content Include="../../src/PGPMint.App/Strings/*.json" Link="Fixtures/Strings/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
-    <Compile Remove="WindowsComputeQoSTests.cs;DirectComputeGpuTests.cs;CoordinatorAdaptiveGpuTests.cs;OpenClProgramCacheTests.cs;HardwarePowerEfficiencyTests.cs" />
+    <Compile Remove="WindowsComputeQoSTests.cs;DirectComputeGpuTests.cs;CoordinatorAdaptiveGpuTests.cs;OpenClProgramCacheTests.cs;HardwarePowerEfficiencyTests.cs;HybridGpuBackendPolicyTests.cs" />
   </ItemGroup>
 </Project>

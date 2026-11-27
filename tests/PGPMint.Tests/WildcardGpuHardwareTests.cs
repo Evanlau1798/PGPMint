@@ -13,14 +13,18 @@ public sealed class WildcardGpuHardwareTests(ITestOutputHelper output)
     [Theory]
     [InlineData("Vulkan")]
     [InlineData("OpenCL")]
+#if WINDOWS
     [InlineData("DirectCompute")]
+#endif
     public void BackendMatchesCpuOracleOnPrefixMiddleWildcardCrossHalfAndExactLow(string backendKind)
     {
         IGpuBackend backend = backendKind switch
         {
             "Vulkan" => new VulkanBackend(),
             "OpenCL" => new OpenClBackend(),
+#if WINDOWS
             "DirectCompute" => new DirectComputeBackend(),
+#endif
             _ => throw new ArgumentOutOfRangeException(nameof(backendKind))
         };
 
