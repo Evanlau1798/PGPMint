@@ -13,6 +13,11 @@ public readonly record struct GpuSensorSample(
     double SelfGpuUtil,
     double OtherProcessGpuUtil)
 {
+    public bool HasTemperature { get; init; }
+    public double TemperatureCelsius { get; init; }
+    public bool IsThermalThrottled { get; init; }
+    public bool IsPowerCapped { get; init; }
+
     public static GpuSensorSample Empty => default;
 }
 
@@ -123,7 +128,26 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
                 return GpuSensorSample.Empty;
             }
 
-            bool hasPower = _nvml.TrySample(device, out double watts, out double powerLimitWatts);
+            bool hasAnyNvml = _nvml.TrySampleTelemetry(
+                device,
+                out bool hasPower,
+                out double watts,
+                out double powerLimitWatts,
+                out bool hasTemp,
+                out double tempC,
+                out bool isThermalThrottled,
+                out bool isPowerCapped);
+            if (!hasAnyNvml)
+            {
+                hasPower = false;
+                watts = 0.0;
+                powerLimitWatts = 0.0;
+                hasTemp = false;
+                tempC = 0.0;
+                isThermalThrottled = false;
+                isPowerCapped = false;
+            }
+
             bool hasUtil = false;
             double totalUtil = 0.0;
             double selfUtil = 0.0;
@@ -147,7 +171,13 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
                 HasGpuUtil: hasUtil,
                 TotalGpuUtil: totalUtil,
                 SelfGpuUtil: selfUtil,
-                OtherProcessGpuUtil: otherUtil);
+                OtherProcessGpuUtil: otherUtil)
+            {
+                HasTemperature = hasTemp,
+                TemperatureCelsius = tempC,
+                IsThermalThrottled = isThermalThrottled,
+                IsPowerCapped = isPowerCapped
+            };
         }
     }
 
@@ -208,6 +238,9 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
     {
         private const uint NvidiaVendorId = 0x10DEu;
         private const int KmtQaiTypeAdapterAddress = 6;
+        private const uint NvmlTemperatureGpu = 0u;
+        private const ulong NvmlThrottleThermalMask = 0x20UL | 0x40UL; // SwThermal | HwThermal
+        private const ulong NvmlThrottleSwPowerCap = 0x4UL;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct NvmlPciInfo
@@ -242,6 +275,8 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
         private bool _triedLoad;
         private delegate* unmanaged[Cdecl]<int> _nvmlShutdown;
         private delegate* unmanaged[Cdecl]<nint, uint*, int> _getPowerUsage;
+        private delegate* unmanaged[Cdecl]<nint, uint, uint*, int> _getTemperature;
+        private delegate* unmanaged[Cdecl]<nint, ulong*, int> _getClockEventReasons;
         private readonly List<NvmlAdapterEntry> _adapters = new();
         private readonly Dictionary<string, nint> _deviceHandleCache = new(StringComparer.Ordinal);
 
@@ -268,17 +303,31 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
             return _getPowerUsage(handle, &mw) == 0 && mw > 0;
         }
 
-        public bool TrySample(GpuDeviceInfo device, out double watts, out double powerLimitWatts)
+        public bool TrySampleTelemetry(
+            GpuDeviceInfo device,
+            out bool hasPower,
+            out double watts,
+            out double powerLimitWatts,
+            out bool hasTemp,
+            out double tempC,
+            out bool isThermalThrottled,
+            out bool isPowerCapped)
         {
+            hasPower = false;
             watts = 0.0;
             powerLimitWatts = 0.0;
+            hasTemp = false;
+            tempC = 0.0;
+            isThermalThrottled = false;
+            isPowerCapped = false;
+
             if (device.VendorId != NvidiaVendorId)
             {
                 return false;
             }
 
             EnsureLoaded();
-            if (!_initialized || _getPowerUsage == null)
+            if (!_initialized)
             {
                 return false;
             }
@@ -289,13 +338,41 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
                 return false;
             }
 
-            uint mw = 0;
-            if (_getPowerUsage(handle, &mw) != 0 || mw == 0)
+            if (_getPowerUsage != null)
+            {
+                uint mw = 0;
+                if (_getPowerUsage(handle, &mw) == 0 && mw > 0)
+                {
+                    hasPower = true;
+                    watts = mw / 1000.0;
+                }
+            }
+
+            if (_getTemperature != null)
+            {
+                uint rawTemp = 0;
+                if (_getTemperature(handle, NvmlTemperatureGpu, &rawTemp) == 0 && rawTemp is > 0 and <= 150)
+                {
+                    hasTemp = true;
+                    tempC = rawTemp;
+                }
+            }
+
+            if (_getClockEventReasons != null)
+            {
+                ulong reasons = 0;
+                if (_getClockEventReasons(handle, &reasons) == 0)
+                {
+                    isThermalThrottled = (reasons & NvmlThrottleThermalMask) != 0;
+                    isPowerCapped = (reasons & NvmlThrottleSwPowerCap) != 0;
+                }
+            }
+
+            if (!hasPower && !hasTemp)
             {
                 return false;
             }
 
-            watts = mw / 1000.0;
             foreach (NvmlAdapterEntry entry in _adapters)
             {
                 if (entry.Handle == handle)
@@ -345,6 +422,18 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
                 var getCount = (delegate* unmanaged[Cdecl]<uint*, int>)countPtr;
                 var getHandle = (delegate* unmanaged[Cdecl]<uint, nint*, int>)handlePtr;
                 _getPowerUsage = (delegate* unmanaged[Cdecl]<nint, uint*, int>)powerPtr;
+                _getTemperature = NativeLibrary.TryGetExport(lib, "nvmlDeviceGetTemperature", out nint tempPtr)
+                    ? (delegate* unmanaged[Cdecl]<nint, uint, uint*, int>)tempPtr
+                    : null;
+                if (NativeLibrary.TryGetExport(lib, "nvmlDeviceGetCurrentClocksEventReasons", out nint reasonsPtr) ||
+                    NativeLibrary.TryGetExport(lib, "nvmlDeviceGetCurrentClocksThrottleReasons", out reasonsPtr))
+                {
+                    _getClockEventReasons = (delegate* unmanaged[Cdecl]<nint, ulong*, int>)reasonsPtr;
+                }
+                else
+                {
+                    _getClockEventReasons = null;
+                }
                 var getPci = (delegate* unmanaged[Cdecl]<nint, NvmlPciInfo*, int>)pciPtr;
 
                 delegate* unmanaged[Cdecl]<nint, uint*, int> getEnforcedLimit =
@@ -559,6 +648,8 @@ public sealed class WindowsGpuTelemetrySensor : IGpuTelemetrySensor
 
             _nvmlShutdown = null;
             _getPowerUsage = null;
+            _getTemperature = null;
+            _getClockEventReasons = null;
         }
 
         public void Dispose()

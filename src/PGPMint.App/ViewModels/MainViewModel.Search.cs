@@ -210,4 +210,17 @@ public sealed partial class MainViewModel
             _stateStore.Update(s => s.StartWithWindows = value);
         }
     }
+
+    public void SetMaxGpuTempLimit(int limitValue)
+    {
+        int? normalized = ThermalGuardController.NormalizeLimit(limitValue);
+        int targetValue = normalized ?? 0;
+        if (SelectedMaxGpuTempLimitValue == targetValue && _coordinator.MaxGpuTemperatureCelsius == normalized)
+        {
+            return;
+        }
+
+        SelectedMaxGpuTempLimitValue = targetValue;
+        _coordinator.SetMaxGpuTemperatureCelsius(normalized);
+    }
 }

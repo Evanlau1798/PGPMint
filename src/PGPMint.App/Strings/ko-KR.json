@@ -85,6 +85,10 @@
     "EtaDaysFormat": "~{0}일",
     "EtaYearsFormat": "~{0}년",
     "EtaKiloYearsFormat": "~{0}천년",
-    "EtaOverMillionYears": ">100만년"
+    "EtaOverMillionYears": ">100만년",
+    "SettingMaxGpuTemp": "온도 제한",
+    "ThermalLimitOff": "끄기",
+    "ThermalGuardActiveSuffix": "온도 제한 작동 중",
+    "ThermalThrottleWarningSuffix": "GPU 열 스로틀링 중"
   }
 }

@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="PGPMint.Tests" />
+    <InternalsVisibleTo Include="pgpmint" />
     <Compile Remove="Native/**/*.cs;**/obj/**/*.cs;**/bin/**/*.cs" />
   </ItemGroup>
 

@@ -34,6 +34,7 @@ public sealed partial class MultiGpuCoordinator
         RateMode lastMode = RateMode.Paused;
 
         var yieldController = new OverloadYieldController();
+        var thermalGuard = new ThermalGuardController();
         long lastSensorPollTs = Stopwatch.GetTimestamp();
         double sensorPollIntervalSec = Math.Max(0.05, _options.SensorPollInterval.TotalSeconds);
         bool sensorPrimed = false;
@@ -69,13 +70,17 @@ public sealed partial class MultiGpuCoordinator
                 if (rateEpochChanged)
                 {
                     yieldController.Reset();
+                    thermalGuard.Reset();
                     Volatile.Write(ref rt.IsOverloadYielding, 0);
+                    Volatile.Write(ref rt.IsThermalGuardActive, 0);
                     if (!userPaused)
                     {
                         // Re-anchor sensor baseline on tier switch without consuming the post-switch
                         // grace window using pre-switch elapsed time or residual watts.
                         GpuSensorSample prime = _telemetrySensor.Sample(device.Info);
                         UpdateRuntimeSensor(rt, prime);
+                        thermalGuard.Update(MaxGpuTemperatureCelsius, prime, sensorPollIntervalSec);
+                        Volatile.Write(ref rt.IsThermalGuardActive, thermalGuard.IsThrottling ? 1 : 0);
                         lastSampleContended = prime.HasGpuUtil && prime.OtherProcessGpuUtil >= ContendedOtherGpuUtilThreshold;
                         Volatile.Write(ref rt.IsGpuContended, (lastSampleContended || lastPublishedHpsContended) ? 1 : 0);
                         sensorPrimed = true;
@@ -93,6 +98,9 @@ public sealed partial class MultiGpuCoordinator
                     lastSampleContended = contended;
                     Volatile.Write(ref rt.IsGpuContended, (lastSampleContended || lastPublishedHpsContended) ? 1 : 0);
 
+                    thermalGuard.Update(MaxGpuTemperatureCelsius, sensor, sensorDtSec);
+                    Volatile.Write(ref rt.IsThermalGuardActive, thermalGuard.IsThrottling ? 1 : 0);
+
                     if (contended)
                     {
                         windowHadGpuContention = true;
@@ -100,7 +108,7 @@ public sealed partial class MultiGpuCoordinator
                         fullSpeedWattSamples.Clear();
                         dynamicMedianStart = Stopwatch.GetTimestamp();
                     }
-                    else if (activeTier == PowerTier.Max && sensor.HasPowerWatts && sensor.PowerWatts > 0.0)
+                    else if (activeTier == PowerTier.Max && !thermalGuard.IsThrottling && sensor.HasPowerWatts && sensor.PowerWatts > 0.0)
                     {
                         fullSpeedWattSamples.Add(sensor.PowerWatts);
                     }
@@ -124,7 +132,7 @@ public sealed partial class MultiGpuCoordinator
 
                 RateDirective directive = userPaused
                     ? new RateDirective(RateMode.Paused, 0L)
-                    : RateControl.FromTier(activeTier, deviceBaseline, calRecord?.EfficiencyProfile, yieldController.YieldScale);
+                    : RateControl.FromTier(activeTier, deviceBaseline, calRecord?.EfficiencyProfile, yieldController.YieldScale, thermalGuard.ThermalScale);
 
                 double nowSec = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
 
@@ -210,10 +218,12 @@ public sealed partial class MultiGpuCoordinator
                     windowHadGpuContention = false;
                     lastPublishedHpsContended = false;
                     sensorPrimed = false;
+                    thermalGuard.Reset();
                     lastSensorPollTs = Stopwatch.GetTimestamp();
                     Volatile.Write(ref rt.ActualHps, 0.0);
                     Volatile.Write(ref rt.IsOverloadYielding, 0);
                     Volatile.Write(ref rt.IsGpuContended, 0);
+                    Volatile.Write(ref rt.IsThermalGuardActive, 0);
                     Thread.Sleep(25);
                     continue;
                 }
@@ -305,6 +315,14 @@ public sealed partial class MultiGpuCoordinator
             Volatile.Write(ref rt.GpuUtilPercent, Math.Clamp(sensor.TotalGpuUtil, 0.0, 100.0));
             Volatile.Write(ref rt.HasGpuUtilSensor, 1);
         }
+
+        if (sensor.HasTemperature && sensor.TemperatureCelsius > 0.0)
+        {
+            Volatile.Write(ref rt.TemperatureCelsius, sensor.TemperatureCelsius);
+            Volatile.Write(ref rt.HasTemperatureSensor, 1);
+        }
+
+        Volatile.Write(ref rt.IsThermalThrottled, sensor.IsThermalThrottled ? 1 : 0);
     }
 
     private static double ComputeMedian(List<double> values)

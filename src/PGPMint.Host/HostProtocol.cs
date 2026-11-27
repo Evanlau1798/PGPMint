@@ -23,7 +23,10 @@ public sealed record HostSettingsDto(
     string Language,
     bool AutoPauseOnHit,
     bool MinimizeToTrayOnClose,
-    string PowerTier);
+    string PowerTier)
+{
+    public int? MaxGpuTemperatureCelsius { get; init; }
+}
 
 public sealed record HostDeviceDto(
     string DeviceKey,
@@ -36,7 +39,15 @@ public sealed record HostDeviceDto(
     long TargetHps,
     double BaselineHps,
     bool IsFullCalibrated,
-    string? Error);
+    string? Error)
+{
+    public double PowerWatts { get; init; }
+    public bool HasPowerSensor { get; init; }
+    public double TemperatureCelsius { get; init; }
+    public bool HasTemperatureSensor { get; init; }
+    public bool IsThermalThrottled { get; init; }
+    public bool IsThermalGuardActive { get; init; }
+}
 
 public sealed record HostTelemetryDto(
     string State,
@@ -64,7 +75,14 @@ public sealed record HostTelemetryDto(
     bool IsGpuContended,
     long VerifiedHits,
     long SavedKeys,
-    IReadOnlyList<HostDeviceDto> Devices);
+    IReadOnlyList<HostDeviceDto> Devices)
+{
+    public bool HasTemperatureSensor { get; init; }
+    public double MaxTemperatureCelsius { get; init; }
+    public bool IsThermalThrottled { get; init; }
+    public bool IsThermalGuardActive { get; init; }
+    public int? MaxGpuTemperatureLimitCelsius { get; init; }
+}
 
 public sealed record HostMatchDto(
     string Id,
@@ -109,7 +127,8 @@ public sealed record ApplySettingsParams(
     string? Language = null,
     bool? AutoPauseOnHit = null,
     bool? MinimizeToTrayOnClose = null,
-    bool? HasCompletedSetup = null);
+    bool? HasCompletedSetup = null,
+    int? MaxGpuTemperatureCelsius = null);
 
 public sealed record SetPowerTierParams(string? Tier);
 

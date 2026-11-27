@@ -331,6 +331,76 @@ public sealed class UiTests
             DesktopDisplayMapper.ComputeEmptyResultsHint(MakeTelemetry(CoordinatorState.Running, PowerTier.Balanced, true), hasMatches: true, minimizeToTrayOnClose: true, strings));
     }
 
+    [Fact]
+    public void DisplayMapperIncludesTemperatureThermalStatusAndMultiGpuTooltip()
+    {
+        var strings = new LocalizationService();
+        strings.Apply("en-US");
+
+        string dir = Path.Combine(Path.GetTempPath(), "pgpmint-map-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var pattern = KeyIdPattern.Parse("BEEF");
+            var dev0 = new GpuDeviceInfo("gpu0", 0, "RTX 3090 #0", 0x10DE, 0x2204, 0, 0xA1, 24UL << 30, "595.99", true, "OpenCL");
+            var dev1 = new GpuDeviceInfo("gpu1", 0, "RTX 3090 #1", 0x10DE, 0x2204, 0, 0xA1, 24UL << 30, "595.99", true, "OpenCL");
+            using var protector = PGPMint.Core.Storage.PasswordSeedProtector.Open(dir, "test-pw");
+            using var coordinator = new MultiGpuCoordinator(
+                new EmptyBackend(),
+                new PGPMint.Core.Storage.AppStateStore(dir),
+                new PGPMint.Core.Storage.VaultStore(dir, protector));
+
+            var t = new CoordinatorTelemetry(
+                State: CoordinatorState.Running,
+                CalibrationRemainingSeconds: 0.0,
+                TotalActualHps: 46.4e9,
+                TotalTargetHps: 50_000_000_000,
+                IsFullSpeed: true,
+                TotalBaselineHps: 50e9,
+                AllEnabledFullyCalibrated: true,
+                SessionChecked: 1000,
+                TotalChecked: 1000,
+                TotalMatchesCount: 0,
+                CumulativeProbability: 0.01,
+                EstimatedMeanWait: TimeSpan.FromSeconds(5),
+                ErrorMessage: null,
+                Devices:
+                [
+                    new GpuTelemetrySnapshot(dev0.DeviceKey, dev0.Name, "OpenCL", true, true, 21.2e9, 25_000_000_000, 25e9, true, null)
+                    {
+                        PowerWatts = 242, HasPowerSensor = true, TemperatureCelsius = 83, HasTemperatureSensor = true,
+                        IsThermalThrottled = true, IsThermalGuardActive = true
+                    },
+                    new GpuTelemetrySnapshot(dev1.DeviceKey, dev1.Name, "OpenCL", true, true, 25.2e9, 25_000_000_000, 25e9, true, null)
+                    {
+                        PowerWatts = 299, HasPowerSensor = true, TemperatureCelsius = 66, HasTemperatureSensor = true
+                    }
+                ])
+            {
+                ActiveTier = PowerTier.Max,
+                TotalPowerWatts = 541,
+                HasPowerSensor = true,
+                HasTemperatureSensor = true,
+                MaxTemperatureCelsius = 83,
+                IsThermalThrottled = true,
+                IsThermalGuardActive = true,
+                MaxGpuTemperatureLimitCelsius = 80
+            };
+
+            TelemetryDisplay display = DesktopDisplayMapper.BuildDisplay(coordinator, t, pattern, [], strings, busy: false);
+            Assert.Contains("83\u00B0C", display.BadgeText);
+            Assert.NotNull(display.BadgeTooltip);
+            Assert.Contains(strings["ThermalGuardActiveSuffix"], display.BadgeTooltip);
+            Assert.Contains(strings["ThermalThrottleWarningSuffix"], display.BadgeTooltip);
+            Assert.Contains("RTX 3090 #0", display.BadgeTooltip);
+            Assert.Contains("RTX 3090 #1", display.BadgeTooltip);
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
     private sealed class FailedSystemStore : PGPMint.Core.Storage.IVaultSecretStore
     {
         public string Kind => "test-failure";

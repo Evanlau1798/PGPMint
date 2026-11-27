@@ -40,6 +40,10 @@ public sealed record GpuTelemetrySnapshot(
     public bool IsOverloadYielding { get; init; }
     public bool IsGpuContended { get; init; }
     public bool IsHighIdlePowerFloor { get; init; }
+    public bool HasTemperatureSensor { get; init; }
+    public double TemperatureCelsius { get; init; }
+    public bool IsThermalThrottled { get; init; }
+    public bool IsThermalGuardActive { get; init; }
 }
 
 public sealed record CoordinatorTelemetry(
@@ -69,6 +73,11 @@ public sealed record CoordinatorTelemetry(
     public bool IsOverloadYielding { get; init; }
     public bool IsGpuContended { get; init; }
     public bool HasHighIdlePowerFloor { get; init; }
+    public bool HasTemperatureSensor { get; init; }
+    public double MaxTemperatureCelsius { get; init; }
+    public bool IsThermalThrottled { get; init; }
+    public bool IsThermalGuardActive { get; init; }
+    public int? MaxGpuTemperatureLimitCelsius { get; init; }
 }
 
 public sealed class CoordinatorOptions

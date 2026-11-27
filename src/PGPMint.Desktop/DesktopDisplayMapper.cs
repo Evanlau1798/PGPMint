@@ -152,26 +152,52 @@ internal static class DesktopDisplayMapper
         if (t.State is CoordinatorState.Running or CoordinatorState.Calibrating)
         {
             if (t.State == CoordinatorState.Running && t.IsOverloadYielding && t.TotalActualHps <= 0.0)
-                return (strings["YieldingBadge"], strings["YieldingSuffix"]);
+            {
+                string baseTip;
+                if (t.HasPowerSensor && t.TotalPowerWatts > 0.0)
+                    baseTip = Format(strings["PowerTooltipFormat"], FormattingHelpers.FormatWatts(t.TotalPowerWatts), strings["YieldingSuffix"]);
+                else if (t.HasGpuUtilSensor)
+                {
+                    int utilPct = (int)Math.Clamp(Math.Round(t.AggregateGpuUtilPercent, MidpointRounding.AwayFromZero), 0.0, 100.0);
+                    baseTip = $"{Format(strings["GpuLoadTooltipFormat"], utilPct.ToString())} ({strings["YieldingSuffix"]})";
+                }
+                else
+                    baseTip = strings["YieldingSuffix"];
+
+                return (strings["YieldingBadge"], FormattingHelpers.BuildEfficiencyBadgeTooltip(
+                    baseTip, t, strings["ThermalGuardActiveSuffix"], strings["ThermalThrottleWarningSuffix"], strings["YieldingSuffix"]));
+            }
 
             if (t.HasPowerSensor && t.TotalPowerWatts > 0.0)
             {
                 double hpw = t.TotalActualHps > 0.0 ? t.TotalActualHps / t.TotalPowerWatts : 0.0;
                 string eff = FormattingHelpers.FormatEfficiencyPerWatt(hpw);
+                string badge = t.HasTemperatureSensor && t.MaxTemperatureCelsius > 0.0
+                    ? $"{eff} \u00B7 {FormattingHelpers.FormatTemperatureCelsius(t.MaxTemperatureCelsius)}"
+                    : eff;
                 string watts = FormattingHelpers.FormatWatts(t.TotalPowerWatts);
-                string tip = Format(strings["PowerTooltipFormat"], watts, eff);
-                return (eff, t.IsOverloadYielding ? $"{tip} ({strings["YieldingSuffix"]})" : tip);
+                string baseTip = Format(strings["PowerTooltipFormat"], watts, eff);
+                return (badge, FormattingHelpers.BuildEfficiencyBadgeTooltip(
+                    baseTip, t, strings["ThermalGuardActiveSuffix"], strings["ThermalThrottleWarningSuffix"], strings["YieldingSuffix"]));
             }
 
             if (t.HasGpuUtilSensor)
             {
                 int util = (int)Math.Clamp(Math.Round(t.AggregateGpuUtilPercent, MidpointRounding.AwayFromZero), 0.0, 100.0);
-                string tip = Format(strings["GpuLoadTooltipFormat"], util.ToString());
-                return ($"{util}%", t.IsOverloadYielding ? $"{tip} ({strings["YieldingSuffix"]})" : tip);
+                string badge = t.HasTemperatureSensor && t.MaxTemperatureCelsius > 0.0
+                    ? $"{util}% \u00B7 {FormattingHelpers.FormatTemperatureCelsius(t.MaxTemperatureCelsius)}"
+                    : $"{util}%";
+                string baseTip = Format(strings["GpuLoadTooltipFormat"], util.ToString());
+                return (badge, FormattingHelpers.BuildEfficiencyBadgeTooltip(
+                    baseTip, t, strings["ThermalGuardActiveSuffix"], strings["ThermalThrottleWarningSuffix"], strings["YieldingSuffix"]));
             }
 
             // Never fabricate 0 W when power sensor is absent.
-            return (strings["Tier" + displayTier], null);
+            string tierBadge = t.HasTemperatureSensor && t.MaxTemperatureCelsius > 0.0
+                ? $"{strings["Tier" + displayTier]} \u00B7 {FormattingHelpers.FormatTemperatureCelsius(t.MaxTemperatureCelsius)}"
+                : strings["Tier" + displayTier];
+            return (tierBadge, FormattingHelpers.BuildEfficiencyBadgeTooltip(
+                null, t, strings["ThermalGuardActiveSuffix"], strings["ThermalThrottleWarningSuffix"], strings["YieldingSuffix"]));
         }
 
         return t.State switch

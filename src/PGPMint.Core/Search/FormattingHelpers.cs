@@ -154,6 +154,115 @@ public static class FormattingHelpers
             : string.Format(CultureInfo.InvariantCulture, "{0:F1} W", watts);
     }
 
+    public static string FormatTemperatureCelsius(double tempCelsius)
+    {
+        if (tempCelsius <= 0.0 || double.IsNaN(tempCelsius) || double.IsInfinity(tempCelsius))
+        {
+            return "0\u00B0C";
+        }
+
+        double rounded = Math.Round(tempCelsius, MidpointRounding.AwayFromZero);
+        return string.Format(CultureInfo.InvariantCulture, "{0:F0}\u00B0C", rounded);
+    }
+
+    public static string? BuildEfficiencyBadgeTooltip(
+        string? baseTooltip,
+        CoordinatorTelemetry telemetry,
+        string thermalGuardSuffix,
+        string thermalThrottleSuffix,
+        string yieldingSuffix)
+    {
+        var sb = new System.Text.StringBuilder();
+        if (!string.IsNullOrEmpty(baseTooltip))
+        {
+            sb.Append(baseTooltip);
+            if (telemetry.HasTemperatureSensor && telemetry.MaxTemperatureCelsius > 0.0)
+            {
+                sb.Append(" \u00B7 ");
+                sb.Append(FormatTemperatureCelsius(telemetry.MaxTemperatureCelsius));
+            }
+        }
+        else if (telemetry.HasTemperatureSensor && telemetry.MaxTemperatureCelsius > 0.0)
+        {
+            sb.Append(FormatTemperatureCelsius(telemetry.MaxTemperatureCelsius));
+        }
+
+        if (telemetry.IsOverloadYielding && !string.IsNullOrEmpty(baseTooltip) &&
+            !baseTooltip.Contains(yieldingSuffix, StringComparison.Ordinal))
+        {
+            sb.Append(" (");
+            sb.Append(yieldingSuffix);
+            sb.Append(')');
+        }
+
+        if (telemetry.IsThermalGuardActive && !string.IsNullOrWhiteSpace(thermalGuardSuffix))
+        {
+            sb.Append(sb.Length > 0 ? " \u00B7 " : string.Empty);
+            sb.Append(thermalGuardSuffix);
+        }
+
+        if (telemetry.IsThermalThrottled && !string.IsNullOrWhiteSpace(thermalThrottleSuffix))
+        {
+            sb.Append(sb.Length > 0 ? " \u00B7 " : string.Empty);
+            sb.Append(thermalThrottleSuffix);
+        }
+
+        if (telemetry.Devices.Count > 1)
+        {
+            foreach (GpuTelemetrySnapshot dev in telemetry.Devices)
+            {
+                if (!dev.IsEnabled)
+                {
+                    continue;
+                }
+
+                string devLine = FormatDeviceStatusSummary(dev, thermalGuardSuffix, thermalThrottleSuffix);
+                if (!string.IsNullOrEmpty(devLine))
+                {
+                    if (sb.Length > 0) sb.Append('\n');
+                    sb.Append(dev.Name);
+                    sb.Append(": ");
+                    sb.Append(devLine);
+                }
+            }
+        }
+
+        return sb.Length > 0 ? sb.ToString() : null;
+    }
+
+    public static string FormatDeviceStatusSummary(
+        GpuTelemetrySnapshot dev,
+        string? thermalGuardSuffix = null,
+        string? thermalThrottleSuffix = null)
+    {
+        var parts = new List<string>(4);
+        if (dev.ActualHps > 0.0)
+        {
+            parts.Add(FormatHashRateCompact(dev.ActualHps));
+        }
+
+        if (dev.HasPowerSensor && dev.PowerWatts > 0.0)
+        {
+            parts.Add(FormatWatts(dev.PowerWatts));
+        }
+
+        if (dev.HasTemperatureSensor && dev.TemperatureCelsius > 0.0)
+        {
+            parts.Add(FormatTemperatureCelsius(dev.TemperatureCelsius));
+        }
+
+        if (dev.IsThermalGuardActive && !string.IsNullOrWhiteSpace(thermalGuardSuffix))
+        {
+            parts.Add(thermalGuardSuffix);
+        }
+        else if (dev.IsThermalThrottled && !string.IsNullOrWhiteSpace(thermalThrottleSuffix))
+        {
+            parts.Add(thermalThrottleSuffix);
+        }
+
+        return parts.Count > 0 ? string.Join(" \u00B7 ", parts) : (dev.Error ?? string.Empty);
+    }
+
     public static string FormatCheckedCount(ulong count)
     {
         if (count < 10_000UL)

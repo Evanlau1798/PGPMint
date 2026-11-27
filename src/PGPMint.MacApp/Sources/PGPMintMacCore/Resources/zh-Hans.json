@@ -85,6 +85,10 @@
     "EtaDaysFormat": "~{0} 天",
     "EtaYearsFormat": "~{0} 年",
     "EtaKiloYearsFormat": "~{0} 千年",
-    "EtaOverMillionYears": ">100 万年"
+    "EtaOverMillionYears": ">100 万年",
+    "SettingMaxGpuTemp": "软限温上限",
+    "ThermalLimitOff": "关闭",
+    "ThermalGuardActiveSuffix": "已启动软限温降速",
+    "ThermalThrottleWarningSuffix": "GPU 过热降频中"
   }
 }

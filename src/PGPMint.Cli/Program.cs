@@ -50,6 +50,7 @@ public static class Program
                 return 0;
             }
             if (options.Command == "benchmark") return await BenchmarkCommand.RunAsync(backend, devices, options);
+            if (options.Command == "curve") return await CurveCommand.RunAsync(backend, devices, options);
             return await SearchCommand.RunAsync(backend, devices, options);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or InvalidDataException or CryptographicException or NotSupportedException or JsonException
@@ -95,8 +96,13 @@ public static class Program
         pgpmint benchmark [--backend NAME] [--device KEY] [--workgroup 64|128|256]
                           [--seconds 60] [--rounds 3] [--pattern 1145141919810114]
                           [--mode find-one|enumerate-all] [--timestamps COUNT]
+        pgpmint curve [--backend NAME] [--device KEY] [--workgroup 64|128|256]
+                      [--pattern HEX] [--settle-seconds 3] [--measure-seconds 5]
+                      [--out-csv PATH] [--out-json PATH] [--data-dir PATH] [--password-stdin]
         pgpmint search --pattern HEX [--backend NAME] [--device KEY] [--data-dir PATH]
-                       [--seconds N] [--password-stdin]
+                       [--tier eco|balanced|efficiency|max] [--max-temp 65..90]
+                       [--keep-running] [--status-interval N] [--json]
+                       [--on-hit-exec PATH] [--seconds N] [--password-stdin]
         pgpmint export --key KEYID --name NAME [--email EMAIL] --output DIRECTORY
                        [--data-dir PATH] [--password-stdin]
 

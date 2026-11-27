@@ -49,7 +49,10 @@ internal static class HostSnapshotMapper
             Language: string.IsNullOrWhiteSpace(state.Language) ? "auto" : state.Language,
             AutoPauseOnHit: coordinator?.AutoPauseOnHit ?? state.AutoPauseOnHit,
             MinimizeToTrayOnClose: state.MinimizeToTrayOnClose,
-            PowerTier: effectiveTier.ToString());
+            PowerTier: effectiveTier.ToString())
+        {
+            MaxGpuTemperatureCelsius = coordinator?.MaxGpuTemperatureCelsius ?? state.MaxGpuTemperatureCelsius
+        };
 
         return new HostStatusSnapshot(
             ProtocolVersion: ProtocolVersionNumber,
@@ -83,7 +86,15 @@ internal static class HostSnapshotMapper
             TargetHps: d.TargetHps,
             BaselineHps: d.BaselineHps,
             IsFullCalibrated: d.IsFullCalibrated,
-            Error: d.Error)).ToArray();
+            Error: d.Error)
+        {
+            PowerWatts = d.PowerWatts,
+            HasPowerSensor = d.HasPowerSensor,
+            TemperatureCelsius = d.TemperatureCelsius,
+            HasTemperatureSensor = d.HasTemperatureSensor,
+            IsThermalThrottled = d.IsThermalThrottled,
+            IsThermalGuardActive = d.IsThermalGuardActive
+        }).ToArray();
 
         double? etaSeconds = t.EstimatedMeanWait is { } wait
             ? (wait == TimeSpan.MaxValue ? 365.25 * 86400.0 * 1_000_000.0 : wait.TotalSeconds)
@@ -115,7 +126,14 @@ internal static class HostSnapshotMapper
             IsGpuContended: t.IsGpuContended,
             VerifiedHits: t.SessionWork.VerifiedHits,
             SavedKeys: t.SessionWork.SavedKeys,
-            Devices: devices);
+            Devices: devices)
+        {
+            HasTemperatureSensor = t.HasTemperatureSensor,
+            MaxTemperatureCelsius = t.MaxTemperatureCelsius,
+            IsThermalThrottled = t.IsThermalThrottled,
+            IsThermalGuardActive = t.IsThermalGuardActive,
+            MaxGpuTemperatureLimitCelsius = t.MaxGpuTemperatureLimitCelsius
+        };
     }
 
     public static HostMatchDto MapMatch(MatchedKeyRecord record) => new(

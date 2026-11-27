@@ -1,12 +1,29 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Xaml;
 using PGPMint.App.Services;
 using PGPMint.Core.Search;
 using PGPMint.Core.Storage;
 
 namespace PGPMint.App.ViewModels;
+
+[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
+public sealed partial class MaxGpuTempOption : ObservableObject
+{
+    public int LimitValue { get; }
+
+    [ObservableProperty]
+    private string _displayName;
+
+    public MaxGpuTempOption(int limitValue, string displayName)
+    {
+        LimitValue = limitValue;
+        _displayName = displayName;
+    }
+}
 
 public sealed partial class GpuItemViewModel : ObservableObject
 {
@@ -17,6 +34,12 @@ public sealed partial class GpuItemViewModel : ObservableObject
     [ObservableProperty] private string _backendName;
     [ObservableProperty] private bool _isEnabled;
     [ObservableProperty] private bool _canToggle;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StatusSummaryVisibility))]
+    private string _statusSummary = string.Empty;
+
+    public Visibility StatusSummaryVisibility =>
+        string.IsNullOrEmpty(StatusSummary) ? Visibility.Collapsed : Visibility.Visible;
 
     public GpuItemViewModel(GpuDeviceInfo info, bool isEnabled, bool canToggle)
     {
@@ -86,6 +109,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public ObservableCollection<GpuItemViewModel> Gpus { get; } = new();
     public ObservableCollection<MatchedKeyItemViewModel> Matches { get; } = new();
     public ObservableCollection<LanguageOption> LanguageOptions { get; } = new();
+    public ObservableCollection<MaxGpuTempOption> MaxGpuTempOptions { get; } = new();
 
     // Setup Wizard vs Main Dashboard visibility
     [ObservableProperty]
@@ -146,6 +170,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _showMiniHudInTray = true;
     [ObservableProperty] private bool _startWithWindows;
     [ObservableProperty] private string _selectedLanguageCode = LocalizationService.AutoLanguageCode;
+    [ObservableProperty] private int _selectedMaxGpuTempLimitValue;
     [ObservableProperty] private string _transientNotice = string.Empty;
 
     public MainViewModel(
@@ -177,6 +202,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         Loc.PropertyChanged += (_, _) => RefreshLocalizedDisplays();
 
         RebuildLanguageOptions();
+        RebuildMaxGpuTempOptions();
     }
 
     public async Task InitializeAsync(bool startedMinimized)
@@ -200,6 +226,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         StartWithWindows = StartupRegistryService.IsEnabled();
 
         _coordinator.Initialize();
+        SelectedMaxGpuTempLimitValue = _coordinator.MaxGpuTemperatureCelsius ?? 0;
+        RebuildMaxGpuTempOptions();
         HasHardwareGpu = _coordinator.Devices.Count > 0;
 
         Gpus.Clear();
@@ -357,6 +385,43 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
 
         OnPropertyChanged(nameof(SelectedLanguageCode));
+        RebuildMaxGpuTempOptions();
+    }
+
+    private void RebuildMaxGpuTempOptions()
+    {
+        (int Value, string Label)[] desired =
+        [
+            (0, Loc.ThermalLimitOff),
+            (70, FormattingHelpers.FormatTemperatureCelsius(70)),
+            (75, FormattingHelpers.FormatTemperatureCelsius(75)),
+            (80, FormattingHelpers.FormatTemperatureCelsius(80)),
+            (85, FormattingHelpers.FormatTemperatureCelsius(85)),
+            (90, FormattingHelpers.FormatTemperatureCelsius(90))
+        ];
+
+        for (int i = 0; i < desired.Length; i++)
+        {
+            if (i < MaxGpuTempOptions.Count && MaxGpuTempOptions[i].LimitValue == desired[i].Value)
+            {
+                MaxGpuTempOptions[i].DisplayName = desired[i].Label;
+            }
+            else if (i < MaxGpuTempOptions.Count)
+            {
+                MaxGpuTempOptions[i] = new MaxGpuTempOption(desired[i].Value, desired[i].Label);
+            }
+            else
+            {
+                MaxGpuTempOptions.Add(new MaxGpuTempOption(desired[i].Value, desired[i].Label));
+            }
+        }
+
+        while (MaxGpuTempOptions.Count > desired.Length)
+        {
+            MaxGpuTempOptions.RemoveAt(MaxGpuTempOptions.Count - 1);
+        }
+
+        OnPropertyChanged(nameof(SelectedMaxGpuTempLimitValue));
     }
 
     private void RefreshLocalizedDisplays()

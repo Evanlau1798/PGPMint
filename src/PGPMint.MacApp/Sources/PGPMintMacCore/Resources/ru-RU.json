@@ -85,6 +85,10 @@
     "EtaDaysFormat": "~{0} д",
     "EtaYearsFormat": "~{0} г",
     "EtaKiloYearsFormat": "~{0} тыс. л.",
-    "EtaOverMillionYears": ">1 млн л."
+    "EtaOverMillionYears": ">1 млн л.",
+    "SettingMaxGpuTemp": "Лимит температуры",
+    "ThermalLimitOff": "Выкл.",
+    "ThermalGuardActiveSuffix": "Лимит температуры активен",
+    "ThermalThrottleWarningSuffix": "Термотроттлинг GPU"
   }
 }

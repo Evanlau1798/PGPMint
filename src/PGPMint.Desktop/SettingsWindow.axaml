@@ -54,6 +54,10 @@
           <TextBlock x:Name="PreferencesHeading" FontSize="13" FontWeight="SemiBold" />
           <CheckBox x:Name="AutoPauseCheckBox" IsCheckedChanged="OnPreferencesChanged" />
           <CheckBox x:Name="KeepInTrayCheckBox" IsCheckedChanged="OnPreferencesChanged" />
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,2,0,0">
+            <TextBlock x:Name="MaxGpuTempLabel" Grid.Column="0" VerticalAlignment="Center" />
+            <ComboBox x:Name="MaxGpuTempCombo" Grid.Column="1" MinWidth="128" />
+          </Grid>
           <TextBlock x:Name="NoTrayHintText" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" />
         </StackPanel>
       </Border>

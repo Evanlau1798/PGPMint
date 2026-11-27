@@ -85,6 +85,10 @@
     "EtaDaysFormat": "~{0} T.",
     "EtaYearsFormat": "~{0} J.",
     "EtaKiloYearsFormat": "~{0} Tsd. J.",
-    "EtaOverMillionYears": ">1 Mio. J."
+    "EtaOverMillionYears": ">1 Mio. J.",
+    "SettingMaxGpuTemp": "Temperaturlimit",
+    "ThermalLimitOff": "Aus",
+    "ThermalGuardActiveSuffix": "Temperaturlimit aktiv",
+    "ThermalThrottleWarningSuffix": "GPU-Temperaturdrosselung"
   }
 }

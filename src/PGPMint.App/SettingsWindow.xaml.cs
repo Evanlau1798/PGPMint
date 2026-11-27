@@ -27,6 +27,7 @@ public sealed partial class SettingsWindow : Window
     private readonly WindowMinSizeHelper _minSizeHelper;
     private bool _isClosed;
     private bool _syncingLangCombo;
+    private bool _syncingMaxTempCombo;
     private bool _centeredOnce;
     private int _lastDesiredLogicalHeight;
     private int _currentPrefColumns;
@@ -46,6 +47,8 @@ public sealed partial class SettingsWindow : Window
 
         LanguageComboBox.ItemsSource = ViewModel.LanguageOptions;
         LanguageComboBox.Loaded += (_, _) => SyncLanguageCombo();
+        MaxGpuTempComboBox.ItemsSource = ViewModel.MaxGpuTempOptions;
+        MaxGpuTempComboBox.Loaded += (_, _) => SyncMaxGpuTempCombo();
 
         ViewModel.SyncDraftFromActive();
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
@@ -174,6 +177,7 @@ public sealed partial class SettingsWindow : Window
         if (e.PropertyName is nameof(MainViewModel.HasDraftError)
             or nameof(MainViewModel.CanEditTarget)
             or nameof(MainViewModel.SelectedLanguageCode)
+            or nameof(MainViewModel.SelectedMaxGpuTempLimitValue)
             or "")
         {
             UpdateVisualStates();
@@ -187,6 +191,7 @@ public sealed partial class SettingsWindow : Window
 
         ApplyTextBoxValidationVisual(SettingsInputFrame, SettingsTargetInputBox, ViewModel.HasDraftError);
         SyncLanguageCombo();
+        SyncMaxGpuTempCombo();
 
         Title = $"PGPMint - {ViewModel.Loc.Settings}";
     }
@@ -214,6 +219,32 @@ public sealed partial class SettingsWindow : Window
         if (LanguageComboBox.SelectedValue is string code && !string.IsNullOrWhiteSpace(code))
         {
             ViewModel.SetLanguage(code);
+        }
+    }
+
+    private void SyncMaxGpuTempCombo()
+    {
+        _syncingMaxTempCombo = true;
+        try
+        {
+            MaxGpuTempComboBox.SelectedValue = ViewModel.SelectedMaxGpuTempLimitValue;
+        }
+        finally
+        {
+            _syncingMaxTempCombo = false;
+        }
+    }
+
+    private void OnMaxGpuTempSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingMaxTempCombo)
+        {
+            return;
+        }
+
+        if (MaxGpuTempComboBox.SelectedValue is int limitValue)
+        {
+            ViewModel.SetMaxGpuTempLimit(limitValue);
         }
     }
 

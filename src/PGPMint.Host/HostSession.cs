@@ -138,6 +138,9 @@ public sealed class HostSession(
         if (input.AutoPauseOnHit is bool autoPause)
             coordinator.SetAutoPauseOnHit(autoPause);
 
+        if (input.MaxGpuTemperatureCelsius is int maxTemp)
+            coordinator.SetMaxGpuTemperatureCelsius(maxTemp > 0 ? maxTemp : null);
+
         _stateStore.Update(s =>
         {
             if (parsedTarget is not null) s.TargetInput = parsedTarget.Suffix;

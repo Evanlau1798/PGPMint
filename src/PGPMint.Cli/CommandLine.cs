@@ -15,7 +15,8 @@ internal sealed record CommandLine(string Command, IReadOnlyDictionary<string, s
             "devices" => ["json", "backend"],
             "verify" => ["backend", "device", "workgroup"],
             "benchmark" => ["backend", "device", "workgroup", "seconds", "rounds", "pattern", "mode", "timestamps"],
-            "search" => ["backend", "device", "pattern", "data-dir", "seconds", "password-stdin"],
+            "curve" => ["backend", "device", "workgroup", "pattern", "settle-seconds", "measure-seconds", "out-csv", "out-json", "data-dir", "password-stdin"],
+            "search" => ["backend", "device", "pattern", "data-dir", "seconds", "password-stdin", "tier", "max-temp", "keep-running", "status-interval", "json", "on-hit-exec"],
             "export" => ["key", "name", "email", "output", "data-dir", "password-stdin"],
             "help" or "metal-source" => [],
             _ => throw new ArgumentException("Unknown command. Run pgpmint --help.")
@@ -27,7 +28,7 @@ internal sealed record CommandLine(string Command, IReadOnlyDictionary<string, s
             string name = args[i][2..];
             if (!allowed.Contains(name)) throw new ArgumentException($"Unsupported option --{name}.");
             string value = "true";
-            if (name is not ("json" or "password-stdin"))
+            if (name is not ("json" or "password-stdin" or "keep-running"))
             {
                 if (++i >= args.Length || args[i].StartsWith("--", StringComparison.Ordinal))
                     throw new ArgumentException($"Missing value for --{name}.");
@@ -35,10 +36,20 @@ internal sealed record CommandLine(string Command, IReadOnlyDictionary<string, s
             }
             if (!options.TryAdd(name, value)) throw new ArgumentException($"Duplicate option --{name}.");
         }
-        foreach (string name in new[] { "seconds", "rounds", "timestamps", "workgroup" })
+        foreach (string name in new[] { "seconds", "rounds", "timestamps", "workgroup", "status-interval", "settle-seconds", "measure-seconds" })
             if (options.TryGetValue(name, out string? value) &&
                 (!int.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int number) || number <= 0))
                 throw new ArgumentException($"--{name} requires a positive integer.");
+        if (options.TryGetValue("tier", out string? tier) && ParseTier(tier) is null)
+            throw new ArgumentException("Tier must be eco, balanced, efficiency or max.");
+        if (options.TryGetValue("max-temp", out string? maxTempRaw))
+        {
+            if (!int.TryParse(maxTempRaw, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int temp) ||
+                PGPMint.Core.Search.ThermalGuardController.NormalizeLimit(temp) is null)
+                throw new ArgumentException($"--max-temp must be an integer between {PGPMint.Core.Search.ThermalGuardController.MinTemperatureLimitCelsius} and {PGPMint.Core.Search.ThermalGuardController.MaxTemperatureLimitCelsius}.");
+        }
+        if (options.TryGetValue("on-hit-exec", out string? hookExec))
+            HitHookRunner.ValidateExecutablePath(hookExec);
         if (options.TryGetValue("backend", out string? backend) && backend is not ("auto" or "vulkan" or "opencl" or "metal"))
             throw new ArgumentException("Backend must be auto, vulkan, opencl or metal.");
         if (options.TryGetValue("workgroup", out string? group) && group is not ("64" or "128" or "256"))
@@ -50,4 +61,13 @@ internal sealed record CommandLine(string Command, IReadOnlyDictionary<string, s
             throw new ArgumentException("Export requires --key, --name and --output.");
         return new(command, options);
     }
+
+    internal static PGPMint.Core.Search.PowerTier? ParseTier(string? raw) => raw?.Trim().ToLowerInvariant() switch
+    {
+        "eco" => PGPMint.Core.Search.PowerTier.Eco,
+        "balanced" => PGPMint.Core.Search.PowerTier.Balanced,
+        "efficiency" => PGPMint.Core.Search.PowerTier.Efficiency,
+        "max" => PGPMint.Core.Search.PowerTier.Max,
+        _ => null
+    };
 }

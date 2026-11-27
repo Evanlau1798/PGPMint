@@ -22,6 +22,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
     private string _persistedPatternMask = string.Empty;
     private int _selectedTier = (int)PowerTier.Max;
     private volatile bool _autoPauseOnHit = true;
+    private int _maxGpuTemperatureCelsius;
     private volatile bool _pausedExplicitly;
     private int _autoPauseTriggered;
     private bool _submissionFailed;
@@ -47,6 +48,14 @@ public sealed partial class MultiGpuCoordinator : IDisposable
     public PowerTier SelectedTier => (PowerTier)Volatile.Read(ref _selectedTier);
     public double FullCalibrationDurationSeconds => Math.Max(1.0, _options.FullCalibrationDuration.TotalSeconds);
     public bool AutoPauseOnHit => _autoPauseOnHit;
+    public int? MaxGpuTemperatureCelsius
+    {
+        get
+        {
+            int value = Volatile.Read(ref _maxGpuTemperatureCelsius);
+            return value > 0 ? value : null;
+        }
+    }
     private volatile CoordinatorTelemetry _latestTelemetry;
     public CoordinatorTelemetry LatestTelemetry => _latestTelemetry;
 
@@ -109,6 +118,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
                 : RateControl.TierFromLegacySlider(persisted.SliderPosition);
             Volatile.Write(ref _selectedTier, (int)resolvedTier);
             _autoPauseOnHit = persisted.AutoPauseOnHit;
+            Volatile.Write(ref _maxGpuTemperatureCelsius, ThermalGuardController.NormalizeLimit(persisted.MaxGpuTemperatureCelsius) ?? 0);
 
             _calibrations.Clear();
             foreach (var kv in persisted.Calibrations)
@@ -177,6 +187,14 @@ public sealed partial class MultiGpuCoordinator : IDisposable
     {
         _autoPauseOnHit = enabled;
         _stateStore.Update(s => s.AutoPauseOnHit = enabled);
+    }
+
+    public void SetMaxGpuTemperatureCelsius(int? limitCelsius)
+    {
+        int? normalized = ThermalGuardController.NormalizeLimit(limitCelsius);
+        Volatile.Write(ref _maxGpuTemperatureCelsius, normalized ?? 0);
+        _stateStore.Update(s => s.MaxGpuTemperatureCelsius = normalized);
+        PublishTelemetry();
     }
 
     public void SetTargetPattern(KeyIdPattern pattern)

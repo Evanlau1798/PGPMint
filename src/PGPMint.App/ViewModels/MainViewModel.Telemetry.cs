@@ -113,6 +113,9 @@ public sealed partial class MainViewModel
 
             vm.BackendName = devSnap.BackendName;
             vm.CanToggle = multiGpu && !busyCal;
+            vm.StatusSummary = (t.State is CoordinatorState.Running or CoordinatorState.Calibrating && devSnap.IsEnabled)
+                ? FormattingHelpers.FormatDeviceStatusSummary(devSnap, Loc.ThermalGuardActiveSuffix, Loc.ThermalThrottleWarningSuffix)
+                : (devSnap.Error ?? string.Empty);
         }
 
         UpdateActionPermissions(t);
@@ -195,20 +198,23 @@ public sealed partial class MainViewModel
             if (t.State == CoordinatorState.Running && t.IsOverloadYielding && t.TotalActualHps <= 0.0)
             {
                 EfficiencyBadgeText = Loc.YieldingBadge;
+                string? baseTip = null;
                 if (t.HasPowerSensor && t.TotalPowerWatts > 0.0)
                 {
-                    string wattsText = FormattingHelpers.FormatWatts(t.TotalPowerWatts);
-                    EfficiencyBadgeTooltip = Loc.FormatPowerTooltip(wattsText, Loc.YieldingSuffix);
+                    baseTip = Loc.FormatPowerTooltip(FormattingHelpers.FormatWatts(t.TotalPowerWatts), Loc.YieldingSuffix);
                 }
                 else if (t.HasGpuUtilSensor)
                 {
                     int utilPct = (int)Math.Clamp(Math.Round(t.AggregateGpuUtilPercent, MidpointRounding.AwayFromZero), 0.0, 100.0);
-                    EfficiencyBadgeTooltip = $"{Loc.FormatGpuLoadTooltip(utilPct)} ({Loc.YieldingSuffix})";
+                    baseTip = $"{Loc.FormatGpuLoadTooltip(utilPct)} ({Loc.YieldingSuffix})";
                 }
                 else
                 {
-                    EfficiencyBadgeTooltip = Loc.YieldingSuffix;
+                    baseTip = Loc.YieldingSuffix;
                 }
+
+                EfficiencyBadgeTooltip = FormattingHelpers.BuildEfficiencyBadgeTooltip(
+                    baseTip, t, Loc.ThermalGuardActiveSuffix, Loc.ThermalThrottleWarningSuffix, Loc.YieldingSuffix);
                 return;
             }
 
@@ -216,24 +222,32 @@ public sealed partial class MainViewModel
             {
                 double hpw = t.TotalActualHps > 0.0 ? t.TotalActualHps / t.TotalPowerWatts : 0.0;
                 string effText = FormattingHelpers.FormatEfficiencyPerWatt(hpw);
-                EfficiencyBadgeText = effText;
-                string wattsText = FormattingHelpers.FormatWatts(t.TotalPowerWatts);
-                string tip = Loc.FormatPowerTooltip(wattsText, effText);
-                EfficiencyBadgeTooltip = t.IsOverloadYielding ? $"{tip} ({Loc.YieldingSuffix})" : tip;
+                EfficiencyBadgeText = t.HasTemperatureSensor && t.MaxTemperatureCelsius > 0.0
+                    ? $"{effText} \u00B7 {FormattingHelpers.FormatTemperatureCelsius(t.MaxTemperatureCelsius)}"
+                    : effText;
+                string baseTip = Loc.FormatPowerTooltip(FormattingHelpers.FormatWatts(t.TotalPowerWatts), effText);
+                EfficiencyBadgeTooltip = FormattingHelpers.BuildEfficiencyBadgeTooltip(
+                    baseTip, t, Loc.ThermalGuardActiveSuffix, Loc.ThermalThrottleWarningSuffix, Loc.YieldingSuffix);
                 return;
             }
 
             if (t.HasGpuUtilSensor)
             {
                 int utilPct = (int)Math.Clamp(Math.Round(t.AggregateGpuUtilPercent, MidpointRounding.AwayFromZero), 0.0, 100.0);
-                EfficiencyBadgeText = $"{utilPct}%";
-                string tip = Loc.FormatGpuLoadTooltip(utilPct);
-                EfficiencyBadgeTooltip = t.IsOverloadYielding ? $"{tip} ({Loc.YieldingSuffix})" : tip;
+                EfficiencyBadgeText = t.HasTemperatureSensor && t.MaxTemperatureCelsius > 0.0
+                    ? $"{utilPct}% \u00B7 {FormattingHelpers.FormatTemperatureCelsius(t.MaxTemperatureCelsius)}"
+                    : $"{utilPct}%";
+                string baseTip = Loc.FormatGpuLoadTooltip(utilPct);
+                EfficiencyBadgeTooltip = FormattingHelpers.BuildEfficiencyBadgeTooltip(
+                    baseTip, t, Loc.ThermalGuardActiveSuffix, Loc.ThermalThrottleWarningSuffix, Loc.YieldingSuffix);
                 return;
             }
 
-            EfficiencyBadgeText = Loc.GetTierLabel(displayTier);
-            EfficiencyBadgeTooltip = null;
+            EfficiencyBadgeText = t.HasTemperatureSensor && t.MaxTemperatureCelsius > 0.0
+                ? $"{Loc.GetTierLabel(displayTier)} \u00B7 {FormattingHelpers.FormatTemperatureCelsius(t.MaxTemperatureCelsius)}"
+                : Loc.GetTierLabel(displayTier);
+            EfficiencyBadgeTooltip = FormattingHelpers.BuildEfficiencyBadgeTooltip(
+                null, t, Loc.ThermalGuardActiveSuffix, Loc.ThermalThrottleWarningSuffix, Loc.YieldingSuffix);
             return;
         }
 

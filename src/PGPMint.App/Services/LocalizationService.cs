@@ -334,6 +334,10 @@ public sealed class LocalizationService : ObservableObject
 
     public string TraySpeedupGenericHint => Get("TraySpeedupGenericHint");
     public string HighIdlePowerHint => Get("HighIdlePowerHint");
+    public string SettingMaxGpuTemp => Get("SettingMaxGpuTemp");
+    public string ThermalLimitOff => Get("ThermalLimitOff");
+    public string ThermalGuardActiveSuffix => Get("ThermalGuardActiveSuffix");
+    public string ThermalThrottleWarningSuffix => Get("ThermalThrottleWarningSuffix");
     public string ProbabilityPrefix => Get("ProbabilityPrefix");
     public string Found => Get("Found");
     public string VaultFullError => Get("VaultFullError");

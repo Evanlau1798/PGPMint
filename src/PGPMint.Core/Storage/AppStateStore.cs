@@ -22,6 +22,7 @@ public sealed class AppPersistedState
     public double TrayFullSpeedHps { get; set; }
     public bool StartWithWindows { get; set; }
     public bool WasRunningOnExit { get; set; }
+    public int? MaxGpuTemperatureCelsius { get; set; }
 }
 
 public sealed class AppStateStore

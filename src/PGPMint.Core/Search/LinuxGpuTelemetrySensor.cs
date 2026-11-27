@@ -15,6 +15,9 @@ public sealed unsafe class LinuxGpuTelemetrySensor : IGpuTelemetrySensor
 {
     private const uint NvidiaVendorId = 0x10DEu;
     private const int NvmlUuidBufferBytes = 96;
+    private const uint NvmlTemperatureGpu = 0u;
+    private const ulong NvmlThrottleThermalMask = 0x20UL | 0x40UL; // SwThermal | HwThermal
+    private const ulong NvmlThrottleSwPowerCap = 0x4UL;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NvmlPciInfo
@@ -55,6 +58,8 @@ public sealed unsafe class LinuxGpuTelemetrySensor : IGpuTelemetrySensor
     private delegate* unmanaged[Cdecl]<int> _nvmlShutdown;
     private delegate* unmanaged[Cdecl]<nint, uint*, int> _getPowerUsage;
     private delegate* unmanaged[Cdecl]<nint, NvmlUtilization*, int> _getUtilizationRates;
+    private delegate* unmanaged[Cdecl]<nint, uint, uint*, int> _getTemperature;
+    private delegate* unmanaged[Cdecl]<nint, ulong*, int> _getClockEventReasons;
     private readonly List<NvmlAdapterEntry> _adapters = new();
     private readonly List<NvmlAdapterIdentity> _identities = new();
     private readonly Dictionary<string, int> _deviceIndexCache = new(StringComparer.Ordinal);
@@ -134,7 +139,31 @@ public sealed unsafe class LinuxGpuTelemetrySensor : IGpuTelemetrySensor
                 }
             }
 
-            if (!hasPower && !hasUtil)
+            bool hasTemp = false;
+            double tempC = 0.0;
+            if (_getTemperature != null)
+            {
+                uint rawTemp = 0;
+                if (_getTemperature(entry.Handle, NvmlTemperatureGpu, &rawTemp) == 0 && rawTemp is > 0 and <= 150)
+                {
+                    hasTemp = true;
+                    tempC = rawTemp;
+                }
+            }
+
+            bool isThermalThrottled = false;
+            bool isPowerCapped = false;
+            if (_getClockEventReasons != null)
+            {
+                ulong reasons = 0;
+                if (_getClockEventReasons(entry.Handle, &reasons) == 0)
+                {
+                    isThermalThrottled = (reasons & NvmlThrottleThermalMask) != 0;
+                    isPowerCapped = (reasons & NvmlThrottleSwPowerCap) != 0;
+                }
+            }
+
+            if (!hasPower && !hasUtil && !hasTemp)
             {
                 return GpuSensorSample.Empty;
             }
@@ -146,7 +175,13 @@ public sealed unsafe class LinuxGpuTelemetrySensor : IGpuTelemetrySensor
                 HasGpuUtil: hasUtil,
                 TotalGpuUtil: gpuUtil,
                 SelfGpuUtil: gpuUtil,
-                OtherProcessGpuUtil: 0.0);
+                OtherProcessGpuUtil: 0.0)
+            {
+                HasTemperature = hasTemp,
+                TemperatureCelsius = tempC,
+                IsThermalThrottled = isThermalThrottled,
+                IsPowerCapped = isPowerCapped
+            };
         }
     }
 
@@ -396,6 +431,18 @@ public sealed unsafe class LinuxGpuTelemetrySensor : IGpuTelemetrySensor
             _getUtilizationRates = NativeLibrary.TryGetExport(lib, "nvmlDeviceGetUtilizationRates", out nint utilPtr)
                 ? (delegate* unmanaged[Cdecl]<nint, NvmlUtilization*, int>)utilPtr
                 : null;
+            _getTemperature = NativeLibrary.TryGetExport(lib, "nvmlDeviceGetTemperature", out nint tempPtr)
+                ? (delegate* unmanaged[Cdecl]<nint, uint, uint*, int>)tempPtr
+                : null;
+            if (NativeLibrary.TryGetExport(lib, "nvmlDeviceGetCurrentClocksEventReasons", out nint reasonsPtr) ||
+                NativeLibrary.TryGetExport(lib, "nvmlDeviceGetCurrentClocksThrottleReasons", out reasonsPtr))
+            {
+                _getClockEventReasons = (delegate* unmanaged[Cdecl]<nint, ulong*, int>)reasonsPtr;
+            }
+            else
+            {
+                _getClockEventReasons = null;
+            }
             delegate* unmanaged[Cdecl]<nint, byte*, uint, int> getUuid =
                 NativeLibrary.TryGetExport(lib, "nvmlDeviceGetUUID", out nint uuidPtr)
                     ? (delegate* unmanaged[Cdecl]<nint, byte*, uint, int>)uuidPtr
@@ -529,5 +576,7 @@ public sealed unsafe class LinuxGpuTelemetrySensor : IGpuTelemetrySensor
         _nvmlShutdown = null;
         _getPowerUsage = null;
         _getUtilizationRates = null;
+        _getTemperature = null;
+        _getClockEventReasons = null;
     }
 }

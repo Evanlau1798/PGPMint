@@ -118,6 +118,19 @@
                                           IsOn="{x:Bind ViewModel.StartWithWindows, Mode=TwoWay}"
                                           OnContent="" OffContent="" MinWidth="0" />
                         </Grid>
+
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                            <TextBlock Grid.Column="0"
+                                       Text="{x:Bind ViewModel.Loc.SettingMaxGpuTemp, Mode=OneWay}"
+                                       FontSize="13"
+                                       VerticalAlignment="Center" />
+                            <ComboBox x:Name="MaxGpuTempComboBox"
+                                      Grid.Column="1"
+                                      MinWidth="128"
+                                      DisplayMemberPath="DisplayName"
+                                      SelectedValuePath="LimitValue"
+                                      SelectionChanged="OnMaxGpuTempSelectionChanged" />
+                        </Grid>
                     </StackPanel>
                 </Border>
 
@@ -155,11 +168,16 @@
                                                   Padding="0"
                                                   Tag="{x:Bind DeviceKey}"
                                                   Click="OnGpuToggleClick" />
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{x:Bind Name}"
-                                                   FontSize="13"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center" />
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                                            <TextBlock Text="{x:Bind Name}"
+                                                       FontSize="13"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{x:Bind StatusSummary, Mode=OneWay}"
+                                                       Visibility="{x:Bind StatusSummaryVisibility, Mode=OneWay}"
+                                                       FontSize="11"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
                                         <Border Grid.Column="2"
                                                 CornerRadius="4"
                                                 Padding="6,2"

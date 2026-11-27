@@ -11,6 +11,11 @@ namespace PGPMint.Desktop;
 
 public sealed partial class SettingsWindow : Window
 {
+    private sealed record MaxGpuTempOption(int LimitValue, string DisplayName)
+    {
+        public override string ToString() => DisplayName;
+    }
+
     private readonly DesktopSession _session;
     private readonly LocalizationService _strings;
     private readonly MainWindow _ownerWindow;
@@ -29,6 +34,7 @@ public sealed partial class SettingsWindow : Window
         if (ownerWindow is null || session is null || strings is null) return;
         Icon = AppIcon.Load();
         LanguageCombo.SelectionChanged += OnLanguageSelectionChanged;
+        MaxGpuTempCombo.SelectionChanged += OnMaxGpuTempSelectionChanged;
         TargetInputBox.PropertyChanged += (_, e) =>
         {
             if (e.Property == TextBox.TextProperty && !_syncing && _session.Coordinator is not null)
@@ -54,7 +60,23 @@ public sealed partial class SettingsWindow : Window
             PreferencesHeading.Text = _strings["SectionPreferences"];
             AutoPauseCheckBox.Content = _strings["SettingAutoPauseOnHit"];
             KeepInTrayCheckBox.Content = _strings["SettingMinimizeToTray"];
+            MaxGpuTempLabel.Text = _strings["SettingMaxGpuTemp"];
             NoTrayHintText.Text = _strings["NoTrayHint"];
+
+            AppPersistedState state = _session.StateStore.Load();
+            MaxGpuTempOption[] tempOptions =
+            [
+                new(0, _strings["ThermalLimitOff"]),
+                new(70, FormattingHelpers.FormatTemperatureCelsius(70)),
+                new(75, FormattingHelpers.FormatTemperatureCelsius(75)),
+                new(80, FormattingHelpers.FormatTemperatureCelsius(80)),
+                new(85, FormattingHelpers.FormatTemperatureCelsius(85)),
+                new(90, FormattingHelpers.FormatTemperatureCelsius(90))
+            ];
+            int currentLimit = _session.Coordinator?.MaxGpuTemperatureCelsius ?? state.MaxGpuTemperatureCelsius ?? 0;
+            MaxGpuTempCombo.ItemsSource = tempOptions;
+            MaxGpuTempCombo.SelectedItem = tempOptions.FirstOrDefault(o => o.LimitValue == currentLimit) ?? tempOptions[0];
+            AutomationProperties.SetName(MaxGpuTempCombo, _strings["SettingMaxGpuTemp"]);
 
             GpusHeading.Text = _strings["SectionGpus"];
             RecalibrateButton.Content = _strings["Recalibrate"];
@@ -71,7 +93,6 @@ public sealed partial class SettingsWindow : Window
                 ?? options.FirstOrDefault();
             AutomationProperties.SetName(LanguageCombo, _strings["SettingLanguage"]);
 
-            AppPersistedState state = _session.StateStore.Load();
             TargetInputBox.Text = state.TargetInput;
             AutoPauseCheckBox.IsChecked = state.AutoPauseOnHit;
             KeepInTrayCheckBox.IsChecked = state.MinimizeToTrayOnClose;
@@ -113,9 +134,12 @@ public sealed partial class SettingsWindow : Window
             row.Enabled.IsChecked = dev.IsEnabled;
             row.Enabled.IsEnabled = multiGpu && !busyCal;
             _syncing = false;
-            row.Rate.Text = dev.ActualHps > 0 || dev.BaselineHps > 0
-                ? $"{FormattingHelpers.FormatHashRateCompact(dev.ActualHps)} / {FormattingHelpers.FormatHashRateCompact(dev.BaselineHps)}"
+            string summary = (t.State is CoordinatorState.Running or CoordinatorState.Calibrating && dev.IsEnabled)
+                ? FormattingHelpers.FormatDeviceStatusSummary(dev, _strings["ThermalGuardActiveSuffix"], _strings["ThermalThrottleWarningSuffix"])
                 : (dev.Error ?? string.Empty);
+            row.Rate.Text = string.IsNullOrEmpty(summary) && dev.BaselineHps > 0
+                ? $"0.00 GH/s / {FormattingHelpers.FormatHashRateCompact(dev.BaselineHps)}"
+                : summary;
             row.Rate.IsVisible = !string.IsNullOrEmpty(row.Rate.Text);
         }
     }
@@ -215,6 +239,18 @@ public sealed partial class SettingsWindow : Window
             ClearError();
             _ownerWindow.ApplyLanguageSelection(option.Code);
             ApplyLocalizationAndState();
+        }
+        catch { ShowError(_strings["OperationFailed"]); }
+    }
+
+    private void OnMaxGpuTempSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_syncing || _session.Coordinator is null || MaxGpuTempCombo.SelectedItem is not MaxGpuTempOption option) return;
+        try
+        {
+            ClearError();
+            _session.Coordinator.SetMaxGpuTemperatureCelsius(option.LimitValue > 0 ? option.LimitValue : null);
+            _ownerWindow.Refresh();
         }
         catch { ShowError(_strings["OperationFailed"]); }
     }

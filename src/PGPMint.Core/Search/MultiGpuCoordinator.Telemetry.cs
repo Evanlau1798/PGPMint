@@ -185,6 +185,10 @@ public sealed partial class MultiGpuCoordinator
         Volatile.Write(ref rt.HasGpuUtilSensor, 0);
         Volatile.Write(ref rt.IsOverloadYielding, 0);
         Volatile.Write(ref rt.IsGpuContended, 0);
+        Volatile.Write(ref rt.TemperatureCelsius, 0.0);
+        Volatile.Write(ref rt.HasTemperatureSensor, 0);
+        Volatile.Write(ref rt.IsThermalThrottled, 0);
+        Volatile.Write(ref rt.IsThermalGuardActive, 0);
         rt.BatchSizer = null;
     }
 
@@ -227,6 +231,10 @@ public sealed partial class MultiGpuCoordinator
         bool anyYielding = false;
         bool anyContended = false;
         bool anyHighIdleFloor = false;
+        bool anyTemp = false;
+        double maxTempCelsius = 0.0;
+        bool anyThermalThrottled = false;
+        bool anyThermalGuard = false;
 
         bool isFullSpeed = (_state == CoordinatorState.Calibrating) || (activeTier == PowerTier.Max && !paused);
         ulong sessionChecked;
@@ -252,6 +260,10 @@ public sealed partial class MultiGpuCoordinator
                 bool isYielding = !paused && activeTier != PowerTier.Max && rt is not null && Volatile.Read(ref rt.IsOverloadYielding) != 0;
                 bool isContended = !paused && rt is not null && Volatile.Read(ref rt.IsGpuContended) != 0;
                 bool isHighIdleFloor = cal is not null && EfficiencyCurveSelector.HasHighIdlePowerFloor(cal);
+                double tempCelsius = rt is not null ? Volatile.Read(ref rt.TemperatureCelsius) : 0.0;
+                bool hasTemp = rt is not null && Volatile.Read(ref rt.HasTemperatureSensor) != 0 && tempCelsius > 0.0;
+                bool isThermalThrottled = rt is not null && Volatile.Read(ref rt.IsThermalThrottled) != 0;
+                bool isThermalGuardActive = !paused && rt is not null && Volatile.Read(ref rt.IsThermalGuardActive) != 0;
 
                 RateDirective dir = enabled && !paused
                     ? RateControl.FromTier(activeTier, baseline, cal?.EfficiencyProfile)
@@ -298,6 +310,25 @@ public sealed partial class MultiGpuCoordinator
                     {
                         anyHighIdleFloor = true;
                     }
+
+                    if (hasTemp)
+                    {
+                        anyTemp = true;
+                        if (tempCelsius > maxTempCelsius)
+                        {
+                            maxTempCelsius = tempCelsius;
+                        }
+                    }
+
+                    if (isThermalThrottled)
+                    {
+                        anyThermalThrottled = true;
+                    }
+
+                    if (isThermalGuardActive)
+                    {
+                        anyThermalGuard = true;
+                    }
                 }
 
                 deviceSnaps.Add(new GpuTelemetrySnapshot(
@@ -320,7 +351,11 @@ public sealed partial class MultiGpuCoordinator
                     HasGpuUtilSensor = hasUtil,
                     IsOverloadYielding = isYielding,
                     IsGpuContended = isContended,
-                    IsHighIdlePowerFloor = isHighIdleFloor
+                    IsHighIdlePowerFloor = isHighIdleFloor,
+                    HasTemperatureSensor = hasTemp,
+                    TemperatureCelsius = tempCelsius,
+                    IsThermalThrottled = isThermalThrottled,
+                    IsThermalGuardActive = isThermalGuardActive
                 });
             }
 
@@ -366,7 +401,12 @@ public sealed partial class MultiGpuCoordinator
             HasGpuUtilSensor = anyEnabledHasUtil,
             IsOverloadYielding = anyYielding,
             IsGpuContended = anyContended,
-            HasHighIdlePowerFloor = anyHighIdleFloor
+            HasHighIdlePowerFloor = anyHighIdleFloor,
+            HasTemperatureSensor = anyTemp,
+            MaxTemperatureCelsius = anyTemp ? maxTempCelsius : 0.0,
+            IsThermalThrottled = anyThermalThrottled,
+            IsThermalGuardActive = anyThermalGuard,
+            MaxGpuTemperatureLimitCelsius = MaxGpuTemperatureCelsius
         };
     }
 
@@ -380,6 +420,10 @@ public sealed partial class MultiGpuCoordinator
         public int HasGpuUtilSensor;
         public int IsOverloadYielding;
         public int IsGpuContended;
+        public double TemperatureCelsius;
+        public int HasTemperatureSensor;
+        public int IsThermalThrottled;
+        public int IsThermalGuardActive;
         public volatile AdaptiveBatchSizer? BatchSizer;
         public string? Error;
     }

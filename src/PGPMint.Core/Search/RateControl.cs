@@ -58,16 +58,29 @@ public static class RateControl
         PowerTier tier,
         double calibratedBaselineHps,
         EfficiencyProfile? profile,
-        double yieldScale = 1.0)
+        double yieldScale = 1.0,
+        double thermalScale = 1.0)
     {
-        if (tier == PowerTier.Max)
+        double clampedThermal = double.IsFinite(thermalScale) ? Math.Clamp(thermalScale, 0.0, 1.0) : 1.0;
+        if (clampedThermal <= 0.0)
         {
-            return new RateDirective(RateMode.FullSpeed, FullSpeedSentinel);
+            return new RateDirective(RateMode.Paused, 0L);
         }
 
         if (calibratedBaselineHps <= 0.0 || !double.IsFinite(calibratedBaselineHps))
         {
             return new RateDirective(RateMode.FullSpeed, FullSpeedSentinel);
+        }
+
+        if (tier == PowerTier.Max)
+        {
+            if (clampedThermal >= 0.999)
+            {
+                return new RateDirective(RateMode.FullSpeed, FullSpeedSentinel);
+            }
+
+            long thermalTarget = (long)Math.Round(calibratedBaselineHps * clampedThermal, MidpointRounding.AwayFromZero);
+            return new RateDirective(RateMode.Capped, Math.Max(1L, thermalTarget));
         }
 
         double clampedYield = double.IsFinite(yieldScale) ? Math.Clamp(yieldScale, 0.0, 1.0) : 1.0;
@@ -77,7 +90,7 @@ public static class RateControl
         }
 
         double fraction = GetTierRateFraction(tier, profile);
-        long target = (long)Math.Round(calibratedBaselineHps * fraction * clampedYield, MidpointRounding.AwayFromZero);
+        long target = (long)Math.Round(calibratedBaselineHps * fraction * clampedYield * clampedThermal, MidpointRounding.AwayFromZero);
         return new RateDirective(RateMode.Capped, Math.Max(1L, target));
     }
 
