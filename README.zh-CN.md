@@ -4,15 +4,15 @@
 
 [English](README.md) | [繁體中文](README.zh-TW.md) | 简体中文 | [日本語](README.ja.md)
 
-**使用显卡算力生成自定义后缀的 OpenPGP v4（`Ed25519`）个性化 Key ID，提供 Windows、macOS 原生应用、Linux 桌面界面及跨平台命令行工具。**
+**使用显卡算力生成自定义样式的 OpenPGP v4（`Ed25519`）个性化 Key ID，提供 Windows、macOS、Linux 原生桌面应用与跨平台命令行工具。**
 
 [![CI](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Evanlau1798/PGPMint?label=Release&color=0078D6)](https://github.com/Evanlau1798/PGPMint/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-x64%20%7C%20ARM64-0078D6.svg)](#系统需求)
-[![.NET 10](https://img.shields.io/badge/.NET%2010%20%2B%20SwiftUI%20%2B%20Avalonia-512BD4.svg)](#从源码构建)
+[![Platform](https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-x64%20%7C%20ARM64-0078D6.svg)](#支持平台与-cli)
+[![.NET 10](https://img.shields.io/badge/.NET%2010%20%2B%20SwiftUI%20%2B%20Avalonia-512BD4.svg)](#系统需求与构建)
 
-[下载与快速开始](#下载与快速开始) · [功能特性](#功能特性) · [用于 Git 签名](#导出密钥并用于-git-签名) · [性能基准](#性能基准) · [从源码构建](#从源码构建)
+[核心特性](#核心特性) · [性能与功耗基准](#性能与功耗基准) · [下载与快速上手](#下载与快速上手) · [Git 签名](#搭配-git-签名) · [支持平台与 CLI](#支持平台与-cli) · [系统需求与构建](#系统需求与构建)
 
 <br />
 
@@ -33,181 +33,48 @@
   </tr>
 </table>
 
-*PGPMint 在 Windows、macOS 和 Linux 上使用显卡搜索自定义 OpenPGP v4 Key ID 后缀并支持校准功耗档位。*
+*PGPMint 在 Windows、macOS 和 Linux 上使用显卡搜索自定义 OpenPGP v4 Key ID 并支持校准功耗档位。*
 
 </div>
 
 ---
 
-## 什么是 PGPMint？
+## 核心特性
 
-PGPMint 利用显卡算力高速生成 **OpenPGP v4（`Ed25519Legacy`）** 密钥，使 16 位十六进制 Key ID 匹配任意指定样式（支持后缀、`DEAD************` 前缀及任意位置 `*` 通配符如 `CAFE*123`）。
+PGPMint 利用显卡高速生成 **OpenPGP v4（`Ed25519Legacy`）** 密钥，使 16 位十六进制 Key ID 匹配任意指定样式——全程本地离线运行、零遥测上传。
 
-相比需要配置 Python、CUDA Toolkit 的脚本工具或后台会被限速的浏览器页面，PGPMint 提供 **Windows 免安装单文件可执行程序（GUI 与 CLI）**，以及开箱即用的 **macOS（`macos-arm64` / `macos-x64`）** 与 **Linux（`linux-x64` / `linux-arm64`）** 独立发行包，支持四档功耗效率调节、软限温保护、`.pgpmint-sync` 跨机幂等进度同步、系统托盘/菜单栏后台运行，以及支持 `Cv25519` 加密子密钥与到期日的 `.asc` 导出。
-
----
-
-## 功能特性
-
-### v1.3.0 重点功能
-
-- **任意位置 `*` 通配符与前缀掩码**：四大显卡后端（Vulkan、OpenCL、DirectCompute、Metal）全面支持 1–16 位十六进制样式、纯前缀（如 `DEAD************`）与任意位置 `*` 通配符（如 `CAFE*123`）。
-- **软限温闭环保护与无人值守 CLI**：桌面端与 CLI 支持 `70–90 C`（CLI 支持 `65–90 C`）NVML 软限温调速保护（`--max-temp`），CLI 新增 `--tier`、`--keep-running`、`--status-interval`、`--json`、`--on-hit-exec` 及内置 `pgpmint curve` 实测功耗曲线测量。
-- **跨机进度与加密密钥库同步（`.pgpmint-sync`）**：基于 `SessionId` 累计账本的幂等进度导出／导入（重复导入不重复累加），支持向运行中的搜索实时热导入，以及 Argon2id + AES-256-GCM 加密打包已命中密钥（CLI `pgpmint sync` 与桌面端设置页）。
-- **自定义创建时间范围与 `Cv25519` 加密子密钥**：支持选填 UTC 密钥创建时间范围（跨度至少 7 天；CLI `--since` / `--until`），且 `.asc` 导出默认附带兼容 GnuPG 的 `Cv25519` 加密子密钥（CLI 可用 `--no-encrypt-subkey` 关闭）与选填到期时间（`--expires`）。
-
-### macOS 与 Linux 桌面版及跨平台 CLI
-
-Windows WinUI 3 应用（`src/PGPMint.App`）继续作为 Windows 主力版本，并与 macOS、Linux 同步采用统一的 PGPMint 矢量品牌图标（[assets/pgpmint-icon.svg](assets/pgpmint-icon.svg)）。
-
-- **macOS（`src/PGPMint.MacApp` + `src/PGPMint.Host`）**：专为 macOS 14+ 打造的纯原生 **SwiftUI + AppKit** 桌面应用（提供 `macos-arm64` 与 `macos-x64`），通过私有匿名 `stdin`/`stdout` NDJSON 管道驱动随包内置的 `.NET 10` 独立后台助手（`pgpmint-host`）。私钥种子绝不跨进程传给界面；关闭管道后立即停止 GPU 并释放独占 `VaultSession`。新密钥库可通过登录钥匙串自动解锁（已有密码库保持密码解锁），菜单栏支持实时算力读取与 4 档切换，并内置 `IOKit` 防休眠、原生 Metal（`libpgpmint_metal.dylib`）与 MoltenVK Vulkan 支持。当前采用 ad-hoc 签名（未经过 Apple 公证），首次打开可能需在「系统设置」中手动放行。
-- **Linux（`src/PGPMint.Desktop`）**：重新设计的 **Avalonia 12.2.0** XAML 桌面应用（提供 `linux-x64` 与 `linux-arm64`），包含初始设置向导、极简三卡片主界面、独立设置窗口、带悬停规则说明及原生 NVIDIA NVML（`libnvidia-ml.so.1`）实时功耗和 `MH/W` 遥测的四档功耗选择器、静默 `/usr/bin/systemd-inhibit` 防休眠、`StatusNotifierWatcher` 系统托盘集成及原生 Vulkan / OpenCL 后端（排除 CPU 软件渲染器）。
-- **跨平台命令行工具（`src/PGPMint.Cli`）**：
-
-```sh
-# Windows 可直接运行 PGPMint-cli-*-win-x64.exe；macOS / Linux 解压后运行 ./cli/pgpmint
-./pgpmint devices --json
-./pgpmint verify --backend vulkan       # Linux 原生 Vulkan 或 macOS MoltenVK
-./pgpmint verify --backend metal        # macOS 原生 Metal
-./pgpmint benchmark --backend vulkan --seconds 60 --rounds 3
-./pgpmint search --pattern BEEF
-./pgpmint export --key YOUR_KEY_ID --name "Your Name" --output ./exported
-```
-
-CLI 与便携密钥库使用 Argon2id + AES-256-GCM 加密，严格校验 Unix `0700` 目录权限与 macOS ACL 规则；每次 GPU 命中的结果都会先在 CPU 上完成 SHA-1 双重校验后再保存。
-
-### Windows 应用程序
-
-- **单文件便携可执行程序**：`win-x64` 与 `win-arm64` 均打包为独立压缩单文件 `.exe`（GUI 与 CLI 各自为单文件），无需安装 Python、CUDA Toolkit、.NET 或 Windows App Runtime。
-- **三层通用显卡计算引擎**：零外部依赖的三层自动降级架构——优先使用原生 **Vulkan Compute**（`vulkan-1.dll` + 程序生成的 SPIR-V 1.3、`vulkan-sha1-four-v5`）发挥峰值吞吐；不可用时回退原生 **`OpenCL.dll`**（`opencl-sha1-four-v5`）；再不可用时无缝回退 **DirectCompute**（`D3D11 cs_5_0`、`d3d11-sha1-four-v5`），支持多显卡并行搜索。
-- **实测算力与四档功耗效率调节**：针对不同后缀长度分组（`1–4` 位、`5–8` 位、`9–16` 位）与显卡配置变动自动执行 30 秒全曲线校准，校准后可实时切换 `Eco` / `Balanced` / `Efficiency` / `Max`，并在其他 3D 应用高负载时自动弹性让道。
-- **零开销系统托盘与纯 CPU 悬浮微窗**：关闭主窗口后最小化至系统托盘以释放 WinUI 渲染占用的显存与算力，并可选开启纯 CPU Direct2D/DirectWrite 悬浮微窗（全屏游戏/视频时自动隐藏）。
-- **DPAPI 加密密钥库与 Git 就绪的 `.asc` 导出**：私密种子使用 Windows DPAPI（`CurrentUser`）本地加密存储（上限 50 条），可导出兼容 RFC 9580 / GnuPG 的 `.secret.asc` 与 `.public.asc`（带 `Certify | Sign` 标志，支持 AES-256-CFB 保护密码）。
-- **内置 10 种主流语言**：Windows、macOS 与 Linux 三平台桌面界面均内置 `English`、`繁體中文`、`简体中文`、`日本語`、`한국어`、`Deutsch`、`Français`、`Español`、`Português (Brasil)` 与 `Русский`（Windows 版另支持在 `PGPMint.exe` 同级目录放置 `Strings/*.json` 扩展语言；CLI 保持英文以保证脚本与诊断一致性）。
+- **免环境配置的多显卡通用引擎**：提供 Windows 免安装单文件 `.exe` 与 macOS / Linux 自包含发行包，支持 `Vulkan -> OpenCL -> DirectCompute` 自动回退及原生 Apple `Metal`，每次命中均在 CPU 完成 SHA-1 双重校验。
+- **任意位置 `*` 通配符与时间区间**：支持 1–16 位后缀（`6767 6767 6767`）、前缀（`DEAD************`）、中间 `*` 通配符（`CAFE*123`）以及可选 UTC 创建时间范围（跨度至少 7 天）。
+- **四档实测功耗与 NVML 软限温**：自动完成 30 秒全曲线测量后可实时切换 `Eco` / `Balanced` / `Efficiency` / `Max`，支持对 3D 应用弹性让道、NVML 实时功耗遥测（`W`、`MH/W`）及闭环温控（桌面 `70–90 C` / CLI `65–90 C`）。
+- **跨机进度与密钥加密同步（`.pgpmint-sync`）**：基于 `SessionId` 累计账本实现幂等进度导入（支持向运行中的搜索实时热导入且重复导入不重复累加），结合 Argon2id + AES-256-GCM 加密打包命中密钥。
+- **加密密钥库与 Git 就绪 `.asc` 导出**：本地采用 DPAPI / Argon2id 加密保存（上限 50 条），可导出兼容 RFC 9580 / GnuPG 的文件（`Certify | Sign`，默认附带 `Cv25519` 加密子密钥，支持到期日与 AES-256-CFB 密码）。
+- **后台驻留与 10 种语言**：支持系统托盘／菜单栏后台运行、防休眠锁（`IOKit` / `systemd-inhibit`）、Windows 纯 CPU 悬浮微窗以及 10 种内置界面语言（CLI 保持英文以确保脚本一致性）。
 
 ---
 
-## 下载与快速开始
+## 性能与功耗基准
 
-1. 从 [GitHub Releases](https://github.com/Evanlau1798/PGPMint/releases) 下载对应平台的文件：
-   - **Windows GUI**：`PGPMint-*-win-x64.exe` 或 `PGPMint-*-win-arm64.exe`（便携单文件）
-   - **Windows CLI**：`PGPMint-cli-*-win-x64.exe` 或 `PGPMint-cli-*-win-arm64.exe`（便携单文件）
-   - **macOS**：`PGPMint-*-macos-arm64.tar.gz` 或 `PGPMint-*-macos-x64.tar.gz`（含 `PGPMint.app` 与 CLI）
-   - **Linux**：`PGPMint-*-linux-x64.tar.gz` 或 `PGPMint-*-linux-arm64.tar.gz`（含 `PGPMint.Desktop` 与 CLI）
-2. **初始设置**：输入期望的 1–16 位十六进制 Key ID 后缀（`0–9`、`A–F`，例如 `01 2345 6789`），选择硬件显卡与界面语言并完成向导。
-3. **自动校准与搜索**：点击开始后如当前路径未校准将自动进行 30 秒测量（校准过程中同样可保存命中结果）。校准完成后可随时切换四档功耗效率；点击停止会等待当前批次安全完成后保存进度，关闭窗口可常驻托盘／菜单栏后台运行。
-4. **导出密钥**：在结果列表中点击 `.asc` 即可导出 `<KEYID>.secret.asc` 与 `<KEYID>.public.asc`。
+各平台显卡在 `v4` 计算管线上的持续实测算力（RTX 5090 与 RTX 3090 系列均在 Linux 配合 `libnvidia-ml.so.1` 以 13 位掩码 `***1145141919810` 测得；算力致谢见[致谢与云端 GPU 使用警示](#致谢与云端-gpu-使用警示)）：
 
----
-
-## 导出密钥并用于 Git 签名
-
-导出的密钥包含自签名 User ID 与 `Certify | Sign`（`0x03`）标志，可直接用于 GnuPG、Git 与 GitHub Verified 提交认证：
-
-```powershell
-# 1. 将导出的私钥导入 GnuPG
-gpg --import <KEYID>.secret.asc
-
-# 2. 配置 Git 使用新 Key ID 签名提交
-git config --global user.signingkey <KEYID>
-git config --global commit.gpgsign true
-
-# 3. 将 <KEYID>.public.asc 添加到 GitHub -> Settings -> SSH and GPG keys
-```
-
----
-
-## 性能基准
-
-以下 v4 引擎数据实测于 **NVIDIA GeForce RTX 3080**（Windows 11 x64、WDDM 驱动 `32.0.16.1088`、Release x64、全速档位），统计涵盖 Ed25519 生成、SHA-1 预计算、GPU 调度及回读：
-
-| 后端 | Kernel | 134M 批次中位耗时 | 536M 批次中位耗时 | 端到端 Coordinator（全速） |
-|---|---|---:|---:|---:|
-| 原生 Vulkan（`vulkan-1.dll`） | `vulkan-sha1-four-v4`（`ubo-spirv-v4`） | **5.63–6.12 ms**（`21.93–23.82 GH/s`） | **23.11–23.14 ms**（`23.20–23.24 GH/s`） | **23.23 GH/s** |
-| 原生 OpenCL（`OpenCL.dll`） | `opencl-sha1-four-v4`（`cmem0-v4`） | **5.68–6.27 ms**（`21.42–23.61 GH/s`） | **23.78–23.92 ms**（`22.44–22.58 GH/s`） | **23.19 GH/s** |
-| DirectCompute（`D3D11 cs_5_0`） | `d3d11-sha1-four-v4`（`cb1-v4`） | **9.14–9.44 ms**（`14.21–14.69 GH/s`） | **37.33–37.38 ms**（`14.36–14.38 GH/s`） | 自动回退 |
-
-其他实机测试平台：
-- **Apple M3（macOS 15.6.1 `macos-arm64`）**：MoltenVK 实机约 **2.25 GH/s**。
-- **Intel Alder Lake UHD（`ADL GT2`，Rocky Linux 9.8 `linux-x64`、Mesa 25.2.7 Vulkan）**：实机校准峰值约 **566.99 MH/s**（中位 **561.90 MH/s**）。
-
-### NVIDIA GeForce RTX 5090（Linux x64，450 W 功耗上限）
-
-于 **NVIDIA GeForce RTX 5090**（32 GiB VRAM、Ubuntu 22.04.5 LTS、驱动 `595.91.07`、容器限制 **450.00 W** 上限／默认 `575.00 W`）配合 `PGPMint v1.2.1` 与原生 Linux NVML（`libnvidia-ml.so.1`），在 13 位后缀 `***1145141919810` 上完成全套实测（算力致谢与云端风险提示见[致谢与云端 GPU 使用警示](#致谢与云端-gpu-使用警示)）。
-
-| 设备 | 后端 | Kernel / Workgroup | Micro 中位数 | 端到端 Coordinator（Max） | 备注 |
-|---|---|---|---:|---:|---|
-| **RTX 5090（450 W）** | **OpenCL** | `opencl-sha1-four-v4` / `64` | **83.93 GH/s** | **76.63 GH/s** | 微基准最高 |
-| **RTX 5090（450 W）** | **OpenCL** | `opencl-sha1-four-v4` / `128` | **83.32 GH/s** | **76.18 GH/s** | CLI `search` 默认配置（`cmem0-v4`） |
-| **RTX 5090（450 W）** | **OpenCL** | `opencl-sha1-four-v4` / `256` | 81.60 GH/s | 75.97 GH/s | — |
-| RTX 5090（450 W） | Vulkan | `vulkan-sha1-four-v4` / `64`–`256` | 56.75–57.42 GH/s | 54.86–55.03 GH/s | 需无头 EGL ICD（`nvidia_egl_icd.json`） |
-| RTX 3090 | OpenCL | `opencl-sha1-four-v4` / `128` | — | **25.51–25.93 GH/s** | 单卡实测（`300 W` 上限、`85.42 MH/W`、60 秒 `25.10 GH/s @ 66–70 C` 无热降频） |
-| **RTX 3090 x2 NVLink** | **OpenCL** | `opencl-sha1-four-v4` / `128` | — | **49.43–50.41 GH/s** | 双卡合计 `600 W` 上限（`82.54 MH/W`；长时热稳态 `46.42 GH/s`） |
-| RTX 3080（Windows） | Vulkan | `vulkan-sha1-four-v4` / `128` | 23.20–23.82 GH/s | 22.51–23.23 GH/s | 满载 `346.61 W`（`64.95 MH/W`） |
+| 设备 / 操作系统 | 后端 | 持续算力（Max） | 功耗 / 每瓦能效 | 备注 |
+|---|---|---|---|---|
+| **RTX 5090（Linux x64，450 W 上限）** | **OpenCL**（`4x128`） | **76.18–77.67 GH/s** | `450.0 W`（**`172.61 MH/W`**） | 微基准峰值 `83.93 GH/s`（`wg=64`）；180 秒稳态 `74.70 GH/s` |
+| **RTX 3090 x2 NVLink（Linux x64）** | **OpenCL**（`4x128`） | **49.43–50.41 GH/s** | `598.8 W`（`82.54 MH/W`） | 双卡合计 `600 W` 上限（`2.03x` 扩展）；60 秒稳态 `46.42 GH/s` |
+| **RTX 3090（Linux x64）** | **OpenCL**（`4x128`） | **25.51–25.93 GH/s** | `298.7 W`（**`85.42 MH/W`**） | `300 W` 上限；60 秒 `25.10 GH/s @ 66–70 C`（`0/60` 热降频） |
+| **RTX 3080（Windows 11 x64）** | **Vulkan**（`4x128`） | **22.51–23.23 GH/s** | `346.6 W`（`64.95 MH/W`） | OpenCL `23.19 GH/s`、D3D11 `14.38 GH/s` 回退 |
+| **Apple M3（macOS 15.6.1）** | **MoltenVK** | **约 2.25 GH/s** | — | Apple Silicon 原生侧载助手实测 |
+| **Intel Alder Lake UHD（Rocky 9.8）** | **Vulkan** | **566.99 MH/s** 峰值 | — | 校准中位数 `561.90 MH/s`（Mesa 25.2.7） |
 
 <p align="center">
-  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint GPU 功耗能效曲线（功耗 W 对实测算力 GH/s），对比 RTX 5090（OpenCL，450 W 限制）、RTX 3090 x2 NVLink（OpenCL，600 W 限制）、RTX 3090（OpenCL，300 W 限制）与 RTX 3080（Vulkan）" width="100%" />
+  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint GPU 功耗能效曲线（功耗 W 对实测算力 GH/s），对比 RTX 5090、RTX 3090 x2 NVLink、RTX 3090 与 RTX 3080" width="100%" />
 </p>
 
-<details>
-<summary><strong>展开查看 RTX 5090 完整 21 点算力／每瓦效率曲线与 180 秒稳定性数据（OpenCL, 4x128）</strong></summary>
-
-每个阶梯（`100%` 全速、`95%`–`5%` 为 PGPMint 50 ms 周期切片限速）均先稳定 3 秒再以 NVML 稳态采样 5 秒（`0%` 为待机 5 秒），所有计算候选均计入持久进度（零浪费）。
-
-| 目标比例 | 实测算力 (GH/s) | 功耗中位数 (W) | 每瓦获得 (MH/W) | GPU 利用率 (%) | 核心 / 显存频率 (MHz) | 温度 (C) | P-State | 限电标志 |
-|---:|---:|---:|---:|---:|---|---:|:---:|---|
-| **100%** | **77.671** | **449.99** | **172.61** | 100 | 2460 / 13801 | 67 | P1 | `SwPowerCap(50/50)` |
-| **95%** | 72.912 | 449.94 | 162.05 | 89 | 2610 / 13801 | 69 | P1 | `SwPowerCap(51/51)` |
-| **90%** | 69.595 | 450.05 | 154.64 | 85 | 2640 / 13801 | 71 | P1 | `SwPowerCap(52/52)` |
-| **85%** | 66.138 | 450.22 | 146.90 | 78 | 2685 / 13801 | 72 | P1 | `SwPowerCap(52/52)` |
-| **80%** | 62.075 | 434.58 | 142.84 | 74 | 2707 / 13801 | 73 | P1 | `SwPowerCap(51/51)` |
-| **75%** | 58.264 | 414.47 | 140.57 | 69 | 2715 / 13801 | 72 | P1 | `SwPowerCap(52/52)` |
-| **70%** | 54.541 | 395.45 | 137.92 | 65 | 2722 / 13801 | 72 | P1 | `SwPowerCap(52/52)` |
-| **65%** | 50.677 | 375.36 | 135.01 | 60 | 2737 / 13801 | 72 | P1 | `SwPowerCap(36/52)` |
-| **60%** | 46.848 | 355.71 | 131.70 | 55 | 2745 / 13801 | 71 | P1 | `SwPowerCap(15/52)` |
-| **55%** | 42.859 | 335.41 | 127.78 | 51 | 2752 / 13801 | 71 | P1 | `SwPowerCap(5/52)` |
-| **50%** | 39.055 | 315.02 | 123.98 | 46 | 2767 / 13801 | 69 | P1 | `None` |
-| **45%** | 35.103 | 291.53 | 120.41 | 40 | 2767 / 13801 | 70 | P1 | `None` |
-| **40%** | 31.205 | 258.84 | 120.56 | 35 | 2580 / 13801 | 67 | P1 | `None` |
-| **35%** | 27.370 | 235.32 | 116.31 | 32 | 2565 / 13801 | 65 | P1 | `None` |
-| **30%** | 23.404 | 213.20 | 109.78 | 27 | 2550 / 13801 | 64 | P1 | `None` |
-| **25%** | 19.584 | 190.85 | 102.61 | 23 | 2542 / 13801 | 61 | P1 | `None` |
-| **20%** | 15.601 | 169.27 | 92.17 | 19 | 2527 / 13801 | 60 | P1 | `None` |
-| **15%** | 11.745 | 148.12 | 79.30 | 13 | 2520 / 13801 | 58 | P1 | `None` |
-| **10%** | 7.832 | 126.09 | 62.12 | 9 | 2505 / 13801 | 57 | P1 | `None` |
-| **5%** | 3.879 | 104.79 | 37.02 | 5 | 2497 / 13801 | 55 | P1 | `None` |
-| **0%（待机）** | 0.000 | 28.32 | — | 0 | 195 / 405 | 52 | P8 | `None` |
-
-- **为何 `100%` 全速反而是最高能效点（`172.61 MH/W`）**：在 450 W 功耗墙约束下，满载核心稳定在 `2460 MHz` 高能效区间，每瓦产出达到 RTX 3080（`64.95 MH/W`）的 **2.66 倍**；而 50 ms 时间切片限速使 GPU 维持在 `P1`（GDDR7 `13801 MHz`，5% 负载仍耗 `104.79 W`），且 `85%–95%` 短脉冲反而拉升核心至 `2610–2685 MHz` 并依旧触及 `450 W` 上限。降至 `40%` 时核心回落至 `2580 MHz`，功耗骤降 `32.7 W` 并出现效率拐点（`120.56 MH/W`）。
-- **图表标注四档位落点（`EfficiencyCurveSelector`）**：RTX 5090（启用高待机功耗 `Eco` 适配）：`节能`（`10%`）`7.83 GH/s @ 126.09 W`（`62.12 MH/W`）、`平衡`（`40%`）`31.20 GH/s @ 258.84 W`（`120.56 MH/W`）、`效率`（`70%`）`54.54 GH/s @ 395.45 W`（`137.92 MH/W`）、`全速`（`100%`）`77.67 GH/s @ 450.00 W`（`172.61 MH/W`）；RTX 3080（Windows Vulkan）：`节能`（`11%`）`2.71 GH/s @ 56.47 W`（`48.03 MH/W`）、`平衡`（`23%`）`5.39 GH/s @ 108.99 W`（`49.42 MH/W`）、`效率`（`67%`）`15.88 GH/s @ 301.49 W`（`52.69 MH/W`）、`全速`（`100%`）`22.51 GH/s @ 346.61 W`（`64.95 MH/W`）。
-- **四档位实时切换验证（5 秒稳定 + 10 秒 `MultiGpuCoordinator`，v1.2.1 基准）**：`Max` `76.680 GH/s @ 449.99 W`（`170.40 MH/W`）、`Efficiency`（`62.6%`）`49.743 GH/s @ 362.77 W`（`137.12 MH/W`）、`Balanced`（`31.3%`）`24.242 GH/s @ 217.69 W`（`111.36 MH/W`）、`Eco`（`7.7%`）`6.136 GH/s @ 115.89 W`（`52.95 MH/W`）。
-- **180 秒满载稳定性**：1 秒区间平均 **`74.695 GH/s`**（中位数 **`74.726 GH/s`**，UI 窗口由 `76.1` 平稳收敛至 `74.4 GH/s`），平均功耗 **`448.71 W`**（**`166.47 MH/W`**），温度稳定在 `70 C -> 80 C`（`0/180` 热降频、`179/180` `SwPowerCap`）。
-
-</details>
+完整 21 点稳态曲线、60 秒 / 180 秒稳定性记录及各代内核演化详情参阅 **[guides/benchmarks.md](guides/benchmarks.md)**（英文）。
 
 <details>
-<summary><strong>展开查看 RTX 3090 x2 NVLink 双卡实测摘要（OpenCL, 4x128, 单卡 300 W 限制）</strong></summary>
+<summary><strong>展开查看：预期平均等待时间（按 20 GH/s 估算）</strong></summary>
 
-- **硬件与拓扑**：双张 NVIDIA GeForce RTX 3090（各 24 GiB、4 通道 NVLink `NV4`、容器单卡限制 `300.00 W`／双卡合计 `600.00 W` 上限）、Ubuntu 22.04.5 LTS、驱动 `595.99.02`。
-- **单卡对双卡扩展率**：单卡实测 `24.289 GH/s`（`299.1 W`、`81.20 MH/W`）；双卡 30 秒官方校准合计 `50.414 GH/s`（`GPU 0`：`25.042 GH/s`、`GPU 1`：`25.372 GH/s`；21 点满载稳态 `49.429 GH/s @ 598.83 W`、`82.54 MH/W`，扩展率 **`2.03x`**）。
-- **四档位落点（`power_curve_settled.csv`）**：`节能`（`5%`、`power-floor-fallback`）`2.52 GH/s @ 277.99 W`（`9.08 MH/W`）、`平衡`（`15%`）`7.56 GH/s @ 319.29 W`（`23.68 MH/W`）、`效率`（`55%`）`27.06 GH/s @ 523.91 W`（`51.64 MH/W`）、`全速`（`100%`）`49.43 GH/s @ 598.83 W`（`82.54 MH/W`）。因 `P2` 低载底噪高达 `278 W`（占满载 `46.4%`），`IsHighIdlePowerFloor` 自动识别并展示全速建议提示。
-- **60 秒连续满载稳定性**：堆叠槽位 `GPU 0` 在 `82–83 C` 触发温控降频（`299 -> 242 W`），`GPU 1` 维持 `66 C / 299 W`，双卡连续稳态平均为 **`46.416 GH/s @ 550.6 W`（`84.31 MH/W`）**。
-
-</details>
-
-<details>
-<summary><strong>展开查看 RTX 3090 单卡实测摘要（OpenCL, 4x128, 300 W 上限）</strong></summary>
-
-- **硬件与功耗上限**：单张 NVIDIA GeForce RTX 3090（24 GiB 显存、容器强制限制 **`300.00 W`**／VBIOS 默认 `420.00 W`）、Ubuntu 22.04.5 LTS、驱动 `595.99.02`。
-- **校准与 21 点曲线对比**：30 秒校准峰值 **`26.037 GH/s`**（中位基准 **`25.933 GH/s @ 298.52 W`**）；21 点稳态 `100%` 为 **`25.511 GH/s @ 298.65 W`（`85.42 MH/W`）**，待机 `P8` 回落至 `36.39 W`。对比 RTX 3080（`22.51 GH/s @ 346.61 W`／`64.95 MH/W`），单卡 RTX 3090 在少耗 **`48 W`** 的同时多产出 **`+13.3%` 算力**，每瓦能效高出 **`+31.5%`**。
-- **四档位落点（`power_curve_settled.csv`）**：`节能`（`5%`、`power-floor-fallback`）`1.30 GH/s @ 147.79 W`（`8.81 MH/W`）、`平衡`（`10%`）`2.60 GH/s @ 159.45 W`（`16.33 MH/W`）、`效率`（`45%`）`11.73 GH/s @ 254.96 W`（`46.01 MH/W`）、`全速`（`100%`）`25.51 GH/s @ 298.65 W`（`85.42 MH/W`）。因 `P2` 低载底噪高达 `147.8 W`（占满载 `49.5%`），`IsHighIdlePowerFloor` 自动识别并提示使用全速。
-- **60 秒连续满载稳定性**：平均 **`25.095 GH/s`**（中位数 **`25.276 GH/s`**）、平均功耗 **`298.91 W`**（**`83.96 MH/W`**），温度稳定在 **`66 -> 70 C`**（**`0/60` 热降频**），散热裕度充沛且无双卡堆叠互烤降频问题。
-
-</details>
-
-### 预期平均等待时间（按 20 GH/s 估算）
-
-| 后缀长度 | 搜索空间（$16^k$） | 预期平均时间 |
+| 固定匹配长度 | 搜索空间（$16^k$） | 预期平均时间 |
 |---:|---:|---:|
 | 8 位 | $4.29 \times 10^{9}$ | ~0.2 秒 |
 | 10 位 | $1.10 \times 10^{12}$ | ~55 秒 |
@@ -215,43 +82,109 @@ git config --global commit.gpgsign true
 | 13 位 | $4.50 \times 10^{15}$ | ~2.6 天 |
 | 14 位 | $7.21 \times 10^{16}$ | ~41.7 天 |
 
-### 与其他方案对比
+</details>
+
+<details>
+<summary><strong>展开查看：与其他方案功能对比</strong></summary>
 
 | 特性 | PGPMint | CLI CUDA 工具 | CLI OpenCL 工具 | 浏览器 WebGL/WebGPU |
 |---|---|---|---|---|
-| 原生桌面 UI 与系统托盘 | 是（WinUI 3 / SwiftUI / Avalonia） | 否 | 否 | 浏览器标签页（后台限速） |
+| 原生桌面 UI 与系统托盘／菜单栏 | 是（WinUI 3 / SwiftUI / Avalonia） | 否 | 否 | 浏览器标签页（后台限速） |
 | 免装 Python / CUDA Toolkit | 是（单文件 / 自包含包） | 需装 CUDA | 需装 Runtime | 是 |
 | 通用显卡自动回退 | Vulkan + OpenCL + DirectCompute / Metal | 仅 NVIDIA | 需 OpenCL ICD | 依赖浏览器支持 |
 | 多显卡＋功耗效率档位 | 是（`Eco` / `Balanced` / `Efficiency` / `Max`） | 仅全速 | 仅全速 | 有限 |
-| 加密密钥库与 Git 就绪 `.asc` | 是（DPAPI / Argon2id + 自签名） | 原始导出 | 原始导出 | 手动下载 |
+| 加密密钥库与 Git 就绪 `.asc` | 是（DPAPI / Argon2id + 自签名 + `Cv25519`） | 原始导出 | 原始导出 | 手动下载 |
+
+</details>
 
 ---
 
-## 系统需求
+## 下载与快速上手
 
-- **Windows**：Windows 10（版本 19041 / 2004 及以上）或 Windows 11（`x64` 或 `ARM64`），配备支持 Direct3D 11 Feature Level 11.0+ 的硬件显卡（推荐安装 Vulkan 1.1+ 或 OpenCL 驱动以获取峰值性能）。
-- **macOS**：macOS 14 Sonoma 及以上（`Apple Silicon arm64` 或 `Intel x64`），支持 Metal / MoltenVK 硬件显卡。
-- **Linux**：具备 X11 或 XWayland 图形会话及 Vulkan 1.1+／OpenCL ICD 硬件驱动（无图形环境可单独使用 CLI；运行库列表见压缩包内 `TESTING.txt`）。
+1. 从 [GitHub Releases](https://github.com/Evanlau1798/PGPMint/releases) 下载对应平台文件：
+   - **Windows GUI**：`PGPMint-*-win-x64.exe` 或 `PGPMint-*-win-arm64.exe`（便携单文件）
+   - **Windows CLI**：`PGPMint-cli-*-win-x64.exe` 或 `PGPMint-cli-*-win-arm64.exe`（便携单文件）
+   - **macOS**：`PGPMint-*-macos-arm64.tar.gz` 或 `PGPMint-*-macos-x64.tar.gz`（含 `PGPMint.app` 与 CLI）
+   - **Linux**：`PGPMint-*-linux-x64.tar.gz` 或 `PGPMint-*-linux-arm64.tar.gz`（含 `PGPMint.Desktop` 与 CLI）
+2. **初始设置**：输入 1–16 位十六进制 Key ID 样式（`0–9`、`A–F` 或 `*` 通配符如 `CAFE*123`），选择硬件显卡与界面语言并完成向导。
+3. **自动校准与搜索**：点击开始后按需自动运行 30 秒测量（校准期间命中同样实时校验保存）；完成后可随时切换四档功耗、安全停止并保存进度，或关闭窗口常驻后台。
+4. **导出密钥**：在结果列表点击 `.asc` 即可导出 `<KEYID>.secret.asc` 与 `<KEYID>.public.asc`（默认附带 `Cv25519` 加密子密钥）。
 
 ---
 
-## 从源码构建
+## 搭配 Git 签名
 
-前置依赖：
-- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- Windows 10/11 SDK（`10.0.26100.0`，用于构建 Windows UI）或 Xcode Command Line Tools（用于构建 macOS 原生应用）
+导出的密钥包含自签名 User ID 与 `Certify | Sign`（`0x03`）标志，可直接用于 GnuPG、Git 与 GitHub Verified 提交验证：
 
 ```powershell
-# 运行完整测试（含本机硬件 GPU 与 GnuPG 签名测试）
-dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64
+gpg --import <KEYID>.secret.asc
+git config --global user.signingkey <KEYID>
+git config --global commit.gpgsign true
+# 将 <KEYID>.public.asc 添加到 GitHub -> Settings -> SSH and GPG keys
+```
 
-# 先编译后运行非 GPU CI 测试
+---
+
+## 支持平台与 CLI
+
+| 平台目标 | 界面与运行架构 | 显卡后端 | 密钥库保护 | 后台运行与系统控制 |
+|---|---|---|---|---|
+| **Windows**（`x64` / `ARM64`） | 原生 WinUI 3 + Mica 单文件 `.exe` | Vulkan -> OpenCL -> DirectCompute | DPAPI（`CurrentUser`） | 零开销托盘＋纯 CPU 悬浮微窗 |
+| **macOS 14+**（`arm64` / `x64`） | 原生 SwiftUI / AppKit + `.NET 10` 助手 | Metal + MoltenVK Vulkan | 登录钥匙串或密码（Argon2id） | 菜单栏实时算力＋`IOKit` 防休眠 |
+| **Linux**（`x64` / `ARM64`） | Avalonia 12.2.0 XAML（`X11` / `XWayland`） | Vulkan + OpenCL | Argon2id + AES-256-GCM | `StatusNotifierWatcher` 托盘＋`systemd-inhibit` |
+| **CLI**（跨三平台） | 无头命令行执行程序（`pgpmint`） | 随系统支持 | Argon2id + AES-256-GCM / 钥匙串 | `--tier`、`--max-temp`、`--keep-running`、`sync`、`curve` |
+
+<details>
+<summary><strong>展开查看：macOS 与 Linux 安装及权限说明（签名、钥匙串、0700 / ACL 与驱动）</strong></summary>
+
+- **macOS 签名与管道隔离**：发行包采用 ad-hoc 签名（未经 Apple 公证），首次打开可能需在「系统设置 -> 隐私与安全性」手动放行。UI 通过匿名 `stdin`/`stdout` NDJSON 管道驱动 `pgpmint-host`，私钥种子绝不传给界面进程。
+- **macOS 钥匙串与备份**：新建 macOS 桌面密钥库使用登录钥匙串自动解锁，既有密码库维持密码输入。备份需完整保留数据目录（含 `vault.key.json` / `vault.unlock.json` 及钥匙串密钥），并另行导出带密码 `.asc` 文件作便携备份。
+- **Linux 驱动要求**：内置 `.NET` 不替代显卡驱动，桌面运行需 X11 / XWayland 及硬件 Vulkan 1.1+ 或 OpenCL ICD 驱动（完整依赖见压缩包 `TESTING.txt`）；CLI 可直接在无图形终端运行。
+- **目录权限与独占锁**：Unix 自定义目录须预先设为 `0700`，macOS 会拒绝包含显式或继承 ACL 的路径。桌面端与 CLI 持有独占 `VaultSession` 锁（Windows CLI / Avalonia 使用独立目录 `%LOCALAPPDATA%\PGPMint-Portable\`）。
+
+</details>
+
+<details>
+<summary><strong>展开查看：CLI 常用命令速查（devices / verify / search / curve / sync / export）</strong></summary>
+
+```sh
+./pgpmint devices --json
+./pgpmint verify --backend vulkan        # Windows、Linux Vulkan 或 macOS MoltenVK
+./pgpmint verify --backend metal         # macOS 原生 Metal
+./pgpmint search --pattern "CAFE*123" --tier efficiency --max-temp 80 --keep-running
+./pgpmint curve --backend opencl --pattern BEEF
+./pgpmint sync export --output ./bundle.pgpmint-sync
+./pgpmint export --key YOUR_KEY_ID --name "Your Name" --output ./exported
+```
+
+自动化脚本可使用 `--password-stdin`（第 1 行为密钥库密码，第 2 行为 `export` 保护密码；macOS 钥匙串库运行 `export` 时第 1 行直接作为 `.asc` 密码），切勿在命令行参数中直接传入密码。
+
+</details>
+
+完整安全策略、备份恢复规则及全部 CLI 参数见 **[guides/platforms-and-cli.md](guides/platforms-and-cli.md)**（英文）。
+
+---
+
+## 系统需求与构建
+
+- **Windows**：Windows 10（版本 19041 / 2004 及以上）或 Windows 11（`x64` / `ARM64`），配备 Direct3D 11 Feature Level 11.0+ 硬件显卡（推荐安装 Vulkan 1.1+ 或 OpenCL 驱动）。
+- **macOS**：macOS 14 Sonoma 及以上（`Apple Silicon arm64` 或 `Intel x64`），支持 Metal / MoltenVK 硬件显卡。
+- **Linux**：X11 或 XWayland 图形会话（无图形界面可单独运行 CLI）及 Vulkan 1.1+／OpenCL ICD 硬件驱动。
+
+<details>
+<summary><strong>展开查看：从源码构建与打包（.NET 10 SDK）</strong></summary>
+
+前置依赖 [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)，Windows 需安装 Windows 10/11 SDK（`10.0.26100.0`），macOS 需安装 Xcode Command Line Tools：
+
+```powershell
 dotnet build PGPMint.sln -p:Platform=x64 -c Release
 dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64 -c Release --no-build --filter "Category!=HardwareGpu"
-
-# 使用打包脚本生成指定平台发行包
 python scripts/packaging/package.py --rid win-x64 --tag v1.3.0 --platform x64 --scratch C:\pgpmint-dist
 ```
+
+</details>
+
+SHA-1 显卡流水线、30 秒校准与 `.pgpmint-sync` 机制、自定义翻译扩展及全部 6 平台打包命令见 **[guides/architecture-and-build.md](guides/architecture-and-build.md)**（英文）。
 
 ---
 
@@ -264,10 +197,6 @@ python scripts/packaging/package.py --rid win-x64 --tag v1.3.0 --platform x64 --
 
 ---
 
-## 参与贡献
+## 参与贡献与开源许可
 
-欢迎提交 Issue、语言翻译与 Pull Request。提交前请确认测试与 Release 构建无警告通过，并保持源码和文档中不含任何表情符号（由 CI 自动校验）。
-
-## 开源许可
-
-基于 [MIT License](LICENSE) 开源发布。
+欢迎提交 Issue、翻译文件与 Pull Request；提交前请确保 Release 构建及测试通过且不含任何表情符号（由 CI 自动校验）。本项目基于 [MIT License](LICENSE) 开源发布。

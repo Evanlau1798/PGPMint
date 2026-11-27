@@ -4,15 +4,15 @@
 
 English | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-**GPU generator for custom OpenPGP v4 (`Ed25519`) vanity Key IDs, with native Windows, native macOS, and redesigned Linux desktop apps plus a cross-platform CLI.**
+**GPU generator for custom OpenPGP v4 (`Ed25519`) vanity Key IDs, with native Windows, macOS, and Linux desktop apps plus a cross-platform CLI.**
 
 [![CI](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml/badge.svg)](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Evanlau1798/PGPMint?label=Release&color=0078D6)](https://github.com/Evanlau1798/PGPMint/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-x64%20%7C%20ARM64-0078D6.svg)](#system-requirements)
-[![.NET 10](https://img.shields.io/badge/.NET%2010%20%2B%20SwiftUI%20%2B%20Avalonia-512BD4.svg)](#building-from-source)
+[![Platform](https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-x64%20%7C%20ARM64-0078D6.svg)](#platforms--cli)
+[![.NET 10](https://img.shields.io/badge/.NET%2010%20%2B%20SwiftUI%20%2B%20Avalonia-512BD4.svg)](#system-requirements--build)
 
-[Download](#download--quick-start) · [Features](#features) · [Git Signing](#using-exported-keys-with-git) · [Benchmarks](#benchmarks) · [Build from Source](#building-from-source)
+[Features](#core-features) · [Benchmarks](#benchmarks) · [Quick Start](#download--quick-start) · [Git Signing](#using-exported-keys-with-git) · [Platforms & CLI](#platforms--cli) · [Build](#system-requirements--build)
 
 <br />
 
@@ -33,243 +33,48 @@ English | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md) | [�
   </tr>
 </table>
 
-*PGPMint across Windows, macOS, and Linux searching custom OpenPGP v4 Key ID suffixes with calibrated power tiers.*
+*PGPMint minting custom OpenPGP v4 Key IDs across Windows, macOS, and Linux with calibrated power tiers.*
 
 </div>
 
 ---
 
-## What is PGPMint?
+## Core Features
 
-PGPMint lets you mint custom **OpenPGP v4 (`Ed25519Legacy`)** keys whose 16-character Key ID matches any hexadecimal pattern you choose (suffixes like `6767 6767 6767`, prefixes like `DEAD************`, or mid-string `*` wildcards like `CAFE*123`).
+PGPMint generates **OpenPGP v4 (`Ed25519Legacy`)** keys whose 16-character Key ID matches any hexadecimal pattern—completely offline with zero telemetry.
 
-Unlike command-line tools that require installing Python or the NVIDIA CUDA Toolkit—or browser tabs that stall in the background—PGPMint ships as **standalone single-file Windows executables** (GUI + CLI) alongside self-contained **macOS (`macos-arm64` / `macos-x64`)** and **Linux (`linux-x64` / `linux-arm64`)** bundles with power-efficiency tiers, NVML thermal guard, idempotent `.pgpmint-sync` cross-machine sync, tray/menu bar keep-alive, and ready-to-sign `.asc` export with `Cv25519` encryption subkey support.
-
----
-
-## Features
-
-### Highlights in v1.3.0
-
-- **Arbitrary-Position `*` Wildcards & Prefixes**: All four GPU compute backends (`Vulkan`, `OpenCL`, `DirectCompute`, `Metal`) support suffixes, prefixes (`DEAD************`), and arbitrary `*` wildcards (`CAFE*123`).
-- **NVML Thermal Guard & Headless CLI Ops**: Configurable GPU thermal ceiling (`70–90 C` in UI / `65–90 C` via `--max-temp`), plus `--tier`, `--keep-running`, `--status-interval`, `--json`, `--on-hit-exec`, and built-in `pgpmint curve` sweeps.
-- **Cross-Machine Sync Bundles (`.pgpmint-sync`)**: Idempotent `SessionId`-keyed candidate ledger + Argon2id/AES-256-GCM encrypted key bundles (`pgpmint sync` and Settings UI), including live hot-import into running searches.
-- **Custom Creation Timestamp Range & `Cv25519` Encryption Subkey**: Optional UTC creation timestamp range (`>= 7` days via Settings UI or `--since`/`--until`), and exported `.asc` keypairs include a GnuPG-compatible `Cv25519` encryption subkey by default (`--no-encrypt-subkey` to opt out) plus optional key expiration (`--expires`).
-
-### macOS and Linux desktop builds
-
-The Windows WinUI application (`src/PGPMint.App`) remains the flagship Windows product, now updated alongside macOS and Linux with the unified PGPMint brand icon (`assets/pgpmint-icon.svg`).
-
-- **macOS (`src/PGPMint.MacApp` + `src/PGPMint.Host`)**: Native **SwiftUI + AppKit** desktop app (`macOS 14+`, `macos-arm64` and `macos-x64` packages) backed by a bundled self-contained `.NET 10` sidecar helper (`pgpmint-host`) communicating over private anonymous `stdin`/`stdout` NDJSON pipes. Private key seeds never cross IPC to the UI process, and closing `stdin` stops GPU workers and releases the exclusive `VaultSession`. Supports Login Keychain automatic unlock for new vaults (keeping password unlock for existing vaults), menu bar live hash rate readout with 4-tier switching, `IOKit` idle sleep assertion (`System sleep is inhibited while searching`), native Metal (`libpgpmint_metal.dylib`) and MoltenVK Vulkan drivers.
-- **Linux (`src/PGPMint.Desktop`)**: Redesigned **Avalonia 12.2.0** XAML desktop app (`linux-x64` and `linux-arm64`) featuring a Setup Wizard, minimalist 3-card dashboard, separate Settings window, 4 calibrated power tiers (`Eco`, `Balanced`, `Efficiency`, `Max`) with per-tier hover tooltips and native NVIDIA NVML (`libnvidia-ml.so.1`) live board power and `MH/W` telemetry, silent `/usr/bin/systemd-inhibit` sleep prevention during active search, `StatusNotifierWatcher` system tray integration, and native Vulkan/OpenCL compute backends. Software CPU renderers are excluded; WSL is a Linux testing environment rather than a supported GPU target.
-
-Download the platform test packages from the successful **CI** run on `main` in
-[GitHub Actions](https://github.com/Evanlau1798/PGPMint/actions/workflows/ci.yml).
-These are test artifacts, not a published release. Each package contains a
-self-contained CLI; Linux/macOS packages also contain the desktop app. The Mac
-package includes its Metal bridge and MoltenVK. macOS test apps are ad-hoc signed,
-not Developer ID signed or notarized.
-
-Linux desktop builds require X11 or XWayland and the native libraries listed in
-the package instructions. CLI testing does not require a desktop session. A
-working hardware Vulkan/OpenCL driver is required; bundling .NET does not replace
-GPU drivers. macOS GPU availability depends on the host, including on CI runners.
-
-```sh
-# Use the pgpmint executable in the extracted CLI directory.
-./pgpmint devices --json
-./pgpmint verify --backend vulkan       # Linux, or MoltenVK on macOS
-./pgpmint verify --backend metal        # macOS
-./pgpmint benchmark --backend vulkan --seconds 60 --rounds 3
-./pgpmint search --pattern BEEF
-./pgpmint export --key YOUR_KEY_ID --name "Your Name" --output ./exported
-```
-
-The CLI prompts for passwords without echoing them. Existing macOS keychain vaults
-unlock through the original user's login keychain; this requires an unlocked
-desktop login session and may request system authorization. For automation,
-`--password-stdin` reads the vault password from standard input; export reads a
-second line for the OpenPGP passphrase. A keychain vault consumes only the export
-passphrase line. Never pass a password as an argument or
-print it in a script log. Search stops after its first saved match by default;
-Ctrl+C stops safely and saves progress.
-
-New macOS desktop vaults store a random unlock secret in the login keychain, so
-no extra vault password is needed. Existing password vaults remain password
-protected; new CLI and Linux vaults use a user password for headless operation.
-All portable vaults use Argon2id and AES-256-GCM and user-only file permissions.
-Keep the complete data directory when backing up, including `vault.key.json` and
-`vault.unlock.json` when present. Keychain vault backups also need the original
-keychain secret; export passphrase-protected OpenPGP keys for portable recovery.
-PGPMint refuses to replace missing or inaccessible keychain secrets.
-Use a dedicated vault directory. On Unix, an existing custom directory
-must already have mode `0700`; PGPMint refuses broader permissions without changing
-the directory. Explicitly secure your dedicated vault directory before reopening it.
-Only PGPMint's fixed default directory may have legacy cache permissions tightened.
-On macOS, private vault and export paths with explicit or inherited ACL entries
-are refused; choose a dedicated location without ACLs. Parent ACLs are never changed.
-The desktop and CLI exclude simultaneous sessions using the
-same data directory. Windows WinUI keeps its existing DPAPI vault; it is not
-silently converted into a password vault. The cross-platform CLI uses a password
-vault and refuses to initialize over an existing vault missing its password header.
-On Windows, the CLI and Avalonia validation app default to
-`%LOCALAPPDATA%\PGPMint-Portable`, separately from the WinUI DPAPI directory.
-
-`verify` checks GPU results against CPU SHA-1. `devices` only reports discovery;
-it does not claim GPU correctness. Standard CI builds and unit tests do not prove
-hardware throughput. Benchmark reports microbenchmarks separately from full
-coordinator measurements, uses disposable isolated data, and does not open the
-user's vault. Compare identical devices, workloads, modes and UI states.
-
-The redesigned desktop apps support 10 built-in languages (`English`, `繁體中文`, `简体中文`, `日本語`, `한국어`, `Deutsch`, `Français`, `Español`, `Português (Brasil)`, and `Русский`), encrypted vault storage, `.asc` export, GPU selection, automatic workload calibration, four power tiers with hover tooltips, and background operation where a working tray or menu bar is available. The CLI stays in English for consistent scripting and diagnostics, and the floating Mini HUD remains Windows-only.
-Hardware validation and sustained performance on each Mac/GPU family remain
-separate acceptance checks.
-
-### Windows application
-
-- **Single-File Portable Executable** — Self-contained compressed `.exe` for `win-x64` and `win-arm64`. No Python, CUDA Toolkit, .NET Runtime, or Windows App Runtime installation required.
-- **Universal Windows Hardware GPU Engine** — Zero-dependency three-tier compute cascade: runs via native Vulkan Compute (`vulkan-1.dll` + programmatic SPIR-V 1.3, `vulkan-sha1-four-v4`) when a Vulkan 1.1+ compute GPU is present for peak sustained throughput, cascades to native `OpenCL.dll` (`opencl-sha1-four-v4`) when Vulkan is unavailable, and falls back transparently to DirectCompute (`D3D11 cs_5_0`, `d3d11-sha1-four-v4`) on any Direct3D 11 Feature Level 11.0+ GPU (including Windows on ARM). Supports multi-GPU parallel search while excluding CPU software renderers and virtual display adapters.
-- **Measured Speed & 4 Power-Efficiency Tiers**: PGPMint measures a 30-second full efficiency curve when the current workload path (`1`-`4` hex individually, `5`-`8` hex low-word group, `9`-`16` hex 64-bit group) or GPU configuration changes. Batch sizes adapt automatically. Once calibrated, switch live between `Eco`, `Balanced`, `Efficiency`, and `Max` with per-tier hover rules and elastic yielding to competing 3D apps.
-- **Zero-Overhead System Tray & Pure-CPU Floating HUD** — Closing the main window minimizes PGPMint to the notification area so WinUI 3 stops consuming GPU rendering cycles. An optional pure-CPU Direct2D/DirectWrite floating Mini HUD tracks live speed, probability, ETA, and progress (auto-hides during fullscreen apps/games).
-- **Minimalist Dashboard & Separate Settings** — Live hash rate, smooth progress bar, cumulative hit probability (hover for single-hash odds; switches cleanly to `Found` once a matching key is stored), scientific-notation checked count, live ETA, and an adaptive results card that expands for up to 5 saved keys.
-- **DPAPI Encrypted Vault & Signing-Ready `.asc` Export** — Every GPU match is double-verified on CPU, encrypted locally using Windows DPAPI (`CurrentUser`), and exported as RFC 9580 / GnuPG-compatible `.secret.asc` and `.public.asc` files with `Certify | Sign` key flags and optional AES-256-CFB passphrase protection.
-- **Extensible Localization** — Built-in support for 10 languages (`English`, `繁體中文`, `简体中文`, `日本語`, `한국어`, `Deutsch`, `Français`, `Español`, `Português (Brasil)`, and `Русский`), plus automatic loading of custom `Strings/*.json` locale files placed next to `PGPMint.exe`.
-
----
-
-## Download & Quick Start
-
-1. Download the package for your platform from [GitHub Releases](https://github.com/Evanlau1798/PGPMint/releases):
-   - **Windows GUI**: `PGPMint-*-win-x64.exe` or `PGPMint-*-win-arm64.exe` (single portable `.exe`)
-   - **Windows CLI**: `PGPMint-cli-*-win-x64.exe` or `PGPMint-cli-*-win-arm64.exe` (single portable `.exe`)
-   - **macOS**: `PGPMint-*-macos-arm64.tar.gz` or `PGPMint-*-macos-x64.tar.gz` (`PGPMint.app` + CLI)
-   - **Linux**: `PGPMint-*-linux-x64.tar.gz` or `PGPMint-*-linux-arm64.tar.gz` (`PGPMint.Desktop` + CLI)
-2. **Initial Setup**: Enter your desired 1-16 hex Key ID suffix (`0-9`, `A-F`, e.g. `01 2345 6789`), choose hardware GPU(s), select your language, and finish setup.
-3. **Automatic Calibration & Search**: Start searching with a small batch. PGPMint runs a 30-second curve calibration when needed, and can still save matches during calibration. Once calibrated, switch between `Eco`, `Balanced`, `Efficiency`, and `Max`. Press **Stop** to finish the active batch and save progress, or close the window to continue in the tray / menu bar.
-
-4. **Export Your Key**: When a match appears in the results panel, click `.asc` to export `<KEYID>.secret.asc` and `<KEYID>.public.asc`.
-
-**Stop** works during calibration and search, including from the tray. PGPMint finishes the active batch and can save its verified match before returning to idle. If a GPU becomes unavailable, PGPMint tries to reopen it once and resumes with a small batch. Incomplete batches are excluded from search progress.
-
-Existing vault records and preferences load when upgrading. Calibration is measured again when the saved profile lacks a workload identity or the device, driver, backend, kernel configuration, or workload execution group (`1`-`4` hex individually, `5`-`8` hex low-word, `9`-`16` hex 64-bit) has changed.
-
----
-
-## Using Exported Keys with Git
-
-Exported keys include a self-signed User ID with `Certify | Sign` (`0x03`) flags and work directly with GnuPG, Git, and GitHub Verified commits:
-
-```powershell
-# 1. Import your minted secret key into GnuPG
-gpg --import <KEYID>.secret.asc
-
-# 2. Configure Git to sign commits with your new Key ID
-git config --global user.signingkey <KEYID>
-git config --global commit.gpgsign true
-
-# 3. Paste <KEYID>.public.asc into GitHub -> Settings -> SSH and GPG keys
-```
+- **Zero-Setup Multi-GPU Engine**: Ships standalone single-file `.exe` (Windows) and self-contained macOS/Linux bundles with automatic `Vulkan -> OpenCL -> DirectCompute` fallback and native Apple `Metal`, plus mandatory CPU SHA-1 verification before saving.
+- **Flexible `*` Wildcards & Creation Range**: Supports 1–16 hex suffixes (`6767 6767 6767`), prefixes (`DEAD************`), arbitrary mid-string `*` wildcards (`CAFE*123`), and optional UTC creation timestamp bounds (`>= 7` days).
+- **4 Power Tiers & NVML Thermal Guard**: Automatically runs a 30 s efficiency sweep to unlock `Eco`, `Balanced`, `Efficiency`, and `Max`, with elastic yielding to 3D apps, live NVML board power (`W`, `MH/W`), and closed-loop thermal limits (`70–90 C` UI / `65–90 C` CLI).
+- **Cross-Machine `.pgpmint-sync` Bundles**: `SessionId`-keyed idempotent progress ledger (safe repeated imports and live hot-import into active searches) paired with Argon2id + AES-256-GCM encrypted key bundles.
+- **Encrypted Vault & Git-Ready `.asc` Export**: Local DPAPI / Argon2id encrypted storage (up to 50 keys) and RFC 9580 / GnuPG exports (`Certify | Sign`, default `Cv25519` encryption subkey, optional `--expires` and AES-256-CFB passphrase).
+- **Background Keep-Alive & 10 Languages**: Tray / menu bar minimization, OS sleep inhibition (`IOKit` / `systemd-inhibit`), pure-CPU Windows floating Mini HUD, and 10 built-in UI languages (CLI stays English for consistent scripting).
 
 ---
 
 ## Benchmarks
 
-The historical v1 baseline below was measured on an **NVIDIA GeForce RTX 3080** (Windows 11 x64). It includes host Ed25519 key generation, SHA-1 schedule precomputation, GPU dispatch, and readback.
+End-to-end sustained `Max`-tier throughput across physical GPUs on the `v4` compute pipeline (`13`-hex suffix `***1145141919810` on RTX 5090 / 3090 with `libnvidia-ml.so.1`; see [Acknowledgements & Cloud GPU Usage Notice](#acknowledgements--cloud-gpu-usage-notice)):
 
-| Backend | Kernel | Measured Throughput | Notes |
-|---|---|---:|---|
-| Native OpenCL (`OpenCL.dll`) | `opencl-sha1-four-v1` (4-key, unroll 2) | **21.06 GH/s** (tray / Mini HUD) / **20.00 GH/s** (foreground) | Default when OpenCL GPU ICD is available |
-| DirectCompute (`D3D11 cs_5_0`) | `d3d11-sha1-four-v1` (4-key) | **13.51 GH/s** | Automatic fallback on non-OpenCL GPUs |
-
-The v3 kernels introduced in `ad24a05` use four lanes, up to 128 threads per workgroup, and unroll 2. Both passed fingerprint oracle tests on the RTX 3080 with WDDM driver `32.0.16.1088` and OpenCL ICD `610.88`. In paired FindOne tests of 8, 9, and 16 hex digits at 134,217,728 candidates per batch, v3 median host wall times were 6.97–7.44 ms on OpenCL and 10.40–10.74 ms on DirectCompute. These measurements cover dispatch and blocking readback with warmed device sessions. The 64- and 256-thread alternatives showed no consistent gain. AMD, Intel, and native ARM64 GPU coverage is pending.
-
-The current **v4 engine** eliminates constant-cache register spill (workgroup 128, outer unroll 1), places key schedules and phase constants in constant memory / UBOs, extends cross-lane sharing to rounds `0..6`, reconstructs timestamp XORs minimally, folds `-K3` into `targetLowNoK3` to defer `rotl(b, 30)` and round `76` out of the hot path, and runs via three zero-dependency backends (`vulkan-1.dll` + programmatic SPIR-V 1.3, `OpenCL.dll`, and `D3D11 cs_5_0`). Paired RTX 3080 (`32.0.16.1088`, Release x64, 16 warmup + 31 timed FindOne dispatches, 8-hex and 16-hex suffixes) and 5-second end-to-end `MultiGpuCoordinator` + `KeySchedulePool` measurements at `MAX` throttle:
-
-| Backend | Kernel | 134M Batch Median | 536M Batch Median | End-to-End Coordinator (`MAX`) |
-|---|---|---:|---:|---:|
-| Native Vulkan (`vulkan-1.dll`) | `vulkan-sha1-four-v4` (`ubo-spirv-v4`) | **5.63–6.12 ms** (`21.93–23.82 GH/s`) | **23.11–23.14 ms** (`23.20–23.24 GH/s`) | **23.23 GH/s** |
-| Native OpenCL (`OpenCL.dll`) | `opencl-sha1-four-v4` (`cmem0-v4`) | **5.68–6.27 ms** (`21.42–23.61 GH/s`) | **23.78–23.92 ms** (`22.44–22.58 GH/s`) | **23.19 GH/s** |
-| DirectCompute (`D3D11 cs_5_0`) | `d3d11-sha1-four-v4` (`cb1-v4`) | **9.14–9.44 ms** (`14.21–14.69 GH/s`) | **37.33–37.38 ms** (`14.36–14.38 GH/s`) | Fallback tier |
-
-On the same RTX 3080 under concurrent dual-stream NVDEC hardware video decoding (3%–11% decoder load), counterbalanced 2-round `MultiGpuCoordinator` averages held **21.35 GH/s** (`-8.08%`) on Vulkan vs **18.98 GH/s** (`-18.14%`) on OpenCL, making Vulkan the default Tier-1 backend.
-
-### NVIDIA GeForce RTX 5090 (Linux x64, 450 W Enforced Cap)
-
-Measured on an **NVIDIA GeForce RTX 5090** (32 GiB VRAM, Ubuntu 22.04.5 LTS, Driver `595.91.07`, enforced **450.00 W** cap vs `575.00 W` default) using `PGPMint v1.2.1` + native Linux NVML (`libnvidia-ml.so.1`) on the 13-hex suffix `***1145141919810` (see [Acknowledgements & Cloud GPU Warning](#acknowledgements--cloud-gpu-usage-notice)).
-
-| Device | Backend | Kernel / Workgroup | Micro Median | End-to-End (`MAX`) | Notes |
-|---|---|---|---:|---:|---|
-| **RTX 5090 (450 W)** | **OpenCL** | `opencl-sha1-four-v4` / `64` | **83.93 GH/s** | **76.63 GH/s** | Peak micro throughput |
-| **RTX 5090 (450 W)** | **OpenCL** | `opencl-sha1-four-v4` / `128` | **83.32 GH/s** | **76.18 GH/s** | CLI `search` default (`cmem0-v4`) |
-| **RTX 5090 (450 W)** | **OpenCL** | `opencl-sha1-four-v4` / `256` | 81.60 GH/s | 75.97 GH/s | — |
-| RTX 5090 (450 W) | Vulkan | `vulkan-sha1-four-v4` / `64`–`256` | 56.75–57.42 GH/s | 54.86–55.03 GH/s | Headless EGL ICD (`nvidia_egl_icd.json`) |
-| RTX 3090 | OpenCL | `opencl-sha1-four-v4` / `128` | — | **25.51–25.93 GH/s** | Single GPU (`300 W` cap, `85.42 MH/W`; `25.10 GH/s @ 66–70 C` 60s steady) |
-| **RTX 3090 x2 NVLink** | **OpenCL** | `opencl-sha1-four-v4` / `128` | — | **49.43–50.41 GH/s** | Dual-GPU `600 W` combined cap (`82.54 MH/W`; `46.42 GH/s` thermal steady) |
-| RTX 3080 (Windows) | Vulkan | `vulkan-sha1-four-v4` / `128` | 23.20–23.82 GH/s | 22.51–23.23 GH/s | `346.61 W` (`64.95 MH/W` full load) |
+| Device / OS | Backend | Sustained Speed (`Max`) | Power / Efficiency | Notes |
+|---|---|---|---|---|
+| **RTX 5090 (Linux x64, 450 W Cap)** | **OpenCL** (`4x128`) | **76.18–77.67 GH/s** | `450.0 W` (**`172.61 MH/W`**) | `83.93 GH/s` micro peak (`wg=64`); `74.70 GH/s` 180s steady |
+| **RTX 3090 x2 NVLink (Linux x64)** | **OpenCL** (`4x128`) | **49.43–50.41 GH/s** | `598.8 W` (`82.54 MH/W`) | Dual `300 W` cap (`2.03x` scaling); `46.42 GH/s` 60s steady |
+| **RTX 3090 (Linux x64)** | **OpenCL** (`4x128`) | **25.51–25.93 GH/s** | `298.7 W` (**`85.42 MH/W`**) | `300 W` cap; `25.10 GH/s @ 66–70 C` (`0/60` thermal throttle) |
+| **RTX 3080 (Windows 11 x64)** | **Vulkan** (`4x128`) | **22.51–23.23 GH/s** | `346.6 W` (`64.95 MH/W`) | OpenCL `23.19 GH/s`, D3D11 `14.38 GH/s` fallback |
+| **Apple M3 (macOS 15.6.1)** | **MoltenVK** | **~2.25 GH/s** | — | Native SwiftUI sidecar on Apple Silicon |
+| **Intel Alder Lake UHD (Rocky 9.8)** | **Vulkan** | **566.99 MH/s** peak | — | `561.90 MH/s` median calibrated (Mesa 25.2.7) |
 
 <p align="center">
-  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint GPU efficiency curve (Power W vs Throughput GH/s) comparing RTX 5090 (OpenCL, 450 W cap), RTX 3090 x2 NVLink (OpenCL, 600 W cap), RTX 3090 (OpenCL, 300 W cap), and RTX 3080 (Vulkan)" width="100%" />
+  <img src="assets/rtx5090-power-curve.svg" alt="PGPMint GPU efficiency curve (Power W vs Throughput GH/s) comparing RTX 5090, RTX 3090 x2 NVLink, RTX 3090, and RTX 3080" width="100%" />
 </p>
 
-<details>
-<summary><strong>Complete 21-Point Settled RTX 5090 Power-Efficiency Curve &amp; 180s Stability Data (OpenCL, 4x128)</strong></summary>
-
-Each point (`100%` `FullSpeed`, `95%`–`5%` under PGPMint 50 ms duty-cycle pacing) settled for 3 s before 5 s steady-state NVML measurement (`0%` = 5 s idle). All search steps counted directly toward persisted progress.
-
-| Target Load | Throughput (GH/s) | Median Power (W) | Yield (MH/W) | GPU Util (%) | Core / Mem Clock (MHz) | Temp (C) | P-State | Power Cap Flags |
-|---:|---:|---:|---:|---:|---|---:|:---:|---|
-| **100%** | **77.671** | **449.99** | **172.61** | 100 | 2460 / 13801 | 67 | P1 | `SwPowerCap(50/50)` |
-| **95%** | 72.912 | 449.94 | 162.05 | 89 | 2610 / 13801 | 69 | P1 | `SwPowerCap(51/51)` |
-| **90%** | 69.595 | 450.05 | 154.64 | 85 | 2640 / 13801 | 71 | P1 | `SwPowerCap(52/52)` |
-| **85%** | 66.138 | 450.22 | 146.90 | 78 | 2685 / 13801 | 72 | P1 | `SwPowerCap(52/52)` |
-| **80%** | 62.075 | 434.58 | 142.84 | 74 | 2707 / 13801 | 73 | P1 | `SwPowerCap(51/51)` |
-| **75%** | 58.264 | 414.47 | 140.57 | 69 | 2715 / 13801 | 72 | P1 | `SwPowerCap(52/52)` |
-| **70%** | 54.541 | 395.45 | 137.92 | 65 | 2722 / 13801 | 72 | P1 | `SwPowerCap(52/52)` |
-| **65%** | 50.677 | 375.36 | 135.01 | 60 | 2737 / 13801 | 72 | P1 | `SwPowerCap(36/52)` |
-| **60%** | 46.848 | 355.71 | 131.70 | 55 | 2745 / 13801 | 71 | P1 | `SwPowerCap(15/52)` |
-| **55%** | 42.859 | 335.41 | 127.78 | 51 | 2752 / 13801 | 71 | P1 | `SwPowerCap(5/52)` |
-| **50%** | 39.055 | 315.02 | 123.98 | 46 | 2767 / 13801 | 69 | P1 | `None` |
-| **45%** | 35.103 | 291.53 | 120.41 | 40 | 2767 / 13801 | 70 | P1 | `None` |
-| **40%** | 31.205 | 258.84 | 120.56 | 35 | 2580 / 13801 | 67 | P1 | `None` |
-| **35%** | 27.370 | 235.32 | 116.31 | 32 | 2565 / 13801 | 65 | P1 | `None` |
-| **30%** | 23.404 | 213.20 | 109.78 | 27 | 2550 / 13801 | 64 | P1 | `None` |
-| **25%** | 19.584 | 190.85 | 102.61 | 23 | 2542 / 13801 | 61 | P1 | `None` |
-| **20%** | 15.601 | 169.27 | 92.17 | 19 | 2527 / 13801 | 60 | P1 | `None` |
-| **15%** | 11.745 | 148.12 | 79.30 | 13 | 2520 / 13801 | 58 | P1 | `None` |
-| **10%** | 7.832 | 126.09 | 62.12 | 9 | 2505 / 13801 | 57 | P1 | `None` |
-| **5%** | 3.879 | 104.79 | 37.02 | 5 | 2497 / 13801 | 55 | P1 | `None` |
-| **0% (Idle)** | 0.000 | 28.32 | — | 0 | 195 / 405 | 52 | P8 | `None` |
-
-- **Why `100%` (`Max`) peaks at `172.61 MH/W`**: Under the 450 W power limit, continuous full load settles around `2460 MHz` with ~2.66x the RTX 3080's per-watt yield (`64.95 MH/W`). Below `100%`, PGPMint's 50 ms duty-cycle pacing keeps GDDR7 at `13801 MHz` in `P1` (~105 W static floor at 5%), while `85%–95%` short bursts boost higher (`2610–2685 MHz`) and still saturate `450 W`. At `40%`, the core drops from `2767` to `2580 MHz`, cutting `32.7 W` and forming a slight efficiency knee (`120.56 MH/W`).
-- **Plotted 4-Tier Operating Points on the Curve (`EfficiencyCurveSelector`)**: RTX 5090 (with high-idle-power-floor `Eco` adaptation): `Eco` (`10%`) `7.83 GH/s @ 126.09 W` (`62.12 MH/W`), `Balanced` (`40%`) `31.20 GH/s @ 258.84 W` (`120.56 MH/W`), `Efficiency` (`70%`) `54.54 GH/s @ 395.45 W` (`137.92 MH/W`), `Max` (`100%`) `77.67 GH/s @ 450.00 W` (`172.61 MH/W`); RTX 3080 (Windows Vulkan): `Eco` (`11%`) `2.71 GH/s @ 56.47 W` (`48.03 MH/W`), `Balanced` (`23%`) `5.39 GH/s @ 108.99 W` (`49.42 MH/W`), `Efficiency` (`67%`) `15.88 GH/s @ 301.49 W` (`52.69 MH/W`), `Max` (`100%`) `22.51 GH/s @ 346.61 W` (`64.95 MH/W`).
-- **Live 4-Tier Coordinator Validation (5 s settle + 10 s `MultiGpuCoordinator`, v1.2.1 baseline)**: `Max` `76.680 GH/s @ 449.99 W` (`170.40 MH/W`), `Efficiency` (`62.6%`) `49.743 GH/s @ 362.77 W` (`137.12 MH/W`), `Balanced` (`31.3%`) `24.242 GH/s @ 217.69 W` (`111.36 MH/W`), `Eco` (`7.7%`) `6.136 GH/s @ 115.89 W` (`52.95 MH/W`).
-- **180-Second Sustained `Max` Stability**: Mean **`74.695 GH/s`** (median **`74.726 GH/s`**, UI rolling window `76.1 -> 74.4 GH/s`), mean power **`448.71 W`** (**`166.47 MH/W`**), temperature stabilizing `70 C -> 80 C` (`0/180` thermal throttling, `179/180` `SwPowerCap`).
-
-</details>
+Full 21-point settled curves, 60s/180s stability logs, and kernel evolution details are archived in **[guides/benchmarks.md](guides/benchmarks.md)**.
 
 <details>
-<summary><strong>RTX 3090 x2 NVLink Multi-GPU Benchmark Summary (OpenCL, 4x128, 300 W x2 Cap)</strong></summary>
+<summary><strong>Expected Average Wait Time (at 20 GH/s)</strong></summary>
 
-- **Hardware & Topology**: 2x NVIDIA GeForce RTX 3090 (24 GiB each, 4-lane NVLink `NV4`, enforced `300.00 W` cap per card = `600.00 W` combined vs `350 W x2` stock), Ubuntu 22.04.5 LTS, Driver `595.99.02`.
-- **Single vs Dual-GPU Scaling**: 1x RTX 3090 standalone `24.289 GH/s` (`299.1 W`, `81.20 MH/W`); 2x RTX 3090 30 s calibration `50.414 GH/s` (`GPU 0`: `25.042 GH/s`, `GPU 1`: `25.372 GH/s`, **`2.03x`** scaling on settled `Max` `49.429 GH/s @ 598.83 W` / `82.54 MH/W`).
-- **4-Tier Operating Points (`power_curve_settled.csv`)**: `Eco` (`5%`, `power-floor-fallback`) `2.52 GH/s @ 277.99 W` (`9.08 MH/W`), `Balanced` (`15%`) `7.56 GH/s @ 319.29 W` (`23.68 MH/W`), `Efficiency` (`55%`) `27.06 GH/s @ 523.91 W` (`51.64 MH/W`), `Max` (`100%`) `49.43 GH/s @ 598.83 W` (`82.54 MH/W`). Because P-State `P2` keeps idle floor at `278 W` (`46.4%` of `600 W`), `IsHighIdlePowerFloor` automatically surfaces the `Max`-tier recommendation hint.
-- **60-Second Sustained `Max` Stability**: Mean **`46.416 GH/s @ 550.6 W` (`84.31 MH/W`)** as stacked-slot `GPU 0` reaches thermal steady-state (`82–83 C`, `299 -> 242 W`) while `GPU 1` remains at `66 C / 299 W`.
-
-</details>
-
-<details>
-<summary><strong>RTX 3090 Single-GPU Benchmark Summary (OpenCL, 4x128, 300 W Enforced Cap)</strong></summary>
-
-- **Hardware & Power Limit**: Standalone NVIDIA GeForce RTX 3090 (24 GiB VRAM, enforced **`300.00 W`** cap vs `420.00 W` default), Ubuntu 22.04.5 LTS, Driver `595.99.02`.
-- **Calibration & 21-Point Curve**: 30 s calibration peaked at **`26.037 GH/s`** (median **`25.933 GH/s @ 298.52 W`**); settled `100%` hit **`25.511 GH/s @ 298.65 W` (`85.42 MH/W`)** while idle at `P8` dropped to `36.39 W`. Compared to RTX 3080 (`22.51 GH/s @ 346.61 W` / `64.95 MH/W`), the `300 W`-capped RTX 3090 delivers **`+13.3%` throughput** at **`-48 W` lower draw** (**`+31.5%` higher yield**).
-- **4-Tier Operating Points (`power_curve_settled.csv`)**: `Eco` (`5%`, `power-floor-fallback`) `1.30 GH/s @ 147.79 W` (`8.81 MH/W`), `Balanced` (`10%`) `2.60 GH/s @ 159.45 W` (`16.33 MH/W`), `Efficiency` (`45%`) `11.73 GH/s @ 254.96 W` (`46.01 MH/W`), `Max` (`100%`) `25.51 GH/s @ 298.65 W` (`85.42 MH/W`). Because P-State `P2` pins low-load draw at `147.8 W` (`49.5%` of `300 W`), `IsHighIdlePowerFloor` automatically triggers the `Max`-tier recommendation hint.
-- **60-Second Sustained `Max` Stability**: Mean **`25.095 GH/s`** (median **`25.276 GH/s`**) at **`298.91 W`** (**`83.96 MH/W`**), stabilizing at **`66 -> 70 C`** with **`0/60` thermal throttling** (avoiding the stacked-slot throttling seen on dual-card `GPU 0`).
-
-</details>
-
-### Expected Average Wait Time (at 20 GH/s)
-
-| Suffix Length | Search Space ($16^k$) | Expected Average Time |
+| Pattern Fixed Length | Search Space ($16^k$) | Expected Average Time |
 |---:|---:|---:|
 | 8 hex chars | $4.29 \times 10^{9}$ | ~0.2 s |
 | 10 hex chars | $1.10 \times 10^{12}$ | ~55 s |
@@ -277,91 +82,109 @@ Each point (`100%` `FullSpeed`, `95%`–`5%` under PGPMint 50 ms duty-cycle paci
 | 13 hex chars | $4.50 \times 10^{15}$ | ~2.6 days |
 | 14 hex chars | $7.21 \times 10^{16}$ | ~41.7 days |
 
-### Comparison with Alternatives
+</details>
+
+<details>
+<summary><strong>Comparison with Alternatives</strong></summary>
 
 | Capability | PGPMint | CLI CUDA Tools | CLI OpenCL Tools | Browser WebGL/WebGPU |
 |---|---|---|---|---|
-| Native Windows 11 UI + System Tray | Yes (WinUI 3 + Mica) | No | No | Browser tab (throttled in background) |
-| Zero Python / CUDA Toolkit Setup | Yes (single `.exe`) | Requires CUDA | Requires runtime | Yes |
-| Universal Windows GPU Fallback | Vulkan + OpenCL + DirectCompute | NVIDIA only | Needs OpenCL ICD | Browser dependent |
+| Native Desktop UI & Tray / Menu Bar | Yes (WinUI 3 / SwiftUI / Avalonia) | No | No | Browser tab (throttled in background) |
+| Zero Python / CUDA Toolkit Setup | Yes (standalone exe / self-contained) | Requires CUDA | Requires runtime | Yes |
+| Universal GPU Backend Fallback | Vulkan + OpenCL + DirectCompute / Metal | NVIDIA only | Needs OpenCL ICD | Browser dependent |
 | Multi-GPU + Power-Efficiency Tiers | Yes (`Eco` / `Balanced` / `Efficiency` / `Max`) | Full speed only | Full speed only | Limited |
-| Encrypted Local Vault + Git-Ready `.asc` | Yes (DPAPI + self-sig) | Raw export | Raw export | Manual download |
-
----
-
-## System Requirements
-
-- **Windows**: Windows 10 (build 19041 / 2004 or later) or Windows 11 (`x64` or `ARM64`), with Direct3D 11 Feature Level 11.0+ hardware GPU (Vulkan 1.1+ / OpenCL optional for peak speed).
-- **macOS**: macOS 14 Sonoma or later (`Apple Silicon arm64` or `Intel x64`) with Metal / MoltenVK hardware GPU support.
-- **Linux**: X11 or XWayland session with hardware Vulkan 1.1+ or OpenCL ICD GPU drivers and standard desktop runtime libraries (see `TESTING.txt` inside the archive). CLI usage does not require a graphical session.
-
----
-
-## Technical Details
-
-<details>
-<summary><strong>How It Works (OpenPGP v4 SHA-1 GPU Pipeline)</strong></summary>
-
-An OpenPGP v4 `Ed25519Legacy` primary key fingerprint is `SHA-1` over a single 54-byte packet (`0x99 || len(51) || 0x04 || uint32_be(timestamp) || Ed25519 OID + MPI header || 32-byte pubkey`), which fits inside one 64-byte SHA-1 block.
-
-```text
-CPU: Async KeySchedulePool generates 4 Ed25519 keypairs -> Precomputes shared SHA-1 schedule
-  |
-  v
-GPU: Share rounds 0..6 across all 4 keys for each Unix timestamp (2000-01-01 .. now)
-  |  Interleave rounds 7..75 across 4 lanes; reconstruct timestamp XORs minimally
-  |  After round 75: compare a76_nk directly with folded targetLowNoK3 (deferring rotl & K3)
-  |  Round 76 (only on low-word match): evaluate round 76 and compare high suffix target
-  |  Keep one hit per lane in FindOne mode (or fill bounded buffer) and return for verification
-  v
-CPU: Recompute full SHA-1 fingerprint -> Verify suffix -> Encrypt seed via DPAPI -> Notify
-```
-
-</details>
-
-<details>
-<summary><strong>Security, Privacy &amp; Local Data Storage</strong></summary>
-
-- **Fully Offline / Zero Telemetry**: PGPMint makes no network requests.
-- **Local Data Path**: Settings (`state.json`) and encrypted matches (`hits.vault.json`) are stored strictly in `%LOCALAPPDATA%\PGPMint\`.
-- **Local Key Protection**: Matched Ed25519 private seeds are encrypted on disk with Windows DPAPI (`DataProtectionScope.CurrentUser`) and zeroed in memory after key rotation or export.
-- **Vault Capacity**: The vault keeps up to 50 records. When it is full, minting stops and existing records stay intact. Export keys you want to keep before removing any records. Continuous minting uses a fresh key group after each saved key.
-- **Corrupt Vault Safeguard**: If `hits.vault.json` cannot be parsed, PGPMint creates a `.corrupt.<timestamp>.bak` backup and refuses to overwrite stored keys.
-- **CPU Verification Gate**: Every timestamp returned by a GPU is re-hashed on CPU with `System.Security.Cryptography.SHA1` before persistence.
-
-</details>
-
-<details>
-<summary><strong>Adding a Custom Translation</strong></summary>
-
-PGPMint loads built-in locales from embedded resources and automatically merges any JSON file placed in a `Strings/` folder next to `PGPMint.exe` (for example `Strings/it-IT.json`). Copy [src/PGPMint.App/Strings/en-US.json](src/PGPMint.App/Strings/en-US.json), update `_meta.code` and `_meta.nativeName`, translate the `strings` entries, and restart PGPMint to select it from Settings.
+| Encrypted Vault + Git-Ready `.asc` | Yes (DPAPI / Argon2id + self-sig + `Cv25519`) | Raw export | Raw export | Manual download |
 
 </details>
 
 ---
 
-## Building from Source
+## Download & Quick Start
 
-Prerequisites:
-- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- Windows 10/11 SDK (`10.0.26100.0`)
+1. Download the release asset for your platform from [GitHub Releases](https://github.com/Evanlau1798/PGPMint/releases):
+   - **Windows GUI**: `PGPMint-*-win-x64.exe` or `PGPMint-*-win-arm64.exe` (single portable `.exe`)
+   - **Windows CLI**: `PGPMint-cli-*-win-x64.exe` or `PGPMint-cli-*-win-arm64.exe` (single portable `.exe`)
+   - **macOS**: `PGPMint-*-macos-arm64.tar.gz` or `PGPMint-*-macos-x64.tar.gz` (`PGPMint.app` + CLI)
+   - **Linux**: `PGPMint-*-linux-x64.tar.gz` or `PGPMint-*-linux-arm64.tar.gz` (`PGPMint.Desktop` + CLI)
+2. **Initial Setup**: Enter your target 1–16 hex Key ID pattern (`0–9`, `A–F`, or `*` wildcards such as `CAFE*123`), choose hardware GPU(s), and select your language.
+3. **Auto Calibration & Search**: Start searching; PGPMint runs a 30 s calibration sweep when needed (matches found during calibration are still verified and saved). Switch live between `Eco`, `Balanced`, `Efficiency`, and `Max`, press **Stop** to save progress after the active batch, or close to tray / menu bar.
+4. **Export Your Key**: Click `.asc` on a saved result to export `<KEYID>.secret.asc` and `<KEYID>.public.asc` (includes a `Cv25519` encryption subkey by default).
+
+---
+
+## Using Exported Keys with Git
+
+Exported keys include a self-signed User ID (`Certify | Sign`, `0x03`) ready for GnuPG, Git, and GitHub Verified commits:
 
 ```powershell
-# Run full test suite (includes live GPU and real GnuPG / git commit -S tests)
-dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64
-
-# Run headless CI-safe test suite (excludes HardwareGpu category)
-dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64 --filter "Category!=HardwareGpu"
-
-# Build Release solution
-dotnet build PGPMint.sln -p:Platform=x64 -c Release
-
-# Publish trimmed standalone compressed single-file executable (x64)
-dotnet publish src\PGPMint.App\PGPMint.App.csproj -p:Platform=x64 -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
-
-# Publish trimmed standalone compressed single-file executable (ARM64)
-dotnet publish src\PGPMint.App\PGPMint.App.csproj -p:Platform=ARM64 -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true
+gpg --import <KEYID>.secret.asc
+git config --global user.signingkey <KEYID>
+git config --global commit.gpgsign true
+# Paste <KEYID>.public.asc into GitHub -> Settings -> SSH and GPG keys
 ```
+
+---
+
+## Platforms & CLI
+
+| Target | UI / Runtime | GPU Backends | Vault Protection | Background & Power Control |
+|---|---|---|---|---|
+| **Windows** (`x64` / `ARM64`) | Native WinUI 3 + Mica (`.exe`) | Vulkan -> OpenCL -> DirectCompute | DPAPI (`CurrentUser`) | System tray + pure-CPU Mini HUD |
+| **macOS 14+** (`arm64` / `x64`) | SwiftUI / AppKit + `.NET 10` sidecar | Metal + MoltenVK Vulkan | Login Keychain or Password (Argon2id) | Menu bar live rate + `IOKit` sleep block |
+| **Linux** (`x64` / `ARM64`) | Avalonia 12.2.0 XAML (`X11` / `XWayland`) | Vulkan + OpenCL | Argon2id + AES-256-GCM | `StatusNotifierWatcher` tray + `systemd-inhibit` |
+| **CLI** (All 3 OS) | Headless `.NET 10` binary (`pgpmint`) | Same per OS | Argon2id + AES-256-GCM / Keychain | `--tier`, `--max-temp`, `--keep-running`, `sync`, `curve` |
+
+<details>
+<summary><strong>macOS &amp; Linux Setup Notes (Signing, Keychain, Permissions &amp; Drivers)</strong></summary>
+
+- **macOS Gatekeeper & Sidecar**: Packages are ad-hoc signed (not notarized); first launch may require allowing execution in **System Settings -> Privacy & Security**. The UI communicates over an isolated `stdin`/`stdout` pipe with `pgpmint-host` so private seeds never reach the UI process.
+- **macOS Keychain & Backup**: New macOS desktop vaults unlock via your Login Keychain; existing password vaults remain password-protected. Back up the full vault directory (plus Login Keychain secret) and export passphrase-protected `.asc` files for portable recovery.
+- **Linux Runtime & Drivers**: Bundled `.NET` does not replace hardware GPU drivers (Vulkan 1.1+ or OpenCL ICD is required; see `TESTING.txt` inside the archive; software CPU renderers are excluded). Headless CLI runs do not require X11/XWayland.
+- **Directory Permissions & Isolation**: On Unix, custom vault directories must already use mode `0700`; macOS rejects vault/export paths with explicit or inherited ACLs. Desktop and CLI enforce an exclusive `VaultSession` lock (`%LOCALAPPDATA%\PGPMint-Portable\` separates Windows CLI/Avalonia vaults from WinUI's DPAPI vault).
+
+</details>
+
+<details>
+<summary><strong>CLI Quick Reference (devices, verify, search, curve, sync, export)</strong></summary>
+
+```sh
+./pgpmint devices --json
+./pgpmint verify --backend vulkan        # Windows, Linux Vulkan, or macOS MoltenVK
+./pgpmint verify --backend metal         # macOS native Metal
+./pgpmint search --pattern "CAFE*123" --tier efficiency --max-temp 80 --keep-running
+./pgpmint curve --backend opencl --pattern BEEF
+./pgpmint sync export --output ./bundle.pgpmint-sync
+./pgpmint export --key YOUR_KEY_ID --name "Your Name" --output ./exported
+```
+
+For headless scripts, `--password-stdin` reads the vault password on line 1 and export passphrase on line 2 (`export` on a macOS keychain vault reads only line 1). Never pass passwords as CLI flags.
+
+</details>
+
+For full security rules, permission contracts, and all CLI flags, see **[guides/platforms-and-cli.md](guides/platforms-and-cli.md)**.
+
+---
+
+## System Requirements & Build
+
+- **Windows**: Windows 10 (build 19041 / 2004+) or Windows 11 (`x64` / `ARM64`), Direct3D 11 Feature Level 11.0+ GPU (Vulkan 1.1+ / OpenCL recommended).
+- **macOS**: macOS 14 Sonoma+ (`Apple Silicon arm64` or `Intel x64`) with Metal / MoltenVK GPU support.
+- **Linux**: X11 or XWayland session (CLI headless OK) with hardware Vulkan 1.1+ or OpenCL ICD GPU drivers.
+
+<details>
+<summary><strong>Building &amp; Packaging from Source (.NET 10 SDK)</strong></summary>
+
+Requires [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) plus Windows 10/11 SDK (`10.0.26100.0`) on Windows or Xcode Command Line Tools on macOS:
+
+```powershell
+dotnet build PGPMint.sln -p:Platform=x64 -c Release
+dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64 -c Release --no-build --filter "Category!=HardwareGpu"
+python scripts/packaging/package.py --rid win-x64 --tag v1.3.0 --platform x64 --scratch C:\pgpmint-dist
+```
+
+</details>
+
+SHA-1 GPU pipeline internals, calibration logic, `.pgpmint-sync` design, custom translations, and full 6-platform packaging commands are documented in **[guides/architecture-and-build.md](guides/architecture-and-build.md)**.
 
 ---
 
@@ -374,10 +197,6 @@ Special thanks to **[gputw.ai](https://gputw.ai)** for providing the GPU compute
 
 ---
 
-## Contributing
+## Contributing & License
 
-Issues, translations, and pull requests are welcome. Before opening a PR, please run `dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64` and `dotnet build PGPMint.sln -p:Platform=x64 -c Release`, and keep source code and documentation free of emojis (enforced by CI).
-
-## License
-
-Released under the [MIT License](LICENSE).
+Issues, translations, and pull requests are welcome; ensure Release builds and tests pass cleanly and keep tracked files free of emojis (enforced by CI). Released under the [MIT License](LICENSE).
