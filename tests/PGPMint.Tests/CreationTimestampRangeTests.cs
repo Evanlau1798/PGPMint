@@ -44,7 +44,7 @@ public sealed class CreationTimestampRangeTests
     public async Task CoordinatorWorkersRespectCustomTimestampRangeAndPersistSettings()
     {
         string dir = Path.Combine(Path.GetTempPath(), "PGPMint-Range-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
+        PrivateFileSystem.CreateDirectory(dir);
         try
         {
             var backend = new CapturingRangeBackend();
@@ -54,7 +54,12 @@ public sealed class CreationTimestampRangeTests
             uint customMin = 1_600_000_000u;
             uint customMax = 1_602_000_000u; // ~23 days
 
-            using (var coordinator = new MultiGpuCoordinator(backend, stateStore, vault))
+            using (var coordinator = new MultiGpuCoordinator(
+                backend,
+                stateStore,
+                vault,
+                new CoordinatorOptions { FullCalibrationDuration = TimeSpan.FromMilliseconds(50) },
+                telemetrySensor: NullGpuTelemetrySensor.Instance))
             {
                 coordinator.Initialize();
                 coordinator.SetCreationTimestampRange(customMin, customMax);

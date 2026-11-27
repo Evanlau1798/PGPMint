@@ -274,7 +274,7 @@ public sealed class SyncBundleTests
     private sealed class TempDir : IDisposable
     {
         public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "PGPMint-SyncTest-" + Guid.NewGuid().ToString("N"));
-        public TempDir() => Directory.CreateDirectory(Path);
+        public TempDir() => PrivateFileSystem.CreateDirectory(Path);
         public void Dispose() { try { Directory.Delete(Path, recursive: true); } catch { } }
     }
 

@@ -93,7 +93,7 @@ public sealed class ThermalGuardTests
     public async Task MultiGpuCoordinatorIsolatesThermalGuardPerGpu()
     {
         string dir = Path.Combine(Path.GetTempPath(), "pgpmint-thermal-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
+        PrivateFileSystem.CreateDirectory(dir);
         try
         {
             var dev0 = new GpuDeviceInfo("gpu:0", 0, "Hot GPU 0", 0x10DE, 0x2204, 0, 0xA1, 24UL << 30, "595.99", true, "Fake", "fake-thermal-v1");

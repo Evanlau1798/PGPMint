@@ -338,7 +338,7 @@ public sealed class UiTests
         strings.Apply("en-US");
 
         string dir = Path.Combine(Path.GetTempPath(), "pgpmint-map-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
+        PGPMint.Core.Storage.PrivateFileSystem.CreateDirectory(dir);
         try
         {
             var pattern = KeyIdPattern.Parse("BEEF");
