@@ -141,6 +141,21 @@ public sealed class HostSession(
         if (input.MaxGpuTemperatureCelsius is int maxTemp)
             coordinator.SetMaxGpuTemperatureCelsius(maxTemp > 0 ? maxTemp : null);
 
+        if (input.ClearTimestampRange == true)
+        {
+            coordinator.SetCreationTimestampRange(null, null);
+        }
+        else if (input.MinCreationTimestamp is not null || input.MaxCreationTimestamp is not null)
+        {
+            uint? effectiveMin = input.MinCreationTimestamp is { } m1
+                ? (m1 > 0u ? m1 : null)
+                : coordinator.MinCreationTimestamp;
+            uint? effectiveMax = input.MaxCreationTimestamp is { } m2
+                ? (m2 > 0u ? m2 : null)
+                : coordinator.MaxCreationTimestamp;
+            coordinator.SetCreationTimestampRange(effectiveMin, effectiveMax);
+        }
+
         _stateStore.Update(s =>
         {
             if (parsedTarget is not null) s.TargetInput = parsedTarget.Suffix;
@@ -249,13 +264,18 @@ public sealed class HostSession(
                 byte[] seed = vault.DecryptPrivateSeed(record);
                 try
                 {
+                    DateTimeOffset? expiresAtUtc = input.ExpiresAtUnix is long expUnix
+                        ? DateTimeOffset.FromUnixTimeSeconds(expUnix)
+                        : null;
                     OpenPgpExportResult exported = OpenPgpArmorExporter.ExportKeyPair(new OpenPgpExportRequest(
                         PrivateSeed: seed,
                         PublicKey: Convert.FromHexString(record.PublicKeyHex),
                         CreationTimestamp: record.CreationTimestamp,
                         UserName: input.Uid ?? string.Empty,
                         UserEmail: input.Email,
-                        Passphrase: input.Passphrase));
+                        Passphrase: input.Passphrase,
+                        IncludeEncryptionSubkey: input.IncludeEncryptionSubkey,
+                        ExpiresAtUtc: expiresAtUtc));
 
                     using var pubWriter = new StreamWriter(publicStream, new UTF8Encoding(false), leaveOpen: true);
                     pubWriter.Write(exported.PublicKeyArmor);

@@ -7,6 +7,29 @@ private struct ApplySettingsPayload: Encodable {
     let autoPauseOnHit: Bool?
     let minimizeToTrayOnClose: Bool?
     let hasCompletedSetup: Bool?
+    let minCreationTimestamp: UInt32?
+    let maxCreationTimestamp: UInt32?
+    let clearTimestampRange: Bool?
+
+    init(
+        targetInput: String? = nil,
+        language: String? = nil,
+        autoPauseOnHit: Bool? = nil,
+        minimizeToTrayOnClose: Bool? = nil,
+        hasCompletedSetup: Bool? = nil,
+        minCreationTimestamp: UInt32? = nil,
+        maxCreationTimestamp: UInt32? = nil,
+        clearTimestampRange: Bool? = nil
+    ) {
+        self.targetInput = targetInput
+        self.language = language
+        self.autoPauseOnHit = autoPauseOnHit
+        self.minimizeToTrayOnClose = minimizeToTrayOnClose
+        self.hasCompletedSetup = hasCompletedSetup
+        self.minCreationTimestamp = minCreationTimestamp
+        self.maxCreationTimestamp = maxCreationTimestamp
+        self.clearTimestampRange = clearTimestampRange
+    }
 }
 private struct SetPowerTierPayload: Encodable { let tier: String }
 private struct SetDeviceEnabledPayload: Encodable { let deviceKey: String; let enabled: Bool }
@@ -19,6 +42,8 @@ private struct ExportMatchPayload: Encodable {
     let passphrase: String
     let privatePath: String
     let publicPath: String
+    let includeEncryptionSubkey: Bool
+    let expiresAtUnix: Int64?
 }
 private struct InspectSyncBundlePayload: Encodable { let bundlePath: String }
 private struct ExportSyncBundlePayload: Encodable {
@@ -268,7 +293,9 @@ extension AppModel {
         email: String,
         passphrase: String,
         privatePath: String,
-        publicPath: String
+        publicPath: String,
+        includeEncryptionSubkey: Bool = true,
+        expiresAtUnix: Int64? = nil
     ) async -> Bool {
         guard !isBusy else { return false }
         isBusy = true
@@ -283,7 +310,9 @@ extension AppModel {
                     email: email,
                     passphrase: passphrase,
                     privatePath: privatePath,
-                    publicPath: publicPath
+                    publicPath: publicPath,
+                    includeEncryptionSubkey: includeEncryptionSubkey,
+                    expiresAtUnix: expiresAtUnix
                 ),
                 as: ExportMatchResult.self
             )
@@ -293,6 +322,75 @@ extension AppModel {
             handleError(error)
             return false
         }
+    }
+
+    public func applyCreationTimestampRange() async -> Bool {
+        let minResult = Self.parseTimestampInput(draftMinCreationDate)
+        let maxResult = Self.parseTimestampInput(draftMaxCreationDate)
+        guard case .ok(let minTs) = minResult, case .ok(let maxTs) = maxResult else {
+            errorText = loc.text("SettingTimestampRangeError")
+            return false
+        }
+
+        let nowUnix = Int64(Date().timeIntervalSince1970)
+        let upperLimit = UInt64(max(2, nowUnix + 1))
+        let endExcl: UInt64 = maxTs.map { min(UInt64($0) + 1, upperLimit) } ?? upperLimit
+        let startIncl: UInt64 = minTs.map { UInt64($0) } ?? (endExcl > 946_684_800 ? 946_684_800 : 1)
+        if let maxTs, Int64(maxTs) > nowUnix || endExcl <= startIncl || (endExcl - startIncl) < 7 * 86_400 {
+            errorText = loc.text("SettingTimestampRangeError")
+            return false
+        }
+
+        var succeeded = false
+        await runAction {
+            let status = try await self.transport.send(
+                method: "applySettings",
+                params: ApplySettingsPayload(
+                    minCreationTimestamp: minTs ?? 0,
+                    maxCreationTimestamp: maxTs ?? 0,
+                    clearTimestampRange: (minTs == nil && maxTs == nil) ? true : nil
+                ),
+                as: HostStatusSnapshot.self
+            )
+            self.applyStatus(status)
+            self.flashNotice(self.loc.text("Applied"))
+            succeeded = true
+        }
+        return succeeded
+    }
+
+    private enum TimestampParseResult {
+        case ok(UInt32?)
+        case invalid
+    }
+
+    private static func parseTimestampInput(_ raw: String) -> TimestampParseResult {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return .ok(nil) }
+        if let val = UInt32(trimmed), val >= 86_400 {
+            return .ok(val)
+        }
+        let formatter = utcDateFormatter()
+        if let date = formatter.date(from: trimmed) {
+            let unix = Int64(date.timeIntervalSince1970)
+            if unix >= 86_400 && unix <= Int64(UInt32.max) {
+                return .ok(UInt32(unix))
+            }
+        }
+        return .invalid
+    }
+
+    private static func formatUtcDate(_ unix: UInt32?) -> String {
+        guard let unix, unix >= 86_400 else { return "" }
+        return utcDateFormatter().string(from: Date(timeIntervalSince1970: TimeInterval(unix)))
+    }
+
+    private static func utcDateFormatter() -> DateFormatter {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        return f
     }
 
     public func deleteMatch(_ recordId: String) async {
@@ -452,6 +550,8 @@ extension AppModel {
         selectedLanguageCode = loc.settingValue
         autoPauseOnHit = status.settings.autoPauseOnHit
         minimizeToTrayOnClose = status.settings.minimizeToTrayOnClose
+        draftMinCreationDate = Self.formatUtcDate(status.settings.minCreationTimestamp)
+        draftMaxCreationDate = Self.formatUtcDate(status.settings.maxCreationTimestamp)
 
         if case .valid(let suffix, _, let formatted, let len) = Formatting.validateKeyIdSuffix(status.settings.targetInput) {
             let previousSuffix = activeTargetSuffix

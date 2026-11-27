@@ -152,4 +152,27 @@ public sealed class CommandLineTests
             try { Directory.Delete(root, recursive: true); } catch { }
         }
     }
+
+    [Fact]
+    public void Phase3SearchTimestampRangeAndExportOptionsParseAndValidate()
+    {
+        var search = CommandLine.Parse([
+            "search", "--pattern", "DEAD*BEEF", "--since", "2020-01-01", "--until", "2020-02-01"
+        ]);
+        Assert.Equal("2020-01-01", search.Get("since"));
+        Assert.Equal("2020-02-01", search.Get("until"));
+
+        var export = CommandLine.Parse([
+            "export", "--key", "0123456789ABCDEF", "--name", "Alice", "--output", "./out",
+            "--no-encrypt-subkey", "--expires", "365d"
+        ]);
+        Assert.True(export.Has("no-encrypt-subkey"));
+        Assert.Equal("365d", export.Get("expires"));
+
+        // Invalid range (< 7 days) & invalid expiration must be rejected
+        Assert.Throws<ArgumentException>(() =>
+            CommandLine.Parse(["search", "--pattern", "CAFE", "--since", "2020-01-01", "--until", "2020-01-03"]));
+        Assert.Throws<ArgumentException>(() =>
+            CommandLine.Parse(["export", "--key", "0123456789ABCDEF", "--name", "Alice", "--output", "./out", "--expires", "1999-01-01"]));
+    }
 }

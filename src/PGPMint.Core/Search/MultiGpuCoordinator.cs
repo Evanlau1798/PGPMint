@@ -23,6 +23,8 @@ public sealed partial class MultiGpuCoordinator : IDisposable
     private int _selectedTier = (int)PowerTier.Max;
     private volatile bool _autoPauseOnHit = true;
     private int _maxGpuTemperatureCelsius;
+    private uint _minCreationTimestamp;
+    private uint _maxCreationTimestamp;
     private volatile bool _pausedExplicitly;
     private int _autoPauseTriggered;
     private bool _submissionFailed;
@@ -56,6 +58,22 @@ public sealed partial class MultiGpuCoordinator : IDisposable
         {
             int value = Volatile.Read(ref _maxGpuTemperatureCelsius);
             return value > 0 ? value : null;
+        }
+    }
+    public uint? MinCreationTimestamp
+    {
+        get
+        {
+            uint value = Volatile.Read(ref _minCreationTimestamp);
+            return value > 0u ? value : null;
+        }
+    }
+    public uint? MaxCreationTimestamp
+    {
+        get
+        {
+            uint value = Volatile.Read(ref _maxCreationTimestamp);
+            return value > 0u ? value : null;
         }
     }
     private volatile CoordinatorTelemetry _latestTelemetry;
@@ -123,6 +141,16 @@ public sealed partial class MultiGpuCoordinator : IDisposable
             Volatile.Write(ref _selectedTier, (int)resolvedTier);
             _autoPauseOnHit = persisted.AutoPauseOnHit;
             Volatile.Write(ref _maxGpuTemperatureCelsius, ThermalGuardController.NormalizeLimit(persisted.MaxGpuTemperatureCelsius) ?? 0);
+            if (CreationTimestampRange.TryValidate(persisted.MinCreationTimestamp, persisted.MaxCreationTimestamp, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), out _))
+            {
+                Volatile.Write(ref _minCreationTimestamp, persisted.MinCreationTimestamp ?? 0u);
+                Volatile.Write(ref _maxCreationTimestamp, persisted.MaxCreationTimestamp ?? 0u);
+            }
+            else
+            {
+                Volatile.Write(ref _minCreationTimestamp, 0u);
+                Volatile.Write(ref _maxCreationTimestamp, 0u);
+            }
 
             _calibrations.Clear();
             foreach (var kv in persisted.Calibrations)
@@ -199,6 +227,18 @@ public sealed partial class MultiGpuCoordinator : IDisposable
         Volatile.Write(ref _maxGpuTemperatureCelsius, normalized ?? 0);
         _stateStore.Update(s => s.MaxGpuTemperatureCelsius = normalized);
         PublishTelemetry();
+    }
+
+    public void SetCreationTimestampRange(uint? minInclusive, uint? maxInclusive)
+    {
+        CreationTimestampRange.Validate(minInclusive, maxInclusive, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        Volatile.Write(ref _minCreationTimestamp, minInclusive ?? 0u);
+        Volatile.Write(ref _maxCreationTimestamp, maxInclusive ?? 0u);
+        _stateStore.Update(s =>
+        {
+            s.MinCreationTimestamp = minInclusive;
+            s.MaxCreationTimestamp = maxInclusive;
+        });
     }
 
     public void SetTargetPattern(KeyIdPattern pattern)

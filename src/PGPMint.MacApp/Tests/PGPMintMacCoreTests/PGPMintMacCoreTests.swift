@@ -23,6 +23,15 @@ struct PGPMintMacCoreTests {
             Formatting.validateKeyIdSuffix("dead beef")
                 == .valid(suffix: "DEADBEEF", canonicalMask: "********DEADBEEF", formattedDisplay: "**** **** DEAD BEEF", fixedHexLength: 8)
         )
+        #expect(
+            Formatting.validateKeyIdSuffix("CAFE*123")
+                == .valid(suffix: "CAFE*123", canonicalMask: "********CAFE*123", formattedDisplay: "**** **** CAFE *123", fixedHexLength: 7)
+        )
+        #expect(
+            Formatting.validateKeyIdSuffix("DEAD************")
+                == .valid(suffix: "DEAD************", canonicalMask: "DEAD************", formattedDisplay: "DEAD **** **** ****", fixedHexLength: 4)
+        )
+        #expect(Formatting.validateKeyIdSuffix("****") == .invalidCharacters)
         #expect(Formatting.validateKeyIdSuffix("XYZ") == .invalidCharacters)
         #expect(Formatting.validateKeyIdSuffix("0123456789ABCDEF0") == .tooLong)
     }

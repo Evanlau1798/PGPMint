@@ -5,6 +5,7 @@ using System.Text;
 using Org.BouncyCastle.Crypto.Engines;
 using Org.BouncyCastle.Crypto.Modes;
 using Org.BouncyCastle.Crypto.Parameters;
+using Org.BouncyCastle.Math.EC.Rfc7748;
 
 namespace PGPMint.Core.Crypto;
 
@@ -14,7 +15,9 @@ public sealed record OpenPgpExportRequest(
     uint CreationTimestamp,
     string UserName,
     string? UserEmail,
-    string? Passphrase);
+    string? Passphrase,
+    bool IncludeEncryptionSubkey = true,
+    DateTimeOffset? ExpiresAtUtc = null);
 
 public sealed record OpenPgpExportResult(
     string Fingerprint,
@@ -27,13 +30,18 @@ public static class OpenPgpArmorExporter
     private const byte TagSignature = 2;
     private const byte TagSecretKey = 5;
     private const byte TagPublicKey = 6;
+    private const byte TagSecretSubkey = 7;
     private const byte TagUserId = 13;
+    private const byte TagPublicSubkey = 14;
 
+    private const byte AlgoEcdh = 18;
     private const byte AlgoEdDsaLegacy = 22;
     private const byte HashSha256 = 8;
     private const byte CipherAes256 = 9;
     private const byte S2KIteratedSalted = 3;
     private const byte S2KCountEncoded = 0xE0; // 16,777,216 bytes
+
+    private static readonly byte[] Cv25519Oid = Convert.FromHexString("0a2b060104019755010501");
 
     public static OpenPgpExportResult ExportKeyPair(OpenPgpExportRequest request)
     {
@@ -71,6 +79,22 @@ public static class OpenPgpArmorExporter
         string fingerprint = Convert.ToHexString(fingerprintBytes);
         string keyId = fingerprint[^16..];
 
+        uint? keyExpirationSeconds = null;
+        if (request.ExpiresAtUtc is { } expUtc)
+        {
+            long nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            long expUnix = expUtc.ToUnixTimeSeconds();
+            long delta = expUnix - request.CreationTimestamp;
+            if (expUnix <= nowUnix || delta <= 0 || delta > uint.MaxValue)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(request),
+                    "Expiration date must be in the future and after the key creation timestamp.");
+            }
+
+            keyExpirationSeconds = (uint)delta;
+        }
+
         byte[] pubKeyBody = OpenPgpV4Packet.BuildPublicKeyPacketBody(request.PublicKey, request.CreationTimestamp);
         byte[] secKeyBody = BuildSecretKeyBody(pubKeyBody, request.PrivateSeed, request.Passphrase);
         byte[] uidBody = Encoding.UTF8.GetBytes(uidText);
@@ -79,22 +103,110 @@ public static class OpenPgpArmorExporter
             pubKeyBody,
             uidBody,
             fingerprintBytes,
-            request.CreationTimestamp);
+            request.CreationTimestamp,
+            keyExpirationSeconds);
 
-        byte[] secretPacketStream = Combine(
-            BuildNewFormatPacket(TagSecretKey, secKeyBody),
-            BuildNewFormatPacket(TagUserId, uidBody),
-            BuildNewFormatPacket(TagSignature, selfSigBody));
+        byte[]? subPubKeyBody = null;
+        byte[]? subSecKeyBody = null;
+        byte[]? subBindingSigBody = null;
+        if (request.IncludeEncryptionSubkey)
+        {
+            byte[] scalarLe = RandomNumberGenerator.GetBytes(Ed25519KeyGenerator.KeyByteLength);
+            scalarLe[0] &= 0xF8;
+            scalarLe[31] = (byte)((scalarLe[31] & 0x7F) | 0x40);
+            byte[] subPubLe = new byte[Ed25519KeyGenerator.KeyByteLength];
+            byte[]? scalarBe = null;
+            try
+            {
+                X25519.ScalarMultBase(scalarLe, 0, subPubLe, 0);
+                scalarBe = (byte[])scalarLe.Clone();
+                Array.Reverse(scalarBe);
 
-        byte[] publicPacketStream = Combine(
-            BuildNewFormatPacket(TagPublicKey, pubKeyBody),
-            BuildNewFormatPacket(TagUserId, uidBody),
-            BuildNewFormatPacket(TagSignature, selfSigBody));
+                subPubKeyBody = BuildCv25519PublicKeyPacketBody(subPubLe, request.CreationTimestamp);
+                subSecKeyBody = BuildSecretKeyBody(subPubKeyBody, scalarBe, request.Passphrase);
+                subBindingSigBody = BuildSubkeyBindingSignatureBody(
+                    request.PrivateSeed,
+                    pubKeyBody,
+                    subPubKeyBody,
+                    fingerprintBytes,
+                    request.CreationTimestamp,
+                    keyExpirationSeconds);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(scalarLe);
+                if (scalarBe is not null)
+                {
+                    CryptographicOperations.ZeroMemory(scalarBe);
+                }
+            }
+        }
+
+        byte[] secretPacketStream = request.IncludeEncryptionSubkey
+            ? Combine(
+                BuildNewFormatPacket(TagSecretKey, secKeyBody),
+                BuildNewFormatPacket(TagUserId, uidBody),
+                BuildNewFormatPacket(TagSignature, selfSigBody),
+                BuildNewFormatPacket(TagSecretSubkey, subSecKeyBody!),
+                BuildNewFormatPacket(TagSignature, subBindingSigBody!))
+            : Combine(
+                BuildNewFormatPacket(TagSecretKey, secKeyBody),
+                BuildNewFormatPacket(TagUserId, uidBody),
+                BuildNewFormatPacket(TagSignature, selfSigBody));
+
+        byte[] publicPacketStream = request.IncludeEncryptionSubkey
+            ? Combine(
+                BuildNewFormatPacket(TagPublicKey, pubKeyBody),
+                BuildNewFormatPacket(TagUserId, uidBody),
+                BuildNewFormatPacket(TagSignature, selfSigBody),
+                BuildNewFormatPacket(TagPublicSubkey, subPubKeyBody!),
+                BuildNewFormatPacket(TagSignature, subBindingSigBody!))
+            : Combine(
+                BuildNewFormatPacket(TagPublicKey, pubKeyBody),
+                BuildNewFormatPacket(TagUserId, uidBody),
+                BuildNewFormatPacket(TagSignature, selfSigBody));
 
         string privateArmor = EncodeAsciiArmor("PGP PRIVATE KEY BLOCK", secretPacketStream);
         string publicArmor = EncodeAsciiArmor("PGP PUBLIC KEY BLOCK", publicPacketStream);
 
         return new OpenPgpExportResult(fingerprint, keyId, privateArmor, publicArmor);
+    }
+
+    public static bool TryParseExpirationInput(string? raw, DateTimeOffset nowUtc, out DateTimeOffset? expiresAtUtc)
+    {
+        expiresAtUtc = null;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return true;
+        }
+
+        string trimmed = raw.Trim();
+        if (trimmed.Equals("never", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (trimmed.Length >= 2 && (trimmed[^1] is 'd' or 'D' or 'y' or 'Y') &&
+            int.TryParse(trimmed[..^1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int amount) &&
+            amount > 0)
+        {
+            long days = trimmed[^1] is 'y' or 'Y' ? (long)amount * 365L : amount;
+            if (days > 36_500L)
+            {
+                return false;
+            }
+
+            expiresAtUtc = nowUtc.AddDays(days);
+            return true;
+        }
+
+        if (DateOnly.TryParseExact(trimmed, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out DateOnly date))
+        {
+            expiresAtUtc = new DateTimeOffset(date.Year, date.Month, date.Day, 23, 59, 59, TimeSpan.Zero);
+            return expiresAtUtc > nowUtc;
+        }
+
+        return false;
     }
 
     private static byte[] BuildSecretKeyBody(byte[] pubKeyBody, byte[] privateSeed, string? passphrase)
@@ -213,7 +325,8 @@ public static class OpenPgpArmorExporter
         byte[] pubKeyBody,
         byte[] uidBody,
         byte[] fingerprintBytes,
-        uint keyCreationTimestamp)
+        uint keyCreationTimestamp,
+        uint? keyExpirationSeconds)
     {
         uint nowUnix = (uint)Math.Max(1L, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         uint sigTime = Math.Max(keyCreationTimestamp, nowUnix);
@@ -232,6 +345,13 @@ public static class OpenPgpArmorExporter
 
         // Subpacket 27: Key Flags (0x01 Certify | 0x02 Sign)
         WriteSubpacket(hashedSubpackets, 27, new byte[] { 0x03 });
+
+        if (keyExpirationSeconds is { } expDelta)
+        {
+            byte[] expBytes = new byte[4];
+            BinaryPrimitives.WriteUInt32BigEndian(expBytes, expDelta);
+            WriteSubpacket(hashedSubpackets, 9, expBytes);
+        }
 
         // Subpacket 11: Preferred Symmetric Algorithms (AES256, AES192, AES128)
         WriteSubpacket(hashedSubpackets, 11, new byte[] { 9, 8, 7 });
@@ -284,6 +404,100 @@ public static class OpenPgpArmorExporter
         using var unhashedSubpackets = new MemoryStream();
         // Subpacket 16: Issuer Key ID (last 8 bytes of fingerprint)
         WriteSubpacket(unhashedSubpackets, 16, fingerprintBytes.AsSpan(12, 8));
+        byte[] unhashedBytes = unhashedSubpackets.ToArray();
+
+        using var sigBody = new MemoryStream();
+        sigBody.Write(sigHeaderBytes);
+        WriteUInt16BigEndian(sigBody, (ushort)unhashedBytes.Length);
+        sigBody.Write(unhashedBytes);
+        sigBody.WriteByte(digest[0]);
+        sigBody.WriteByte(digest[1]);
+        sigBody.Write(rMpi);
+        sigBody.Write(sMpi);
+        return sigBody.ToArray();
+    }
+
+    private static byte[] BuildCv25519PublicKeyPacketBody(ReadOnlySpan<byte> publicPoint32, uint creationTimestamp)
+    {
+        byte[] point = new byte[1 + publicPoint32.Length];
+        point[0] = 0x40;
+        publicPoint32.CopyTo(point.AsSpan(1));
+        byte[] qMpi = EncodeMpi(point);
+
+        using var ms = new MemoryStream(16 + qMpi.Length);
+        ms.WriteByte(0x04); // v4
+        WriteUInt32BigEndian(ms, creationTimestamp);
+        ms.WriteByte(AlgoEcdh);
+        ms.Write(Cv25519Oid);
+        ms.Write(qMpi);
+        ms.Write(new byte[] { 0x03, 0x01, HashSha256, CipherAes256 });
+        return ms.ToArray();
+    }
+
+    private static byte[] BuildSubkeyBindingSignatureBody(
+        byte[] primaryPrivateSeed,
+        byte[] primaryPubKeyBody,
+        byte[] subPubKeyBody,
+        byte[] primaryFingerprintBytes,
+        uint keyCreationTimestamp,
+        uint? keyExpirationSeconds)
+    {
+        uint nowUnix = (uint)Math.Max(1L, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        uint sigTime = Math.Max(keyCreationTimestamp, nowUnix);
+
+        using var hashedSubpackets = new MemoryStream();
+        byte[] issuerFp = new byte[21];
+        issuerFp[0] = 0x04;
+        Buffer.BlockCopy(primaryFingerprintBytes, 0, issuerFp, 1, 20);
+        WriteSubpacket(hashedSubpackets, 33, issuerFp);
+
+        byte[] sigTimeBytes = new byte[4];
+        BinaryPrimitives.WriteUInt32BigEndian(sigTimeBytes, sigTime);
+        WriteSubpacket(hashedSubpackets, 2, sigTimeBytes);
+
+        // Subpacket 27: Key Flags (0x04 Encrypt Comm | 0x08 Encrypt Storage)
+        WriteSubpacket(hashedSubpackets, 27, new byte[] { 0x0C });
+
+        if (keyExpirationSeconds is { } expDelta)
+        {
+            byte[] expBytes = new byte[4];
+            BinaryPrimitives.WriteUInt32BigEndian(expBytes, expDelta);
+            WriteSubpacket(hashedSubpackets, 9, expBytes);
+        }
+
+        byte[] hashedBytes = hashedSubpackets.ToArray();
+
+        using var sigHeader = new MemoryStream();
+        sigHeader.WriteByte(0x04); // v4
+        sigHeader.WriteByte(0x18); // Subkey Binding Signature
+        sigHeader.WriteByte(AlgoEdDsaLegacy);
+        sigHeader.WriteByte(HashSha256);
+        WriteUInt16BigEndian(sigHeader, (ushort)hashedBytes.Length);
+        sigHeader.Write(hashedBytes);
+        byte[] sigHeaderBytes = sigHeader.ToArray();
+
+        // RFC 4880 Section 5.2.4 hash input for 0x18 subkey binding signature
+        using var hashInput = new MemoryStream();
+        hashInput.WriteByte(0x99);
+        WriteUInt16BigEndian(hashInput, (ushort)primaryPubKeyBody.Length);
+        hashInput.Write(primaryPubKeyBody);
+
+        hashInput.WriteByte(0x99);
+        WriteUInt16BigEndian(hashInput, (ushort)subPubKeyBody.Length);
+        hashInput.Write(subPubKeyBody);
+
+        hashInput.Write(sigHeaderBytes);
+        hashInput.WriteByte(0x04);
+        hashInput.WriteByte(0xFF);
+        WriteUInt32BigEndian(hashInput, (uint)sigHeaderBytes.Length);
+
+        byte[] digest = SHA256.HashData(hashInput.ToArray());
+        byte[] rawSig = Ed25519KeyGenerator.Sign(primaryPrivateSeed, digest);
+        byte[] rMpi = EncodeMpi(rawSig.AsSpan(0, 32));
+        byte[] sMpi = EncodeMpi(rawSig.AsSpan(32, 32));
+
+        using var unhashedSubpackets = new MemoryStream();
+        WriteSubpacket(unhashedSubpackets, 16, primaryFingerprintBytes.AsSpan(12, 8));
         byte[] unhashedBytes = unhashedSubpackets.ToArray();
 
         using var sigBody = new MemoryStream();

@@ -20,6 +20,18 @@ internal static class SearchCommand
         string? onHitExec = options.Get("on-hit-exec") is { } rawExec
             ? HitHookRunner.ValidateExecutablePath(rawExec)
             : null;
+        bool hasSince = options.Get("since") is not null;
+        bool hasUntil = options.Get("until") is not null;
+        uint? sinceTs = null;
+        uint? untilTs = null;
+        if (hasSince || hasUntil)
+        {
+            if (hasSince && !CreationTimestampRange.TryParseInput(options.Get("since"), out sinceTs))
+                throw new ArgumentException("--since must be YYYY-MM-DD or a valid Unix timestamp.");
+            if (hasUntil && !CreationTimestampRange.TryParseInput(options.Get("until"), out untilTs))
+                throw new ArgumentException("--until must be YYYY-MM-DD or a valid Unix timestamp.");
+            CreationTimestampRange.Validate(sinceTs, untilTs, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        }
 
         string directory = Program.DataDirectory(options);
         if (!options.Has("data-dir")) AppDataPaths.PreparePasswordVaultDirectory();
@@ -58,6 +70,10 @@ internal static class SearchCommand
 
                 coordinator.Initialize();
                 coordinator.SetAutoPauseOnHit(!keepRunning);
+                if (hasSince || hasUntil)
+                {
+                    coordinator.SetCreationTimestampRange(sinceTs, untilTs);
+                }
                 if (maxTemp is { } limit)
                 {
                     coordinator.SetMaxGpuTemperatureCelsius(limit);

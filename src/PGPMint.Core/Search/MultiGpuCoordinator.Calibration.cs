@@ -20,8 +20,7 @@ public sealed partial class MultiGpuCoordinator
         PreparedKeyGroup initialGroup = keyPool.TakeNext(ct);
         Ed25519KeyPair[] keys = initialGroup.Keys;
         byte[][] pubKeys = initialGroup.PublicKeys;
-        uint end = CurrentTimestampUpperBound();
-        uint cursor = InitialTimestampCursor(end);
+        ResolveTimestampRange(out uint cursor, out uint end);
 
         try
         {

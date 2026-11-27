@@ -54,6 +54,8 @@ public final class AppModel {
     public var autoPauseOnHit = true
     public var minimizeToTrayOnClose = true
     public var selectedLanguageCode = LocalizationStore.autoCode
+    public var draftMinCreationDate = ""
+    public var draftMaxCreationDate = ""
 
     public var devices: [HostDeviceDto] = []
     public var gpuDiagnostics: [String] = []

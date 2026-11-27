@@ -86,6 +86,7 @@ public enum Formatting {
         var cleaned = ""
         var hasInvalid = false
         var hasSeparatorOnly = false
+        var fixedCount = 0
         for scalar in input.unicodeScalars {
             if CharacterSet.whitespacesAndNewlines.contains(scalar) {
                 continue
@@ -96,15 +97,20 @@ public enum Formatting {
                 continue
             }
             let upper = Character(String(ch).uppercased())
-            if !isHex(upper) {
+            if upper == "*" {
+                cleaned.append("*")
+            } else if isHex(upper) {
+                cleaned.append(upper)
+                fixedCount += 1
+            } else {
                 hasInvalid = true
+                cleaned.append(upper)
             }
-            cleaned.append(upper)
         }
         if cleaned.isEmpty {
             return hasSeparatorOnly ? .invalidCharacters : .empty
         }
-        if hasInvalid {
+        if hasInvalid || fixedCount == 0 {
             return .invalidCharacters
         }
         if cleaned.count > 16 {
@@ -112,8 +118,9 @@ public enum Formatting {
         }
         let padCount = max(0, 16 - cleaned.count)
         let canonical = String(repeating: "*", count: padCount) + cleaned
+        let suffix = String(canonical.drop(while: { $0 == "*" }))
         let formatted = formatSpaced16(canonical)
-        return .valid(suffix: cleaned, canonicalMask: canonical, formattedDisplay: formatted, fixedHexLength: cleaned.count)
+        return .valid(suffix: suffix, canonicalMask: canonical, formattedDisplay: formatted, fixedHexLength: fixedCount)
     }
 
     public static func previewForDraft(_ input: String) -> String {

@@ -85,7 +85,15 @@ public sealed class DesktopSession(IGpuBackend backend, string directory, IVault
     public IReadOnlyList<MatchedKeyRecord> Matches() =>
         (_vault ?? throw new InvalidOperationException("The vault is locked.")).LoadMatches();
 
-    public void Export(MatchedKeyRecord record, string uid, string email, string password, string privatePath, string publicPath)
+    public void Export(
+        MatchedKeyRecord record,
+        string uid,
+        string email,
+        string password,
+        string privatePath,
+        string publicPath,
+        bool includeEncryptionSubkey = true,
+        DateTimeOffset? expiresAtUtc = null)
     {
         if ((string.IsNullOrWhiteSpace(uid) && string.IsNullOrWhiteSpace(email)) || string.IsNullOrWhiteSpace(password))
             throw new ArgumentException("A UID and nonempty export passphrase are required.");
@@ -104,8 +112,15 @@ public sealed class DesktopSession(IGpuBackend backend, string directory, IVault
                 byte[] seed = vault.DecryptPrivateSeed(record);
                 try
                 {
-                    var exported = OpenPgpArmorExporter.ExportKeyPair(new(seed, Convert.FromHexString(record.PublicKeyHex),
-                        record.CreationTimestamp, uid, email, password));
+                    var exported = OpenPgpArmorExporter.ExportKeyPair(new(
+                        seed,
+                        Convert.FromHexString(record.PublicKeyHex),
+                        record.CreationTimestamp,
+                        uid,
+                        email,
+                        password,
+                        IncludeEncryptionSubkey: includeEncryptionSubkey,
+                        ExpiresAtUtc: expiresAtUtc));
                     using var pubWriter = new StreamWriter(pub, new UTF8Encoding(false), leaveOpen: true);
                     pubWriter.Write(exported.PublicKeyArmor);
                     pubWriter.Flush();

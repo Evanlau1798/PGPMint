@@ -56,6 +56,11 @@ public sealed partial class SettingsWindow : Window
             AutomationProperties.SetName(TargetInputBox, _strings["SectionTarget"]);
             TargetRuleHintText.Text = _strings["SuffixRuleHint"];
             StopToEditText.Text = _strings["StopToEditHint"];
+            TimestampRangeHeading.Text = _strings["SettingTimestampRange"];
+            TimestampSinceBox.PlaceholderText = _strings["SettingTimestampSincePlaceholder"];
+            TimestampUntilBox.PlaceholderText = _strings["SettingTimestampUntilPlaceholder"];
+            ApplyTimestampRangeButton.Content = _strings["Apply"];
+            TimestampRangeErrorText.IsVisible = false;
 
             PreferencesHeading.Text = _strings["SectionPreferences"];
             AutoPauseCheckBox.Content = _strings["SettingAutoPauseOnHit"];
@@ -96,6 +101,8 @@ public sealed partial class SettingsWindow : Window
             AutomationProperties.SetName(LanguageCombo, _strings["SettingLanguage"]);
 
             TargetInputBox.Text = state.TargetInput;
+            TimestampSinceBox.Text = CreationTimestampRange.FormatUtcDate(_session.Coordinator?.MinCreationTimestamp ?? state.MinCreationTimestamp);
+            TimestampUntilBox.Text = CreationTimestampRange.FormatUtcDate(_session.Coordinator?.MaxCreationTimestamp ?? state.MaxCreationTimestamp);
             AutoPauseCheckBox.IsChecked = state.AutoPauseOnHit;
             KeepInTrayCheckBox.IsChecked = state.MinimizeToTrayOnClose;
 
@@ -122,6 +129,9 @@ public sealed partial class SettingsWindow : Window
         bool multiGpu = coordinator.Devices.Count > 1;
 
         TargetInputBox.IsEnabled = editable;
+        TimestampSinceBox.IsEnabled = editable;
+        TimestampUntilBox.IsEnabled = editable;
+        ApplyTimestampRangeButton.IsEnabled = editable;
         StopToEditText.IsVisible = !editable;
         ValidateDraft(editable);
 
@@ -227,6 +237,31 @@ public sealed partial class SettingsWindow : Window
                 s.HasCompletedSetup = true;
             });
             TargetInputBox.Text = parsed.Suffix;
+            _ownerWindow.OnSettingsChangedFromDialog(flashApplied: true);
+            RefreshDynamicState();
+        }
+        catch { ShowError(_strings["OperationFailed"]); }
+    }
+
+    private void OnApplyTimestampRangeClick(object? sender, RoutedEventArgs e)
+    {
+        if (_session.Coordinator is not { } coordinator) return;
+        try
+        {
+            ClearError();
+            if (!CreationTimestampRange.TryParseInput(TimestampSinceBox.Text, out uint? minTs) ||
+                !CreationTimestampRange.TryParseInput(TimestampUntilBox.Text, out uint? maxTs) ||
+                !CreationTimestampRange.TryValidate(minTs, maxTs, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), out _))
+            {
+                TimestampRangeErrorText.Text = _strings["SettingTimestampRangeError"];
+                TimestampRangeErrorText.IsVisible = true;
+                return;
+            }
+
+            coordinator.SetCreationTimestampRange(minTs, maxTs);
+            TimestampSinceBox.Text = CreationTimestampRange.FormatUtcDate(minTs);
+            TimestampUntilBox.Text = CreationTimestampRange.FormatUtcDate(maxTs);
+            TimestampRangeErrorText.IsVisible = false;
             _ownerWindow.OnSettingsChangedFromDialog(flashApplied: true);
             RefreshDynamicState();
         }

@@ -8,6 +8,14 @@ internal static class ExportCommand
 {
     internal static int Run(CommandLine options)
     {
+        bool includeEncryptSubkey = !options.Has("no-encrypt-subkey");
+        DateTimeOffset? expiresAtUtc = null;
+        if (options.Get("expires") is { } rawExpires &&
+            !OpenPgpArmorExporter.TryParseExpirationInput(rawExpires, DateTimeOffset.UtcNow, out expiresAtUtc))
+        {
+            throw new ArgumentException("--expires must be 'never', YYYY-MM-DD (future UTC date), Nd, or Ny.");
+        }
+
         string directory = Program.DataDirectory(options);
         if (!options.Has("data-dir")) AppDataPaths.PreparePasswordVaultDirectory();
         using var lease = new VaultSession(directory);
@@ -22,8 +30,15 @@ internal static class ExportCommand
             try
             {
                 passphrase = SecretInput.Read("OpenPGP export passphrase (empty for unprotected): ", options.Has("password-stdin"), allowEmpty: true);
-                var exported = OpenPgpArmorExporter.ExportKeyPair(new(seed, Convert.FromHexString(record.PublicKeyHex), record.CreationTimestamp,
-                    options.Get("name")!, options.Get("email"), passphrase.Length == 0 ? null : new string(passphrase)));
+                var exported = OpenPgpArmorExporter.ExportKeyPair(new(
+                    seed,
+                    Convert.FromHexString(record.PublicKeyHex),
+                    record.CreationTimestamp,
+                    options.Get("name")!,
+                    options.Get("email"),
+                    passphrase.Length == 0 ? null : new string(passphrase),
+                    IncludeEncryptionSubkey: includeEncryptSubkey,
+                    ExpiresAtUtc: expiresAtUtc));
                 string output = Path.GetFullPath(options.Get("output")!);
                 PrivateFileSystem.CreateDirectory(output);
                 WritePair(exported, output);

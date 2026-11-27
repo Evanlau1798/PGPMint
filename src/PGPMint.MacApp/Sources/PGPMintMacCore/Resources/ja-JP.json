@@ -5,9 +5,9 @@
   },
   "strings": {
     "LanguageAuto": "システム既定",
-    "ValidationInvalidChars": "無効な文字が含まれています。0–9 と A–F のみ使用できます。",
+    "ValidationInvalidChars": "無効な文字が含まれています。0-9、A-F、および *（1文字以上の16進文字が必須）のみ使用できます。",
     "ValidationTooLong": "最大 16 桁の 16 進文字まで指定できます。",
-    "SuffixRuleHint": "1–16 桁の 16 進文字 (0–9, A–F) を指定し、16 桁の Key ID 末尾と照合します",
+    "SuffixRuleHint": "1～16文字の16進文字（0-9、A-F）と任意位置の * ワイルドカードで 16 桁の Key ID と照合",
     "TargetPlaceholder": "例: 01 2345 6789",
     "SetupTitle": "初期設定",
     "Finish": "完了",
@@ -96,6 +96,16 @@
     "SyncBundlePassphrasePrompt": "同期バンドルのパスフレーズ",
     "SyncIncludeKeysCheck": "一致した鍵を含める（暗号化）",
     "SyncExportSuccessFormat": "同期バンドルを書き出しました（{0} 鍵）",
-    "SyncImportSuccessFormat": "+{0} 候補・{1} 件の新規鍵を取り込みました"
+    "SyncImportSuccessFormat": "+{0} 候補・{1} 件の新規鍵を取り込みました",
+    "ExportIncludeEncryptSubkey": "Cv25519 暗号化サブキーを含める",
+    "ExportExpirationLabel": "有効期限",
+    "ExportExpirationNever": "無期限",
+    "ExportExpiration1Year": "1 年",
+    "ExportExpiration2Years": "2 年",
+    "ExportExpiration5Years": "5 年",
+    "SettingTimestampRange": "鍵作成日時範囲（UTC、任意）",
+    "SettingTimestampSincePlaceholder": "開始 (YYYY-MM-DD)",
+    "SettingTimestampUntilPlaceholder": "終了 (YYYY-MM-DD)",
+    "SettingTimestampRangeError": "日時範囲は 7 日間以上かつ現在時刻以前である必要があります。"
   }
 }

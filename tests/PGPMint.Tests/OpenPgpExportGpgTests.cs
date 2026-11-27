@@ -308,6 +308,151 @@ public class OpenPgpExportGpgTests
         }
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("PGPMint-Subkey!2026")]
+    public void ExportWithCv25519SubkeyEncryptsDecryptsAndSupportsPrimaryOnlyOptOutInRealGpg(string? passphrase)
+    {
+        string? gpgPath = FindGpgExecutable();
+        Assert.NotNull(gpgPath);
+
+        byte[] seed = Convert.FromHexString(Rfc8032SeedHex);
+        byte[] pub = Ed25519KeyGenerator.DerivePublicKey(seed);
+
+        OpenPgpExportResult withSubkey = OpenPgpArmorExporter.ExportKeyPair(
+            new OpenPgpExportRequest(seed, pub, Rfc8032Timestamp, "PGPMint Encrypt", "enc@pgpmint.example", passphrase, IncludeEncryptionSubkey: true));
+        OpenPgpExportResult primaryOnly = OpenPgpArmorExporter.ExportKeyPair(
+            new OpenPgpExportRequest(seed, pub, Rfc8032Timestamp, "PGPMint PrimaryOnly", "only@pgpmint.example", passphrase, IncludeEncryptionSubkey: false));
+
+        string tempRoot = Path.Combine(Path.GetTempPath(), "pms-" + Guid.NewGuid().ToString("N")[..6]);
+        string gpgHome = Path.Combine(tempRoot, "g");
+        string gpgHomeOnly = Path.Combine(tempRoot, "go");
+        Directory.CreateDirectory(gpgHome);
+        Directory.CreateDirectory(gpgHomeOnly);
+        File.WriteAllText(Path.Combine(gpgHome, "gpg-agent.conf"), "allow-loopback-pinentry\n");
+
+        try
+        {
+            var env = new Dictionary<string, string> { ["GNUPGHOME"] = FormatGpgHomeEnv(gpgPath!, gpgHome) };
+            string keyFile = Path.Combine(tempRoot, "secret-sub.asc");
+            File.WriteAllText(keyFile, withSubkey.PrivateKeyArmor);
+
+            var importArgs = new List<string> { "--batch", "--yes", "--pinentry-mode", "loopback" };
+            if (!string.IsNullOrEmpty(passphrase))
+            {
+                importArgs.Add("--passphrase");
+                importArgs.Add(passphrase);
+            }
+            importArgs.Add("--import");
+            importArgs.Add(keyFile);
+
+            var imp = RunProcess(gpgPath!, importArgs, tempRoot, env);
+            Assert.True(imp.ExitCode == 0, $"gpg --import failed: {imp.StdErr}");
+
+            var list = RunProcess(gpgPath!, new[] { "--batch", "--list-secret-keys", "--with-colons" }, tempRoot, env);
+            Assert.Equal(0, list.ExitCode);
+            string? ssbLine = list.StdOut.Split('\n').FirstOrDefault(l => l.StartsWith("ssb:"));
+            Assert.NotNull(ssbLine);
+            string[] ssbFields = ssbLine!.Split(':');
+            Assert.Equal("18", ssbFields[3]); // ECDH / Cv25519
+            Assert.Contains("e", ssbFields[11], StringComparison.OrdinalIgnoreCase);
+
+            string plainPath = Path.Combine(tempRoot, "secret-msg.txt");
+            string encPath = Path.Combine(tempRoot, "secret-msg.asc");
+            string decPath = Path.Combine(tempRoot, "secret-msg.dec");
+            const string expectedMsg = "PGPMint Cv25519 round-trip message!\n";
+            File.WriteAllText(plainPath, expectedMsg);
+
+            var enc = RunProcess(gpgPath!, new[]
+            {
+                "--batch", "--yes", "--trust-model", "always",
+                "--armor", "--encrypt", "--recipient", withSubkey.Fingerprint,
+                "--output", encPath, plainPath
+            }, tempRoot, env);
+            Assert.True(enc.ExitCode == 0, $"gpg --encrypt failed: {enc.StdErr}");
+
+            var decArgs = new List<string> { "--batch", "--yes", "--pinentry-mode", "loopback" };
+            if (!string.IsNullOrEmpty(passphrase))
+            {
+                decArgs.Add("--passphrase");
+                decArgs.Add(passphrase);
+            }
+            decArgs.Add("--decrypt");
+            decArgs.Add("--output");
+            decArgs.Add(decPath);
+            decArgs.Add(encPath);
+
+            var dec = RunProcess(gpgPath!, decArgs, tempRoot, env);
+            Assert.True(dec.ExitCode == 0, $"gpg --decrypt failed: {dec.StdErr}");
+            Assert.Equal(expectedMsg, File.ReadAllText(decPath));
+
+            // Opt-out must contain no ssb
+            var envOnly = new Dictionary<string, string> { ["GNUPGHOME"] = FormatGpgHomeEnv(gpgPath!, gpgHomeOnly) };
+            File.WriteAllText(Path.Combine(gpgHomeOnly, "gpg-agent.conf"), "allow-loopback-pinentry\n");
+            string keyOnlyFile = Path.Combine(tempRoot, "secret-only.asc");
+            File.WriteAllText(keyOnlyFile, primaryOnly.PrivateKeyArmor);
+            var impOnlyArgs = new List<string> { "--batch", "--yes", "--pinentry-mode", "loopback" };
+            if (!string.IsNullOrEmpty(passphrase))
+            {
+                impOnlyArgs.Add("--passphrase");
+                impOnlyArgs.Add(passphrase);
+            }
+            impOnlyArgs.Add("--import");
+            impOnlyArgs.Add(keyOnlyFile);
+            Assert.Equal(0, RunProcess(gpgPath!, impOnlyArgs, tempRoot, envOnly).ExitCode);
+            var listOnly = RunProcess(gpgPath!, new[] { "--batch", "--list-secret-keys", "--with-colons" }, tempRoot, envOnly);
+            Assert.DoesNotContain("ssb:", listOnly.StdOut);
+        }
+        finally
+        {
+            TryKillGpgAgent(gpgPath!, tempRoot, gpgHome);
+            TryKillGpgAgent(gpgPath!, tempRoot, gpgHomeOnly);
+            try { Directory.Delete(tempRoot, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void ExportWithExpirationDateSetsPrimaryAndSubkeyExpirationInRealGpg()
+    {
+        string? gpgPath = FindGpgExecutable();
+        Assert.NotNull(gpgPath);
+
+        byte[] seed = Convert.FromHexString(Rfc8032SeedHex);
+        byte[] pub = Ed25519KeyGenerator.DerivePublicKey(seed);
+        long expUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 365L * 86_400L;
+        DateTimeOffset expiresAt = DateTimeOffset.FromUnixTimeSeconds(expUnix);
+
+        OpenPgpExportResult exported = OpenPgpArmorExporter.ExportKeyPair(
+            new OpenPgpExportRequest(seed, pub, Rfc8032Timestamp, "PGPMint Expiring", "exp@pgpmint.example", null, true, expiresAt));
+
+        string tempRoot = Path.Combine(Path.GetTempPath(), "pmx-" + Guid.NewGuid().ToString("N")[..6]);
+        string gpgHome = Path.Combine(tempRoot, "g");
+        Directory.CreateDirectory(gpgHome);
+        try
+        {
+            var env = new Dictionary<string, string> { ["GNUPGHOME"] = FormatGpgHomeEnv(gpgPath!, gpgHome) };
+            string keyFile = Path.Combine(tempRoot, "exp.asc");
+            File.WriteAllText(keyFile, exported.PublicKeyArmor);
+            var imp = RunProcess(gpgPath!, new[] { "--batch", "--yes", "--import", keyFile }, tempRoot, env);
+            Assert.True(imp.ExitCode == 0, $"gpg --import failed: {imp.StdErr}");
+
+            var list = RunProcess(gpgPath!, new[] { "--batch", "--list-keys", "--with-colons" }, tempRoot, env);
+            Assert.Equal(0, list.ExitCode);
+            string[] lines = list.StdOut.Split('\n');
+            string? pubLine = lines.FirstOrDefault(l => l.StartsWith("pub:"));
+            string? subLine = lines.FirstOrDefault(l => l.StartsWith("sub:"));
+            Assert.NotNull(pubLine);
+            Assert.NotNull(subLine);
+            Assert.Equal(expUnix.ToString(), pubLine!.Split(':')[6]);
+            Assert.Equal(expUnix.ToString(), subLine!.Split(':')[6]);
+        }
+        finally
+        {
+            TryKillGpgAgent(gpgPath!, tempRoot, gpgHome);
+            try { Directory.Delete(tempRoot, recursive: true); } catch { }
+        }
+    }
+
     private static string ToMsysPath(string windowsPath)
     {
         string full = Path.GetFullPath(windowsPath);

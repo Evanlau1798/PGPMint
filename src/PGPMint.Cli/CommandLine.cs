@@ -16,8 +16,8 @@ internal sealed record CommandLine(string Command, IReadOnlyDictionary<string, s
             "verify" => ["backend", "device", "workgroup"],
             "benchmark" => ["backend", "device", "workgroup", "seconds", "rounds", "pattern", "mode", "timestamps"],
             "curve" => ["backend", "device", "workgroup", "pattern", "settle-seconds", "measure-seconds", "out-csv", "out-json", "data-dir", "password-stdin"],
-            "search" => ["backend", "device", "pattern", "data-dir", "seconds", "password-stdin", "tier", "max-temp", "keep-running", "status-interval", "json", "on-hit-exec"],
-            "export" => ["key", "name", "email", "output", "data-dir", "password-stdin"],
+            "search" => ["backend", "device", "pattern", "data-dir", "seconds", "password-stdin", "tier", "max-temp", "keep-running", "status-interval", "json", "on-hit-exec", "since", "until"],
+            "export" => ["key", "name", "email", "output", "data-dir", "password-stdin", "no-encrypt-subkey", "expires"],
             "sync" => ["export", "import", "progress-only", "data-dir", "windows-dpapi", "password-stdin"],
             "help" or "metal-source" => [],
             _ => throw new ArgumentException("Unknown command. Run pgpmint --help.")
@@ -29,7 +29,7 @@ internal sealed record CommandLine(string Command, IReadOnlyDictionary<string, s
             string name = args[i][2..];
             if (!allowed.Contains(name)) throw new ArgumentException($"Unsupported option --{name}.");
             string value = "true";
-            if (name is not ("json" or "password-stdin" or "keep-running" or "progress-only" or "windows-dpapi"))
+            if (name is not ("json" or "password-stdin" or "keep-running" or "progress-only" or "windows-dpapi" or "no-encrypt-subkey"))
             {
                 if (++i >= args.Length || args[i].StartsWith("--", StringComparison.Ordinal))
                     throw new ArgumentException($"Missing value for --{name}.");
@@ -51,6 +51,19 @@ internal sealed record CommandLine(string Command, IReadOnlyDictionary<string, s
         }
         if (options.TryGetValue("on-hit-exec", out string? hookExec))
             HitHookRunner.ValidateExecutablePath(hookExec);
+        if (options.TryGetValue("since", out string? sinceRaw) || options.TryGetValue("until", out _))
+        {
+            uint? sinceTs = null;
+            uint? untilTs = null;
+            if (sinceRaw is not null && !PGPMint.Core.Search.CreationTimestampRange.TryParseInput(sinceRaw, out sinceTs))
+                throw new ArgumentException("--since must be YYYY-MM-DD or a valid Unix timestamp.");
+            if (options.TryGetValue("until", out string? untilRaw) && !PGPMint.Core.Search.CreationTimestampRange.TryParseInput(untilRaw, out untilTs))
+                throw new ArgumentException("--until must be YYYY-MM-DD or a valid Unix timestamp.");
+            PGPMint.Core.Search.CreationTimestampRange.Validate(sinceTs, untilTs, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        }
+        if (options.TryGetValue("expires", out string? expiresRaw) &&
+            !PGPMint.Core.Crypto.OpenPgpArmorExporter.TryParseExpirationInput(expiresRaw, DateTimeOffset.UtcNow, out _))
+            throw new ArgumentException("--expires must be 'never', YYYY-MM-DD (future UTC date), Nd, or Ny.");
         if (options.TryGetValue("backend", out string? backend) && backend is not ("auto" or "vulkan" or "opencl" or "metal"))
             throw new ArgumentException("Backend must be auto, vulkan, opencl or metal.");
         if (options.TryGetValue("workgroup", out string? group) && group is not ("64" or "128" or "256"))

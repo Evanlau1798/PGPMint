@@ -6,7 +6,7 @@ namespace PGPMint.Core.Gpu;
 
 public static class VulkanSpirvSource
 {
-    public const string KernelVersion = "vulkan-sha1-four-v4";
+    public const string KernelVersion = "vulkan-sha1-four-v5";
     public const int DefaultWorkgroupSize = 128;
 
     private const uint SpirvMagic = 0x07230203u;
@@ -98,12 +98,14 @@ public static class VulkanSpirvSource
         // Pre-register constants up front so type section stays well-formed.
         Cu(0u);
         Cu(1u);
+        Cu(2u);
         Cu(5u);
         Cu(30u);
         Cu(32u);
         Cu(77u);
         Cu(0xFFFFFFFFu);
         Cu(unchecked(0u - constants[3]));
+        Cu(unchecked(0u - 0xC3D2E1F0u));
         Cu(0x67452301u);
         Cu(0xEFCDAB89u);
         Cu(0x98BADCFEu);
@@ -214,7 +216,7 @@ public static class VulkanSpirvSource
 
         uint pFirst = pc[0], pCount = pc[1], pMaskLow = pc[2], pTargetLow = pc[3];
         uint pMaskHigh = pc[4], pTargetHigh = pc[5], pCap = pc[6], pStride = pc[7], pMode = pc[8];
-        uint tLowNoK3 = IAdd(pTargetLow, cNegK3);
+        uint tLowNoK3 = IAdd(Rotl(IAdd(pTargetLow, Cu(unchecked(0u - 0xC3D2E1F0u))), 2), cNegK3);
 
         uint pKVec = b.NewId(); b.EmitFunc(OpAccessChain, tPtrUboUVec4, pKVec, vUbo, c1);
         uint kVec = b.NewId(); b.EmitFunc(OpLoad, tUVec4, kVec, pKVec);
@@ -328,7 +330,8 @@ public static class VulkanSpirvSource
                     uint isFullLow = BinOp(OpIEqual, tBool, pMaskLow, cAllOnes);
                     uint eqFast = BinOp(OpIEqual, tBool, a76Nk, tLowNoK3);
                     uint a76Full = IAdd(a76Nk, kv);
-                    uint eqMasked = BinOp(OpIEqual, tBool, BAnd(a76Full, pMaskLow), pTargetLow);
+                    uint h4 = IAdd(Rotl(a76Full, 30), Cu(0xC3D2E1F0u));
+                    uint eqMasked = BinOp(OpIEqual, tBool, BAnd(h4, pMaskLow), pTargetLow);
                     uint lowOk = b.NewId();
                     b.EmitFunc(OpSelect, tBool, lowOk, isFullLow, eqFast, eqMasked);
 
@@ -343,7 +346,8 @@ public static class VulkanSpirvSource
                     uint a77 = IAdd(
                         IAdd(IAdd(ld[lane], MixOp(3, la[lane], c76, lc[lane])), Rotl(a76Full, 5)),
                         IAdd(BXor(wVecs[76][lane], twMap[masks[76]]), kv));
-                    uint highEq = BinOp(OpIEqual, tBool, BAnd(a77, pMaskHigh), pTargetHigh);
+                    uint h3 = IAdd(Rotl(a77, 30), Cu(0x10325476u));
+                    uint highEq = BinOp(OpIEqual, tBool, BAnd(h3, pMaskHigh), pTargetHigh);
                     uint allOk = BinOp(OpLogicalOr, tBool, isZeroHigh, highEq);
 
                     uint lStore = b.NewId();

@@ -116,7 +116,7 @@ public sealed record KeyIdPattern(
             }
 
             char upper = char.ToUpperInvariant(ch);
-            if (HexValue(upper) < 0)
+            if (upper != '*' && HexValue(upper) < 0)
             {
                 hasInvalidChar = true;
             }
@@ -143,13 +143,32 @@ public sealed record KeyIdPattern(
         }
 
         string canonical = cleaned.PadLeft(KeyIdHexLength, '*');
-        ulong mask = cleaned.Length == KeyIdHexLength
-            ? ulong.MaxValue
-            : (1UL << (cleaned.Length * 4)) - 1UL;
-        ulong target = Convert.ToUInt64(cleaned, 16);
+        ulong mask = 0UL;
+        ulong target = 0UL;
+        int fixedCount = 0;
 
+        foreach (char ch in canonical)
+        {
+            mask <<= 4;
+            target <<= 4;
+            int hex = HexValue(ch);
+            if (hex >= 0)
+            {
+                mask |= 0xFUL;
+                target |= (ulong)(uint)hex;
+                fixedCount++;
+            }
+        }
+
+        if (fixedCount == 0)
+        {
+            error = KeyIdValidationError.InvalidCharacters;
+            return false;
+        }
+
+        string suffix = canonical.TrimStart('*');
         string formatted = $"{canonical[..4]} {canonical[4..8]} {canonical[8..12]} {canonical[12..16]}";
-        pattern = new KeyIdPattern(cleaned, canonical, formatted, cleaned.Length, mask, target);
+        pattern = new KeyIdPattern(suffix, canonical, formatted, fixedCount, mask, target);
         error = KeyIdValidationError.None;
         return true;
     }

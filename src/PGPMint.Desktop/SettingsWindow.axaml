@@ -45,6 +45,23 @@
           <TextBlock x:Name="TargetValidationText" IsVisible="False" Foreground="#EF4444" FontSize="12" TextWrapping="Wrap" />
           <TextBlock x:Name="StopToEditText" IsVisible="False" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" />
           <TextBlock x:Name="TargetRuleHintText" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12" TextWrapping="Wrap" />
+          <TextBlock x:Name="TimestampRangeHeading" FontSize="12.5" FontWeight="SemiBold" Margin="0,4,0,0" />
+          <Grid ColumnDefinitions="*,*,Auto" ColumnSpacing="8">
+            <TextBox x:Name="TimestampSinceBox"
+                     Grid.Column="0"
+                     FontFamily="{StaticResource MonoFont}"
+                     FontSize="12.5" />
+            <TextBox x:Name="TimestampUntilBox"
+                     Grid.Column="1"
+                     FontFamily="{StaticResource MonoFont}"
+                     FontSize="12.5" />
+            <Button x:Name="ApplyTimestampRangeButton"
+                    Grid.Column="2"
+                    MinWidth="76"
+                    Height="34"
+                    Click="OnApplyTimestampRangeClick" />
+          </Grid>
+          <TextBlock x:Name="TimestampRangeErrorText" IsVisible="False" Foreground="#EF4444" FontSize="12" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
 

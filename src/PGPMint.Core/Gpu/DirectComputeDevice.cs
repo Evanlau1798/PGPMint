@@ -207,7 +207,7 @@ public sealed class DirectComputeDevice : IGpuSearchDevice
         _paramsStaging[6] = (uint)capacity;
         _paramsStaging[7] = totalThreads;
         _paramsStaging[8] = (uint)resultMode;
-        _paramsStaging[9] = unchecked(plan.LowTarget - Sha1ScheduleHelper.PhaseConstants[3]);
+        _paramsStaging[9] = plan.LowTargetExactNoK3;
 
         UploadConstantBuffer(_paramsBuffer, _paramsStaging);
 

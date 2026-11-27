@@ -5,9 +5,9 @@
   },
   "strings": {
     "LanguageAuto": "跟随系统",
-    "ValidationInvalidChars": "含非法字符，仅允许 0–9 与 A–F",
+    "ValidationInvalidChars": "包含无效字符，仅允许 0-9、A-F 与 *（至少需包含 1 个十六进制字符）",
     "ValidationTooLong": "最多仅支持 16 位十六进制字符",
-    "SuffixRuleHint": "仅支持 1–16 位十六进制字符（0–9、A–F），匹配 16 位 Key ID 末尾",
+    "SuffixRuleHint": "支持 1-16 位十六进制字符（0-9、A-F）及任意位置 * 通配符，匹配 16 位 Key ID",
     "TargetPlaceholder": "例如 01 2345 6789",
     "SetupTitle": "初始设置",
     "Finish": "完成",
@@ -96,6 +96,16 @@
     "SyncBundlePassphrasePrompt": "同步包保护密码",
     "SyncIncludeKeysCheck": "一并打包已命中密钥（加密）",
     "SyncExportSuccessFormat": "已导出同步包（{0} 条密钥）",
-    "SyncImportSuccessFormat": "已导入 +{0} 次进度、{1} 把新密钥"
+    "SyncImportSuccessFormat": "已导入 +{0} 次进度、{1} 把新密钥",
+    "ExportIncludeEncryptSubkey": "包含 Cv25519 加密子密钥",
+    "ExportExpirationLabel": "到期时间",
+    "ExportExpirationNever": "永不过期",
+    "ExportExpiration1Year": "1 年后",
+    "ExportExpiration2Years": "2 年后",
+    "ExportExpiration5Years": "5 年后",
+    "SettingTimestampRange": "密钥创建时间范围（UTC，选填）",
+    "SettingTimestampSincePlaceholder": "起始 (YYYY-MM-DD)",
+    "SettingTimestampUntilPlaceholder": "结束 (YYYY-MM-DD)",
+    "SettingTimestampRangeError": "时间范围跨度必须至少 7 天，且不得晚于当前时间。"
   }
 }

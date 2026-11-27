@@ -5,9 +5,9 @@
   },
   "strings": {
     "LanguageAuto": "시스템 기본값",
-    "ValidationInvalidChars": "잘못된 문자가 있습니다. 0–9 및 A–F만 허용됩니다.",
+    "ValidationInvalidChars": "잘못된 문자가 포함되어 있습니다. 0-9, A-F 및 *(16진수 1자 이상 필수)만 허용됩니다.",
     "ValidationTooLong": "최대 16자리 16진수 문자까지 입력할 수 있습니다.",
-    "SuffixRuleHint": "1–16자리 16진수(0–9, A–F)를 입력하면 16자리 Key ID 끝부분과 일치 여부를 검사합니다",
+    "SuffixRuleHint": "1-16자리 16진수(0-9, A-F)와 선택적 * 와일드카드로 16자리 Key ID와 일치시킵니다.",
     "TargetPlaceholder": "예: 01 2345 6789",
     "SetupTitle": "초기 설정",
     "Finish": "완료",
@@ -96,6 +96,16 @@
     "SyncBundlePassphrasePrompt": "동기화 번들 암호",
     "SyncIncludeKeysCheck": "일치하는 키 포함 (암호화)",
     "SyncExportSuccessFormat": "동기화 번들 내보냄 ({0}개 키)",
-    "SyncImportSuccessFormat": "+{0}개 후보, 새 키 {1}개 가져옴"
+    "SyncImportSuccessFormat": "+{0}개 후보, 새 키 {1}개 가져옴",
+    "ExportIncludeEncryptSubkey": "Cv25519 암호화 하위 키 포함",
+    "ExportExpirationLabel": "만료 기간",
+    "ExportExpirationNever": "만료 없음",
+    "ExportExpiration1Year": "1년",
+    "ExportExpiration2Years": "2년",
+    "ExportExpiration5Years": "5년",
+    "SettingTimestampRange": "키 생성 타임스탬프 범위 (UTC, 선택 사항)",
+    "SettingTimestampSincePlaceholder": "시작 (YYYY-MM-DD)",
+    "SettingTimestampUntilPlaceholder": "종료 (YYYY-MM-DD)",
+    "SettingTimestampRangeError": "타임스탬프 범위는 최소 7일 이상이어야 하며 오늘을 초과할 수 없습니다."
   }
 }

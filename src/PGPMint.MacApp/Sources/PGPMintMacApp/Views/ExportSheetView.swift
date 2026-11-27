@@ -11,6 +11,8 @@ struct ExportSheetView: View {
     @State private var uid = ""
     @State private var email = ""
     @State private var passphrase = ""
+    @State private var includeEncryptionSubkey = true
+    @State private var expirationDays: Int = 0
     @State private var validationMessage = ""
 
     private var canSubmit: Bool {
@@ -36,6 +38,22 @@ struct ExportSheetView: View {
                     .textFieldStyle(.roundedBorder)
                 SecureField(model.loc.text("ExportPassword"), text: $passphrase)
                     .textFieldStyle(.roundedBorder)
+                Toggle(model.loc.text("ExportIncludeEncryptSubkey"), isOn: $includeEncryptionSubkey)
+                    .toggleStyle(.checkbox)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack {
+                    Text(model.loc.text("ExportExpirationLabel"))
+                        .font(.system(size: 12.5))
+                    Spacer()
+                    Picker(model.loc.text("ExportExpirationLabel"), selection: $expirationDays) {
+                        Text(model.loc.text("ExportExpirationNever")).tag(0)
+                        Text(model.loc.text("ExportExpiration1Year")).tag(365)
+                        Text(model.loc.text("ExportExpiration2Years")).tag(730)
+                        Text(model.loc.text("ExportExpiration5Years")).tag(1825)
+                    }
+                    .labelsHidden()
+                    .frame(width: 140)
+                }
             }
 
             if !validationMessage.isEmpty {
@@ -89,6 +107,10 @@ struct ExportSheetView: View {
         let capturedUid = uid
         let capturedEmail = email
         let capturedPassphrase = passphrase
+        let capturedIncludeSubkey = includeEncryptionSubkey
+        let capturedExpUnix: Int64? = expirationDays > 0
+            ? Int64(Date().timeIntervalSince1970) + Int64(expirationDays) * 86_400
+            : nil
         passphrase = ""
 
         Task {
@@ -98,7 +120,9 @@ struct ExportSheetView: View {
                 email: capturedEmail,
                 passphrase: capturedPassphrase,
                 privatePath: privateUrl.path,
-                publicPath: publicUrl.path
+                publicPath: publicUrl.path,
+                includeEncryptionSubkey: capturedIncludeSubkey,
+                expiresAtUnix: capturedExpUnix
             )
             if ok {
                 dismiss()

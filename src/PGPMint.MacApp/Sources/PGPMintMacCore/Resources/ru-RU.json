@@ -5,9 +5,9 @@
   },
   "strings": {
     "LanguageAuto": "Системный",
-    "ValidationInvalidChars": "Недопустимые символы. Разрешены только 0–9 и A–F.",
+    "ValidationInvalidChars": "Недопустимые символы. Разрешены только 0-9, A-F и * (минимум один hex-символ).",
     "ValidationTooLong": "Максимальная длина — 16 шестнадцатеричных символов.",
-    "SuffixRuleHint": "1–16 шестнадцатеричных символов (0–9, A–F) в конце 16-символьного Key ID",
+    "SuffixRuleHint": "1-16 hex-символов (0-9, A-F) и необязательные шаблоны * для сопоставления с 16-символьным Key ID",
     "TargetPlaceholder": "напр. 01 2345 6789",
     "SetupTitle": "Начальная настройка",
     "Finish": "Готово",
@@ -96,6 +96,16 @@
     "SyncBundlePassphrasePrompt": "Пароль пакета синхронизации",
     "SyncIncludeKeysCheck": "Включить найденные ключи (шифрование)",
     "SyncExportSuccessFormat": "Пакет экспортирован ({0} ключей)",
-    "SyncImportSuccessFormat": "Импортировано +{0} кандидатов, {1} новых ключей"
+    "SyncImportSuccessFormat": "Импортировано +{0} кандидатов, {1} новых ключей",
+    "ExportIncludeEncryptSubkey": "Включить подключ шифрования Cv25519",
+    "ExportExpirationLabel": "Срок действия",
+    "ExportExpirationNever": "Бессрочно",
+    "ExportExpiration1Year": "1 год",
+    "ExportExpiration2Years": "2 года",
+    "ExportExpiration5Years": "5 лет",
+    "SettingTimestampRange": "Диапазон времени создания ключа (UTC, необязательно)",
+    "SettingTimestampSincePlaceholder": "Начало (YYYY-MM-DD)",
+    "SettingTimestampUntilPlaceholder": "Конец (YYYY-MM-DD)",
+    "SettingTimestampRangeError": "Диапазон должен составлять не менее 7 дней и не превышать текущую дату."
   }
 }

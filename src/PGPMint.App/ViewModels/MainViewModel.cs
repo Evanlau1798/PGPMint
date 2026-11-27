@@ -132,6 +132,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private bool _wasVaultFull;
     [ObservableProperty] private string _draftErrorText = string.Empty;
     [ObservableProperty] private bool _canApplyDraftTarget;
+    [ObservableProperty] private string _draftMinCreationDate = string.Empty;
+    [ObservableProperty] private string _draftMaxCreationDate = string.Empty;
+    [ObservableProperty] private string _timestampRangeErrorText = string.Empty;
+    [ObservableProperty] private bool _hasTimestampRangeError;
     public bool CanFinishSetup => HasHardwareGpu && IsDraftValid;
 
     // Live telemetry & 4-tier efficiency control (Eco / Balanced / Efficiency / Max)
@@ -227,6 +231,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         _coordinator.Initialize();
         SelectedMaxGpuTempLimitValue = _coordinator.MaxGpuTemperatureCelsius ?? 0;
+        DraftMinCreationDate = CreationTimestampRange.FormatUtcDate(_coordinator.MinCreationTimestamp);
+        DraftMaxCreationDate = CreationTimestampRange.FormatUtcDate(_coordinator.MaxCreationTimestamp);
         RebuildMaxGpuTempOptions();
         HasHardwareGpu = _coordinator.Devices.Count > 0;
 

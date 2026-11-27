@@ -221,6 +221,64 @@ public sealed class HostProtocolTests
     }
 
     [Fact]
+    public async Task ApplySettingsTimestampRangeAndExportSubkeyExpirationRpcWorkEndToEnd()
+    {
+        using var temp = new TempDirectory();
+        var secrets = new InMemorySecretStore();
+        var backend = new DeterministicHitBackend(matchOnFirstBatch: true);
+
+        await using var session = new HostSession(backend, temp.Path, secrets);
+        await using var harness = new ServerHarness(session);
+
+        await harness.SendAsync("1", "unlockAutomatic");
+
+        // Set timestamp range
+        JsonDocument setRange = await harness.SendAsync("2", "applySettings", new
+        {
+            targetInput = "0",
+            hasCompletedSetup = true,
+            minCreationTimestamp = 1_600_000_000u,
+            maxCreationTimestamp = 1_602_000_000u
+        });
+        Assert.True(setRange.RootElement.GetProperty("ok").GetBoolean());
+        JsonElement settings = setRange.RootElement.GetProperty("result").GetProperty("settings");
+        Assert.Equal(1_600_000_000u, settings.GetProperty("minCreationTimestamp").GetUInt32());
+        Assert.Equal(1_602_000_000u, settings.GetProperty("maxCreationTimestamp").GetUInt32());
+
+        // Clear timestamp range back to defaults
+        JsonDocument clearRange = await harness.SendAsync("3", "applySettings", new { clearTimestampRange = true });
+        Assert.True(clearRange.RootElement.GetProperty("ok").GetBoolean());
+        Assert.False(clearRange.RootElement.GetProperty("result").GetProperty("settings").TryGetProperty("minCreationTimestamp", out _));
+
+        // Find a match then export with Cv25519 subkey & expiration date
+        JsonDocument start = await harness.SendAsync("4", "startSearch", new { targetInput = "0" });
+        Assert.True(start.RootElement.GetProperty("ok").GetBoolean());
+        JsonDocument hitEvt = await harness.WaitForEventAsync("matchFound", TimeSpan.FromSeconds(5));
+        string recordId = hitEvt.RootElement.GetProperty("payload").GetProperty("id").GetString()!;
+
+        string privPath = Path.Combine(temp.Path, "sub.secret.asc");
+        string pubPath = Path.Combine(temp.Path, "sub.public.asc");
+        long expUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 365L * 86_400L;
+        JsonDocument exp = await harness.SendAsync("5", "exportMatch", new
+        {
+            recordId,
+            uid = "RPC Subkey User",
+            email = "rpc@example.com",
+            passphrase = "rpc-strong-passphrase",
+            privatePath = privPath,
+            publicPath = pubPath,
+            includeEncryptionSubkey = true,
+            expiresAtUnix = expUnix
+        });
+        Assert.True(exp.RootElement.GetProperty("ok").GetBoolean());
+        Assert.True(File.Exists(privPath));
+        Assert.True(File.Exists(pubPath));
+
+        await harness.SendAsync("6", "shutdown");
+        await harness.WaitExitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task MalformedJsonAndUnknownMethodReturnStructuredErrorsWithoutCrashing()
     {
         using var temp = new TempDirectory();

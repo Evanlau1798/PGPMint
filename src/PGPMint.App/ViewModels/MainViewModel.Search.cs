@@ -223,4 +223,24 @@ public sealed partial class MainViewModel
         SelectedMaxGpuTempLimitValue = targetValue;
         _coordinator.SetMaxGpuTemperatureCelsius(normalized);
     }
+
+    public bool ApplyCreationTimestampRange()
+    {
+        if (!CreationTimestampRange.TryParseInput(DraftMinCreationDate, out uint? minTs) ||
+            !CreationTimestampRange.TryParseInput(DraftMaxCreationDate, out uint? maxTs) ||
+            !CreationTimestampRange.TryValidate(minTs, maxTs, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), out _))
+        {
+            HasTimestampRangeError = true;
+            TimestampRangeErrorText = Loc.SettingTimestampRangeError;
+            return false;
+        }
+
+        _coordinator.SetCreationTimestampRange(minTs, maxTs);
+        DraftMinCreationDate = CreationTimestampRange.FormatUtcDate(minTs);
+        DraftMaxCreationDate = CreationTimestampRange.FormatUtcDate(maxTs);
+        HasTimestampRangeError = false;
+        TimestampRangeErrorText = string.Empty;
+        FlashNotice(Loc.Applied);
+        return true;
+    }
 }

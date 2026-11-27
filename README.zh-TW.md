@@ -41,13 +41,20 @@
 
 ## 什麼是 PGPMint？
 
-PGPMint 讓您利用顯示卡高速產生 **OpenPGP v4（`Ed25519Legacy`）** 金鑰，使其 16 碼十六進位 Key ID 尾端符合任何指定字樣（例如 `6767 6767 6767` 或 `0123 4567 89AB`）。
+PGPMint 讓您利用顯示卡高速產生 **OpenPGP v4（`Ed25519Legacy`）** 金鑰，使其 16 碼十六進位 Key ID 符合任何指定樣式（支援尾綴、`DEAD************` 前綴或任意位置 `*` 萬用字元如 `CAFE*123`）。
 
-不同於需要安裝 Python、CUDA Toolkit 的命令列腳本，或會在背景遭到降速限制的瀏覽器網頁工具，PGPMint 提供 **Windows 免安裝單檔執行檔（GUI 與 CLI）**，以及內含獨立執行環境的 **macOS（`macos-arm64` / `macos-x64`）** 與 **Linux（`linux-x64` / `linux-arm64`）** 套件，支援功耗效率檔位切換、常駐系統匣／選單列背景運行與可直接用於 Git 簽章的 `.asc` 匯出。
+不同於需要安裝 Python、CUDA Toolkit 的命令列腳本，或會在背景遭到降速限制的瀏覽器網頁工具，PGPMint 提供 **Windows 免安裝單檔執行檔（GUI 與 CLI）**，以及內含獨立執行環境的 **macOS（`macos-arm64` / `macos-x64`）** 與 **Linux（`linux-x64` / `linux-arm64`）** 套件，支援功耗效率檔位切換、軟限溫保護、`.pgpmint-sync` 跨機冪等進度同步、常駐系統匣／選單列背景運行，以及支援 `Cv25519` 加密子金鑰與到期日的 `.asc` 匯出。
 
 ---
 
 ## 功能特色
+
+### v1.3.0 重點功能
+
+- **任意位置 `*` 萬用字元與前綴遮罩**：四大顯示卡後端（Vulkan、OpenCL、DirectCompute、Metal）全面支援 1–16 碼十六進位樣式、純前綴（如 `DEAD************`）與任意位置 `*` 萬用字元（如 `CAFE*123`）。
+- **軟限溫閉迴路保護與無人值守 CLI**：桌面端與 CLI 支援 `70–90 C`（CLI 支援 `65–90 C`）NVML 軟限溫調速保護（`--max-temp`），CLI 並新增 `--tier`、`--keep-running`、`--status-interval`、`--json`、`--on-hit-exec` 與內建 `pgpmint curve` 實測功耗曲線量測。
+- **跨機進度與加密金鑰庫同步（`.pgpmint-sync`）**：以 `SessionId` 累計帳本為基礎的冪等進度匯出／匯入（重複匯入不重複計算），支援對運行中的搜尋即時熱匯入，以及 Argon2id + AES-256-GCM 加密打包已命中金鑰（CLI `pgpmint sync` 與桌面端設定頁）。
+- **自訂建立時間範圍與 `Cv25519` 加密子金鑰**：支援選填 UTC 金鑰建立時間範圍（寬度至少 7 天；CLI `--since` / `--until`），且匯出 `.asc` 預設附帶相容 GnuPG 的 `Cv25519`加密子金鑰（CLI 可用 `--no-encrypt-subkey` 關閉）與選填到期日（`--expires`）。
 
 ### macOS 與 Linux 桌面版及跨平台 CLI
 
@@ -72,7 +79,7 @@ CLI 與可攜式金鑰庫使用 Argon2id + AES-256-GCM 加密儲存，並強制�
 ### Windows 應用程式
 
 - **單檔免安裝可攜式執行檔**：提供 `win-x64` 與 `win-arm64` 單一壓縮 `.exe`（GUI 與 CLI 各自獨立為單檔），免安裝 Python、CUDA Toolkit、.NET 或 Windows App Runtime。
-- **三層通用顯示卡運算引擎**：Zero-dependency 原生三層自動切換架構——優先以原生 **Vulkan Compute**（`vulkan-1.dll` + 程式化產生的 SPIR-V 1.3、`vulkan-sha1-four-v4`）發揮極致持續算力；若無 Vulkan 支援則改用原生 **`OpenCL.dll`**（`opencl-sha1-four-v4`）；再不支援則自動無縫退回 **DirectCompute**（`D3D11 cs_5_0`、`d3d11-sha1-four-v4`），支援多顯卡並行搜尋。
+- **三層通用顯示卡運算引擎**：Zero-dependency 原生三層自動切換架構——優先以原生 **Vulkan Compute**（`vulkan-1.dll` + 程式化產生的 SPIR-V 1.3、`vulkan-sha1-four-v5`）發揮極致持續算力；若無 Vulkan 支援則改用原生 **`OpenCL.dll`**（`opencl-sha1-four-v5`）；再不支援則自動無縫退回 **DirectCompute**（`D3D11 cs_5_0`、`d3d11-sha1-four-v5`），支援多顯卡並行搜尋。
 - **實測速率與 4 段功耗效率檔位**：首次執行或工作負載執行路徑（`1–4` 碼、`5–8` 碼、`9–16` 碼分組）或驅動變更時，自動執行 30 秒全曲線功耗效率校準；校準後可即時切換 `節能`、`平衡`、`效率`、`全速`，並於其他 3D 程式搶佔顯卡時自動彈性讓道。
 - **零佔用系統匣與純 CPU 浮動微窗**：關閉視窗後自動駐留系統匣釋放 WinUI 介面顯卡資源，可選擇開啟純 CPU Direct2D/DirectWrite 浮動微窗（全螢幕遊戲或播放影片時自動隱藏）。
 - **DPAPI 加密金鑰庫與 Git 專用 `.asc` 匯出**：私密種子以 Windows DPAPI（`CurrentUser`）本機加密儲存（最多 50 筆），可匯出符合 RFC 9580 / GnuPG 規格、具備 `Certify | Sign` 旗標的 `.secret.asc` 與 `.public.asc`（支援選填 AES-256-CFB 保護密碼）。
@@ -243,17 +250,17 @@ dotnet build PGPMint.sln -p:Platform=x64 -c Release
 dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64 -c Release --no-build --filter "Category!=HardwareGpu"
 
 # 透過跨平台打包腳本建置單平台發佈包
-python scripts/packaging/package.py --rid win-x64 --tag v1.2.1 --platform x64 --scratch C:\pgpmint-dist
+python scripts/packaging/package.py --rid win-x64 --tag v1.3.0 --platform x64 --scratch C:\pgpmint-dist
 ```
 
 ---
 
 ## 致謝與雲端 GPU 使用警示
 
-特別感謝 **[gputw.ai](https://gputw.ai)** 提供本次 RTX 5090（與先前 RTX 3090）效能基準測試與算力／每瓦效率曲線量測所需的 GPU 算力支援。
+特別感謝 **[gputw.ai](https://gputw.ai)** 提供 RTX 5090、RTX 3090 與 RTX 3090 x2 NVLink 效能基準測試與算力／每瓦效率曲線量測所需的 GPU 算力支援。
 
 > [!WARNING]
-> **雲端／租用 GPU 反挖礦偵測風險提醒**：PGPMint 在搜尋 OpenPGP Key ID 時會執行長時間、高滿載的 GPU SHA-1 雜湊演算（`opencl-sha1-four-v4` / `vulkan-sha1-four-v4`），其運算負載特徵、核心占用與持續功耗曲線與**加密貨幣挖礦（Proof-of-Work Mining）極為相似**。**請勿在未事先確認供應商服務條款（Terms of Service / Acceptable Use Policy）或取得授權的情況下，直接於租用或雲端 GPU 實例啟動長時間計算**，否則極可能觸發供應商後台的疑似挖礦自動偵測機制而導致**帳號遭到封鎖或停權**。
+> **雲端／租用 GPU 反挖礦偵測風險提醒**：PGPMint 在搜尋 OpenPGP Key ID 時會執行長時間、高滿載的 GPU SHA-1 雜湊演算（`opencl-sha1-four-v5` / `vulkan-sha1-four-v5`），其運算負載特徵、核心占用與持續功耗曲線與**加密貨幣挖礦（Proof-of-Work Mining）極為相似**。**請勿在未事先確認供應商服務條款（Terms of Service / Acceptable Use Policy）或取得授權的情況下，直接於租用或雲端 GPU 實例啟動長時間計算**，否則極可能觸發供應商後台的疑似挖礦自動偵測機制而導致**帳號遭到封鎖或停權**。
 
 ---
 

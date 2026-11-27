@@ -407,4 +407,14 @@ public sealed class LocalizationService : ObservableObject
     public string SyncImportButton => Get("SyncImportButton");
     public string SyncBundlePassphrasePrompt => Get("SyncBundlePassphrasePrompt");
     public string SyncIncludeKeysCheck => Get("SyncIncludeKeysCheck");
+    public string ExportIncludeEncryptSubkey => Get("ExportIncludeEncryptSubkey");
+    public string ExportExpirationLabel => Get("ExportExpirationLabel");
+    public string ExportExpirationNever => Get("ExportExpirationNever");
+    public string ExportExpiration1Year => Get("ExportExpiration1Year");
+    public string ExportExpiration2Years => Get("ExportExpiration2Years");
+    public string ExportExpiration5Years => Get("ExportExpiration5Years");
+    public string SettingTimestampRange => Get("SettingTimestampRange");
+    public string SettingTimestampSincePlaceholder => Get("SettingTimestampSincePlaceholder");
+    public string SettingTimestampUntilPlaceholder => Get("SettingTimestampUntilPlaceholder");
+    public string SettingTimestampRangeError => Get("SettingTimestampRangeError");
 }

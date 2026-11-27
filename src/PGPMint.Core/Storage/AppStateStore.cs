@@ -23,6 +23,8 @@ public sealed class AppPersistedState
     public bool StartWithWindows { get; set; }
     public bool WasRunningOnExit { get; set; }
     public int? MaxGpuTemperatureCelsius { get; set; }
+    public uint? MinCreationTimestamp { get; set; }
+    public uint? MaxCreationTimestamp { get; set; }
     public Dictionary<string, ulong> ProgressLedger { get; set; } = new(StringComparer.Ordinal);
 }
 

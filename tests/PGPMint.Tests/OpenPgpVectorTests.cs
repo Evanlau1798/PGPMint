@@ -82,20 +82,23 @@ public class OpenPgpVectorTests
     }
 
     [Fact]
-    public void GpuKernelSourcesAdvertiseAndEmitV4Contracts()
+    public void GpuKernelSourcesAdvertiseAndEmitV5Contracts()
     {
-        Assert.Equal("opencl-sha1-four-v4", OpenClKernelSource.KernelVersion);
-        Assert.Equal("d3d11-sha1-four-v4", DirectComputeShaderSource.KernelVersion);
+        Assert.Equal("opencl-sha1-four-v5", OpenClKernelSource.KernelVersion);
+        Assert.Equal("d3d11-sha1-four-v5", DirectComputeShaderSource.KernelVersion);
+        Assert.Equal("metal-sha1-four-v2", MetalKernelSource.KernelVersion);
 
         string openCl = OpenClKernelSource.BuildFourKeyOpenCl();
         Assert.Contains("ScheduleParam", openCl, StringComparison.Ordinal);
         Assert.Contains("targetLowNoK3", openCl, StringComparison.Ordinal);
+        Assert.Contains("0xc3d2e1f0u", openCl, StringComparison.Ordinal);
 
         string hlsl = DirectComputeShaderSource.BuildFourKeyHlsl();
         Assert.Contains("register(b1)", hlsl, StringComparison.Ordinal);
         Assert.Contains("targetLowNoK3", hlsl, StringComparison.Ordinal);
+        Assert.Contains("0xc3d2e1f0u", hlsl, StringComparison.Ordinal);
 
-        Assert.Equal("vulkan-sha1-four-v4", VulkanSpirvSource.KernelVersion);
+        Assert.Equal("vulkan-sha1-four-v5", VulkanSpirvSource.KernelVersion);
         byte[] spirv = VulkanSpirvSource.BuildFourKeySpirv();
         Assert.True(spirv.Length > 100 && spirv.Length % 4 == 0);
         Assert.Equal(0x07230203u, BitConverter.ToUInt32(spirv, 0));

@@ -5,9 +5,9 @@
   },
   "strings": {
     "LanguageAuto": "Systemstandard",
-    "ValidationInvalidChars": "Ungültige Zeichen. Nur 0–9 und A–F sind erlaubt.",
+    "ValidationInvalidChars": "Ungültige Zeichen. Erlaubt sind nur 0-9, A-F und * (mindestens ein Hex-Zeichen).",
     "ValidationTooLong": "Maximal 16 Hex-Zeichen zulässig.",
-    "SuffixRuleHint": "1–16 Hex-Zeichen (0–9, A–F), abgeglichen mit dem Ende der 16-stelligen Key ID",
+    "SuffixRuleHint": "1-16 Hex-Zeichen (0-9, A-F) mit optionalen * Platzhaltern für die 16-stellige Key ID",
     "TargetPlaceholder": "z. B. 01 2345 6789",
     "SetupTitle": "Ersteinrichtung",
     "Finish": "Fertigstellen",
@@ -96,6 +96,16 @@
     "SyncBundlePassphrasePrompt": "Passwort für Sync-Paket",
     "SyncIncludeKeysCheck": "Gefundene Schlüssel einschließen (verschlüsselt)",
     "SyncExportSuccessFormat": "Sync-Paket exportiert ({0} Schlüssel)",
-    "SyncImportSuccessFormat": "+{0} Kandidaten, {1} neue Schlüssel importiert"
+    "SyncImportSuccessFormat": "+{0} Kandidaten, {1} neue Schlüssel importiert",
+    "ExportIncludeEncryptSubkey": "Cv25519-Verschlüsselungsunterschlüssel einschließen",
+    "ExportExpirationLabel": "Ablaufzeit",
+    "ExportExpirationNever": "Nie",
+    "ExportExpiration1Year": "1 Jahr",
+    "ExportExpiration2Years": "2 Jahre",
+    "ExportExpiration5Years": "5 Jahre",
+    "SettingTimestampRange": "Zeitraum der Schlüsselerstellung (UTC, optional)",
+    "SettingTimestampSincePlaceholder": "Start (YYYY-MM-DD)",
+    "SettingTimestampUntilPlaceholder": "Ende (YYYY-MM-DD)",
+    "SettingTimestampRangeError": "Der Zeitraum muss mindestens 7 Tage umfassen und darf nicht in der Zukunft liegen."
   }
 }

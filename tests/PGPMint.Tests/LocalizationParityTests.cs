@@ -78,7 +78,7 @@ public sealed class LocalizationParityTests
         Dictionary<string, string> baseRef = ReadStrings(Path.Combine(appStringsDir, "en-US.json"), out _, out _);
         Dictionary<string, string> desktopRef = ReadStrings(Path.Combine(desktopStringsDir, "Desktop.en-US.json"), out _, out _);
 
-        Assert.Equal(93, baseRef.Count);
+        Assert.Equal(103, baseRef.Count);
         Assert.Equal(30, desktopRef.Count);
 
         foreach ((string code, string expectedNativeName) in ExpectedLocales)

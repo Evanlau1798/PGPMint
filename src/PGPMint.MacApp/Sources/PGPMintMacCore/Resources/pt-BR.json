@@ -5,9 +5,9 @@
   },
   "strings": {
     "LanguageAuto": "Padrão do sistema",
-    "ValidationInvalidChars": "Caracteres inválidos. Apenas 0–9 e A–F são permitidos.",
+    "ValidationInvalidChars": "Caracteres inválidos. Apenas 0-9, A-F e * (com pelo menos um caractere hex) são permitidos.",
     "ValidationTooLong": "O comprimento máximo é de 16 caracteres hexadecimais.",
-    "SuffixRuleHint": "1–16 caracteres hex (0–9, A–F), comparados ao final do Key ID de 16 caracteres",
+    "SuffixRuleHint": "1-16 caracteres hexadecimais (0-9, A-F) com curingas * opcionais para o Key ID de 16 caracteres",
     "TargetPlaceholder": "ex. 01 2345 6789",
     "SetupTitle": "Configuração inicial",
     "Finish": "Concluir",
@@ -96,6 +96,16 @@
     "SyncBundlePassphrasePrompt": "Senha do pacote",
     "SyncIncludeKeysCheck": "Incluir chaves encontradas (criptografadas)",
     "SyncExportSuccessFormat": "Pacote exportado ({0} chaves)",
-    "SyncImportSuccessFormat": "Importados +{0} candidatos, {1} chaves novas"
+    "SyncImportSuccessFormat": "Importados +{0} candidatos, {1} chaves novas",
+    "ExportIncludeEncryptSubkey": "Incluir subchave de criptografia Cv25519",
+    "ExportExpirationLabel": "Expiração",
+    "ExportExpirationNever": "Nunca",
+    "ExportExpiration1Year": "1 ano",
+    "ExportExpiration2Years": "2 anos",
+    "ExportExpiration5Years": "5 anos",
+    "SettingTimestampRange": "Intervalo de criação da chave (UTC, opcional)",
+    "SettingTimestampSincePlaceholder": "Início (YYYY-MM-DD)",
+    "SettingTimestampUntilPlaceholder": "Fim (YYYY-MM-DD)",
+    "SettingTimestampRangeError": "O intervalo deve ter pelo menos 7 dias e não pode ultrapassar hoje."
   }
 }

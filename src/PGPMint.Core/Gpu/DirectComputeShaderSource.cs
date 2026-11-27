@@ -6,7 +6,7 @@ namespace PGPMint.Core.Gpu;
 
 public static class DirectComputeShaderSource
 {
-    public const string KernelVersion = "d3d11-sha1-four-v4";
+    public const string KernelVersion = "d3d11-sha1-four-v5";
     public const int ThreadGroupSize = 128;
 
     private static readonly string[] PhaseMixExpressions =
@@ -122,14 +122,15 @@ public static class DirectComputeShaderSource
                 {
                     string comp = LaneComponents[lane];
                     sb.AppendLine($"        {{ uint a76_nk = (s{lane}.e + MIX3(s{lane}.b, s{lane}.c, s{lane}.d) + ROTL(s{lane}.a, 5u)) + (blocks[75].{comp} ^ {tw75});");
-                    sb.AppendLine("          bool lowMatches = maskLow == 0xffffffffu ? (a76_nk == targetLowNoK3) : (((a76_nk + phaseK.w) & maskLow) == targetLow);");
+                    sb.AppendLine("          bool lowMatches = maskLow == 0xffffffffu ? (a76_nk == targetLowNoK3) : (maskLow == 0u || (((ROTL(a76_nk + phaseK.w, 30u) + 0xc3d2e1f0u) & maskLow) == targetLow));");
                     sb.AppendLine("          [branch] if (lowMatches) {");
                     sb.AppendLine("              bool highMatches = true;");
                     sb.AppendLine("              [branch] if (maskHigh != 0u) {");
                     sb.AppendLine("                  uint a76 = a76_nk + phaseK.w;");
                     sb.AppendLine($"                  uint c76 = ROTL(s{lane}.b, 30u);");
                     sb.AppendLine($"                  uint a77 = (s{lane}.d + MIX3(s{lane}.a, c76, s{lane}.c) + ROTL(a76, 5u)) + ((blocks[76].{comp} ^ {tw76}) + phaseK.w);");
-                    sb.AppendLine("                  highMatches = MATCH_STATE(a77, maskHigh, targetHigh);");
+                    sb.AppendLine("                  uint h3 = ROTL(a77, 30u) + 0x10325476u;");
+                    sb.AppendLine("                  highMatches = MATCH_STATE(h3, maskHigh, targetHigh);");
                     sb.AppendLine("              }");
                     sb.AppendLine("              [branch] if (highMatches) {");
                     sb.AppendLine($"                  uint slot = {lane}u * (capacity + 1u);");

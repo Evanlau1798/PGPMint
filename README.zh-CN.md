@@ -41,13 +41,20 @@
 
 ## 什么是 PGPMint？
 
-PGPMint 利用显卡算力高速生成 **OpenPGP v4（`Ed25519Legacy`）** 密钥，使 16 位十六进制 Key ID 结尾匹配您指定的任意字符模式（例如 `6767 6767 6767` 或 `0123 4567 89AB`）。
+PGPMint 利用显卡算力高速生成 **OpenPGP v4（`Ed25519Legacy`）** 密钥，使 16 位十六进制 Key ID 匹配任意指定样式（支持后缀、`DEAD************` 前缀及任意位置 `*` 通配符如 `CAFE*123`）。
 
-相比需要配置 Python、CUDA Toolkit 的脚本工具或后台会被限速的浏览器页面，PGPMint 提供 **Windows 免安装单文件可执行程序（GUI 与 CLI）**，以及开箱即用的 **macOS（`macos-arm64` / `macos-x64`）** 与 **Linux（`linux-x64` / `linux-arm64`）** 独立发行包，支持四档功耗效率调节、系统托盘/菜单栏后台运行与可直接用于 Git 签名的 `.asc` 导出。
+相比需要配置 Python、CUDA Toolkit 的脚本工具或后台会被限速的浏览器页面，PGPMint 提供 **Windows 免安装单文件可执行程序（GUI 与 CLI）**，以及开箱即用的 **macOS（`macos-arm64` / `macos-x64`）** 与 **Linux（`linux-x64` / `linux-arm64`）** 独立发行包，支持四档功耗效率调节、软限温保护、`.pgpmint-sync` 跨机幂等进度同步、系统托盘/菜单栏后台运行，以及支持 `Cv25519` 加密子密钥与到期日的 `.asc` 导出。
 
 ---
 
 ## 功能特性
+
+### v1.3.0 重点功能
+
+- **任意位置 `*` 通配符与前缀掩码**：四大显卡后端（Vulkan、OpenCL、DirectCompute、Metal）全面支持 1–16 位十六进制样式、纯前缀（如 `DEAD************`）与任意位置 `*` 通配符（如 `CAFE*123`）。
+- **软限温闭环保护与无人值守 CLI**：桌面端与 CLI 支持 `70–90 C`（CLI 支持 `65–90 C`）NVML 软限温调速保护（`--max-temp`），CLI 新增 `--tier`、`--keep-running`、`--status-interval`、`--json`、`--on-hit-exec` 及内置 `pgpmint curve` 实测功耗曲线测量。
+- **跨机进度与加密密钥库同步（`.pgpmint-sync`）**：基于 `SessionId` 累计账本的幂等进度导出／导入（重复导入不重复累加），支持向运行中的搜索实时热导入，以及 Argon2id + AES-256-GCM 加密打包已命中密钥（CLI `pgpmint sync` 与桌面端设置页）。
+- **自定义创建时间范围与 `Cv25519` 加密子密钥**：支持选填 UTC 密钥创建时间范围（跨度至少 7 天；CLI `--since` / `--until`），且 `.asc` 导出默认附带兼容 GnuPG 的 `Cv25519` 加密子密钥（CLI 可用 `--no-encrypt-subkey` 关闭）与选填到期时间（`--expires`）。
 
 ### macOS 与 Linux 桌面版及跨平台 CLI
 
@@ -72,7 +79,7 @@ CLI 与便携密钥库使用 Argon2id + AES-256-GCM 加密，严格校验 Unix `
 ### Windows 应用程序
 
 - **单文件便携可执行程序**：`win-x64` 与 `win-arm64` 均打包为独立压缩单文件 `.exe`（GUI 与 CLI 各自为单文件），无需安装 Python、CUDA Toolkit、.NET 或 Windows App Runtime。
-- **三层通用显卡计算引擎**：零外部依赖的三层自动降级架构——优先使用原生 **Vulkan Compute**（`vulkan-1.dll` + 程序生成的 SPIR-V 1.3、`vulkan-sha1-four-v4`）发挥峰值吞吐；不可用时回退原生 **`OpenCL.dll`**（`opencl-sha1-four-v4`）；再不可用时无缝回退 **DirectCompute**（`D3D11 cs_5_0`、`d3d11-sha1-four-v4`），支持多显卡并行搜索。
+- **三层通用显卡计算引擎**：零外部依赖的三层自动降级架构——优先使用原生 **Vulkan Compute**（`vulkan-1.dll` + 程序生成的 SPIR-V 1.3、`vulkan-sha1-four-v5`）发挥峰值吞吐；不可用时回退原生 **`OpenCL.dll`**（`opencl-sha1-four-v5`）；再不可用时无缝回退 **DirectCompute**（`D3D11 cs_5_0`、`d3d11-sha1-four-v5`），支持多显卡并行搜索。
 - **实测算力与四档功耗效率调节**：针对不同后缀长度分组（`1–4` 位、`5–8` 位、`9–16` 位）与显卡配置变动自动执行 30 秒全曲线校准，校准后可实时切换 `Eco` / `Balanced` / `Efficiency` / `Max`，并在其他 3D 应用高负载时自动弹性让道。
 - **零开销系统托盘与纯 CPU 悬浮微窗**：关闭主窗口后最小化至系统托盘以释放 WinUI 渲染占用的显存与算力，并可选开启纯 CPU Direct2D/DirectWrite 悬浮微窗（全屏游戏/视频时自动隐藏）。
 - **DPAPI 加密密钥库与 Git 就绪的 `.asc` 导出**：私密种子使用 Windows DPAPI（`CurrentUser`）本地加密存储（上限 50 条），可导出兼容 RFC 9580 / GnuPG 的 `.secret.asc` 与 `.public.asc`（带 `Certify | Sign` 标志，支持 AES-256-CFB 保护密码）。
@@ -243,17 +250,17 @@ dotnet build PGPMint.sln -p:Platform=x64 -c Release
 dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64 -c Release --no-build --filter "Category!=HardwareGpu"
 
 # 使用打包脚本生成指定平台发行包
-python scripts/packaging/package.py --rid win-x64 --tag v1.2.1 --platform x64 --scratch C:\pgpmint-dist
+python scripts/packaging/package.py --rid win-x64 --tag v1.3.0 --platform x64 --scratch C:\pgpmint-dist
 ```
 
 ---
 
 ## 致谢与云端 GPU 使用警示
 
-特别感谢 **[gputw.ai](https://gputw.ai)** 提供本次 RTX 5090（以及此前 RTX 3090）性能基准测试与算力／每瓦效率曲线测量所需的 GPU 算力支持。
+特别感谢 **[gputw.ai](https://gputw.ai)** 提供 RTX 5090、RTX 3090 与 RTX 3090 x2 NVLink 性能基准测试与算力／每瓦效率曲线测量所需的 GPU 算力支持。
 
 > [!WARNING]
-> **云端／租用 GPU 反挖矿检测风险提示**：PGPMint 在搜索 OpenPGP Key ID 时会进行长时间、高满载的 GPU SHA-1 哈希演算（`opencl-sha1-four-v4` / `vulkan-sha1-four-v4`），其计算特征、GPU 占用与持续功耗表现与**加密货币挖矿（Proof-of-Work Mining）极为相似**。**在未提前确认服务商使用条款（Terms of Service / Acceptable Use Policy）或获得许可之前，请勿直接在租用或云端 GPU 实例上启动长时间计算**，否则可能触发后台的反挖矿检测机制并导致**账号被封禁或停用**。
+> **云端／租用 GPU 反挖矿检测风险提示**：PGPMint 在搜索 OpenPGP Key ID 时会进行长时间、高满载的 GPU SHA-1 哈希演算（`opencl-sha1-four-v5` / `vulkan-sha1-four-v5`），其计算特征、GPU 占用与持续功耗表现与**加密货币挖矿（Proof-of-Work Mining）极为相似**。**在未提前确认服务商使用条款（Terms of Service / Acceptable Use Policy）或获得许可之前，请勿直接在租用或云端 GPU 实例上启动长时间计算**，否则可能触发后台的反挖矿检测机制并导致**账号被封禁或停用**。
 
 ---
 

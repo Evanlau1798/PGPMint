@@ -24,8 +24,7 @@ public sealed partial class MultiGpuCoordinator
         PreparedKeyGroup initialGroup = keyPool.TakeNext(ct);
         Ed25519KeyPair[] keys = initialGroup.Keys;
         byte[][] pubKeys = initialGroup.PublicKeys;
-        uint end = CurrentTimestampUpperBound();
-        uint cursor = InitialTimestampCursor(end);
+        ResolveTimestampRange(out uint cursor, out uint end);
 
         double readyTimeSec = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
         long sampleStart = Stopwatch.GetTimestamp();
@@ -284,7 +283,7 @@ public sealed partial class MultiGpuCoordinator
         }
     }
 
-    private static void RotateKeyGroup(
+    private void RotateKeyGroup(
         KeySchedulePool keyPool,
         ref Ed25519KeyPair[] keys,
         ref byte[][] pubKeys,
@@ -297,8 +296,7 @@ public sealed partial class MultiGpuCoordinator
         PreparedKeyGroup nextGroup = keyPool.TakeNext(ct);
         keys = nextGroup.Keys;
         pubKeys = nextGroup.PublicKeys;
-        end = CurrentTimestampUpperBound();
-        cursor = InitialTimestampCursor(end);
+        ResolveTimestampRange(out cursor, out end);
     }
 
     private static void UpdateRuntimeSensor(WorkerRuntimeState rt, GpuSensorSample sensor)
@@ -432,6 +430,21 @@ public sealed partial class MultiGpuCoordinator
 
         ZeroKeyGroup(keys);
         return end;
+    }
+
+    private void ResolveTimestampRange(out uint startInclusive, out uint endExclusive)
+    {
+        uint? minTs = MinCreationTimestamp;
+        uint? maxTs = MaxCreationTimestamp;
+        long nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (CreationTimestampRange.TryValidate(minTs, maxTs, nowUnix, out _))
+        {
+            CreationTimestampRange.ResolveBounds(minTs, maxTs, nowUnix, out startInclusive, out endExclusive);
+            return;
+        }
+
+        endExclusive = CurrentTimestampUpperBound();
+        startInclusive = InitialTimestampCursor(endExclusive);
     }
 
     private static uint InitialTimestampCursor(uint upperBound) =>

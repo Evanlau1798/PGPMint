@@ -7,6 +7,8 @@ public struct HostSettingsDto: Codable, Equatable, Sendable {
     public let autoPauseOnHit: Bool
     public let minimizeToTrayOnClose: Bool
     public let powerTier: String
+    public let minCreationTimestamp: UInt32?
+    public let maxCreationTimestamp: UInt32?
 
     public init(
         hasCompletedSetup: Bool = false,
@@ -14,7 +16,9 @@ public struct HostSettingsDto: Codable, Equatable, Sendable {
         language: String = "auto",
         autoPauseOnHit: Bool = true,
         minimizeToTrayOnClose: Bool = true,
-        powerTier: String = "Max"
+        powerTier: String = "Max",
+        minCreationTimestamp: UInt32? = nil,
+        maxCreationTimestamp: UInt32? = nil
     ) {
         self.hasCompletedSetup = hasCompletedSetup
         self.targetInput = targetInput
@@ -22,6 +26,8 @@ public struct HostSettingsDto: Codable, Equatable, Sendable {
         self.autoPauseOnHit = autoPauseOnHit
         self.minimizeToTrayOnClose = minimizeToTrayOnClose
         self.powerTier = powerTier
+        self.minCreationTimestamp = minCreationTimestamp
+        self.maxCreationTimestamp = maxCreationTimestamp
     }
 }
 
@@ -204,7 +210,7 @@ public struct HostStatusSnapshot: Codable, Equatable, Sendable {
 
     public init(
         protocolVersion: Int = 1,
-        appVersion: String = "1.2.0",
+        appVersion: String = "1.3.0",
         dataDirectory: String = "",
         isUnlocked: Bool = false,
         supportsAutomaticUnlock: Bool = true,

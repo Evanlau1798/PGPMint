@@ -8,9 +8,16 @@ namespace PGPMint.Desktop;
 
 public sealed class SecretDialog : Window
 {
+    private sealed record ExpirationChoice(int Days, string DisplayName)
+    {
+        public override string ToString() => DisplayName;
+    }
+
     internal TextBox PasswordInput { get; } = new() { PasswordChar = '●' };
     internal TextBox UidInput { get; } = new();
     internal TextBox EmailInput { get; } = new();
+    internal CheckBox IncludeEncryptSubkeyCheck { get; } = new() { IsChecked = true };
+    internal ComboBox ExpirationCombo { get; } = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
 
     public SecretDialog(LocalizationService strings, bool export = false)
     {
@@ -43,6 +50,24 @@ public sealed class SecretDialog : Window
         }
 
         Input(strings[export ? "ExportPassword" : "VaultPassword"], PasswordInput);
+        if (export)
+        {
+            IncludeEncryptSubkeyCheck.Content = strings["ExportIncludeEncryptSubkey"];
+            body.Children.Add(IncludeEncryptSubkeyCheck);
+
+            body.Children.Add(new TextBlock { Text = strings["ExportExpirationLabel"], FontWeight = FontWeight.SemiBold, FontSize = 12.5 });
+            ExpirationChoice[] expOptions =
+            [
+                new(0, strings["ExportExpirationNever"]),
+                new(365, strings["ExportExpiration1Year"]),
+                new(730, strings["ExportExpiration2Years"]),
+                new(1825, strings["ExportExpiration5Years"])
+            ];
+            ExpirationCombo.ItemsSource = expOptions;
+            ExpirationCombo.SelectedIndex = 0;
+            AutomationProperties.SetName(ExpirationCombo, strings["ExportExpirationLabel"]);
+            body.Children.Add(ExpirationCombo);
+        }
         var error = new TextBlock { FontSize = 12, Foreground = Brush.Parse("#EF4444"), TextWrapping = TextWrapping.Wrap };
         body.Children.Add(error);
 
@@ -83,10 +108,22 @@ public sealed class SecretDialog : Window
 
     internal SecretInput TakeInput()
     {
-        var input = new SecretInput(UidInput.Text ?? "", EmailInput.Text ?? "", (PasswordInput.Text ?? "").ToCharArray());
+        int days = (ExpirationCombo.SelectedItem as ExpirationChoice)?.Days ?? 0;
+        DateTimeOffset? expiresAt = days > 0 ? DateTimeOffset.UtcNow.AddDays(days) : null;
+        var input = new SecretInput(
+            UidInput.Text ?? "",
+            EmailInput.Text ?? "",
+            (PasswordInput.Text ?? "").ToCharArray(),
+            IncludeEncryptSubkeyCheck.IsChecked == true,
+            expiresAt);
         PasswordInput.Text = string.Empty;
         return input;
     }
 }
 
-internal sealed record SecretInput(string Uid, string Email, char[] Password);
+internal sealed record SecretInput(
+    string Uid,
+    string Email,
+    char[] Password,
+    bool IncludeEncryptionSubkey = true,
+    DateTimeOffset? ExpiresAtUtc = null);

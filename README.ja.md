@@ -41,13 +41,20 @@
 
 ## PGPMint とは？
 
-PGPMint は、GPU 演算を用いて 16 桁の 16 進数 Key ID の末尾が任意のパターン（例：`6767 6767 6767` や `0123 4567 89AB`）に一致する **OpenPGP v4（`Ed25519Legacy`）** 鍵を高速生成します。
+PGPMint は、GPU 演算を用いて 16 桁の 16 進数 Key ID が任意のパターン（末尾一致・`DEAD************` 前方一致・`CAFE*123` のような任意位置 `*` ワイルドカード）に一致する **OpenPGP v4（`Ed25519Legacy`）** 鍵を高速生成します。
 
-Python や NVIDIA CUDA Toolkit の構築を要求する CLI ツールや、バックグラウンドでスロットリングされるブラウザ拡張とは異なり、PGPMint は **単一ファイルの Windows ポータブル実行形式**（GUI + CLI）と自己完結型の **macOS（`macos-arm64` / `macos-x64`）**・**Linux（`linux-x64` / `linux-arm64`）** パッケージとして配布され、電力効率モード、トレイ / メニューバー常駐、Git 署名対応の `.asc` エクスポートを備えています。
+Python や NVIDIA CUDA Toolkit の構築を要求する CLI ツールや、バックグラウンドでスロットリングされるブラウザ拡張とは異なり、PGPMint は **単一ファイルの Windows ポータブル実行形式**（GUI + CLI）と自己完結型の **macOS（`macos-arm64` / `macos-x64`）**・**Linux（`linux-x64` / `linux-arm64`）** パッケージとして配布され、電力効率モード、NVML 温度上限保護、`.pgpmint-sync` 進捗・鍵同期、トレイ / メニューバー常駐、`Cv25519` 暗号化サブキー・有効期限対応の `.asc` エクスポートを備えています。
 
 ---
 
 ## 主な機能
+
+### v1.3.0 の主な強化点
+
+- **任意位置 `*` ワイルドカードと前方一致マスク**：4 つの全 GPU バックエンド（Vulkan、OpenCL、DirectCompute、Metal）で 1–16 桁の末尾一致、前方一致（`DEAD************`）、任意位置 `*` ワイルドカード（`CAFE*123`）に対応。
+- **NVML 温度上限ガードとヘッドレス CLI 運用**：UI（`70–90 C`）および CLI `--max-temp`（`65–90 C`）によるサーマル制御に加え、`--tier`、`--keep-running`、`--status-interval`、`--json`、`--on-hit-exec` および内蔵 `pgpmint curve` スイープを追加。
+- **クロスデバイス進捗・保管庫同期（`.pgpmint-sync`）**：`SessionId` 台帳による重複加算なしの冪等同期、実行中セッションへのライブホットインポート、Argon2id + AES-256-GCM 暗号化バンドル（`pgpmint sync` および設定画面）。
+- **作成日時範囲指定と `Cv25519` 暗号化サブキー**：任意の UTC 作成日時範囲（最小幅 7 日、CLI `--since` / `--until`）、および `.asc` 書き出し時の GnuPG 互換 `Cv25519` 暗号化サブキー既定付与（`--no-encrypt-subkey` で無効化可）と有効期限設定（`--expires`）に対応。
 
 ### macOS・Linux デスクトップ版およびクロスプラットフォーム CLI
 
@@ -72,7 +79,7 @@ CLI とポータブル保管庫は Argon2id + AES-256-GCM 暗号化と厳格な�
 ### Windows アプリケーション
 
 - **単一ファイル ポータブル実行形式**：`win-x64` と `win-arm64` 向けに圧縮された単体 `.exe`（GUI・CLI 個別）を提供。Python、CUDA Toolkit、.NET、Windows App Runtime の事前インストールは不要です。
-- **3 層汎用 GPU 演算エンジン**：外部依存なしの自動フォールバック構成——ピーク性能を引き出すネイティブ **Vulkan Compute**（`vulkan-1.dll` + プログラム生成 SPIR-V 1.3、`vulkan-sha1-four-v4`）を最優先し、利用不可時は **`OpenCL.dll`**（`opencl-sha1-four-v4`）、さらに **DirectCompute**（`D3D11 cs_5_0`、`d3d11-sha1-four-v4`）へシームレスに切り替えます。マルチ GPU 並列探索に対応。
+- **3 層汎用 GPU 演算エンジン**：外部依存なしの自動フォールバック構成——ピーク性能を引き出すネイティブ **Vulkan Compute**（`vulkan-1.dll` + プログラム生成 SPIR-V 1.3、`vulkan-sha1-four-v5`）を最優先し、利用不可時は **`OpenCL.dll`**（`opencl-sha1-four-v5`）、さらに **DirectCompute**（`D3D11 cs_5_0`、`d3d11-sha1-four-v5`）へシームレスに切り替えます。マルチ GPU 並列探索に対応。
 - **実測に基づく 4 段階電力モード**：探索パスグループ（`1–4` 桁、`5–8` 桁、`9–16` 桁）や GPU・ドライバ構成の変更時に 30 秒のフル効率カーブを自動計測し、`省電力` / `バランス` / `効率` / `最大` をリアルタイム切替。他の 3D アプリが高負荷になると自動で譲歩します。
 - **ゼロ負荷システムトレイと純 CPU フローティング HUD**：メインウィンドウをトレイへ閉じると WinUI 3 の GPU 描画を解放し、オプションの純 CPU Direct2D/DirectWrite 製ミニ HUD が現在速度・確率・残り時間・進捗を表示します（フルスクリーンアプリ・ゲーム実行時は自動非表示）。
 - **DPAPI 暗号化保管庫と `.asc` エクスポート**：秘密鍵シードは Windows DPAPI（`CurrentUser`）で暗号化保存され（最大 50 件）、RFC 9580 / GnuPG 互換の `.secret.asc` と `.public.asc`（`Certify | Sign` フラグ付き、任意で AES-256-CFB パスフレーズ保護）を書き出せます。
@@ -243,17 +250,17 @@ dotnet build PGPMint.sln -p:Platform=x64 -c Release
 dotnet test tests\PGPMint.Tests\PGPMint.Tests.csproj -p:Platform=x64 -c Release --no-build --filter "Category!=HardwareGpu"
 
 # クロスプラットフォーム パッケージング スクリプトで配布アーカイブを生成
-python scripts/packaging/package.py --rid win-x64 --tag v1.2.1 --platform x64 --scratch C:\pgpmint-dist
+python scripts/packaging/package.py --rid win-x64 --tag v1.3.0 --platform x64 --scratch C:\pgpmint-dist
 ```
 
 ---
 
 ## 謝辞とクラウド GPU 利用上の注意
 
-本リポジトリにおける RTX 5090（および従来の RTX 3090）のベンチマークと電力効率カーブ計測に GPU 計算環境を提供してくださった **[gputw.ai](https://gputw.ai)** に心より感謝いたします。
+本リポジトリにおける RTX 5090、RTX 3090、および RTX 3090 x2 NVLink のベンチマークと電力効率カーブ計測に GPU 計算環境を提供してくださった **[gputw.ai](https://gputw.ai)** に心より感謝いたします。
 
 > [!WARNING]
-> **クラウド・レンタル GPU におけるマイニング誤検知リスクについて**：PGPMint は OpenPGP Key ID 探索のため、長期間にわたり高負荷の GPU SHA-1 ハッシュ演算（`opencl-sha1-four-v4` / `vulkan-sha1-four-v4`）を実行します。その動作パターン・GPU 使用率・連続消費電力の挙動は**暗号資産マイニング（Proof-of-Work Mining）と極めて類似**しています。**事前にプロバイダの利用規約（Terms of Service / Acceptable Use Policy）の確認や許可を得ることなく、レンタル・クラウド GPU 上でそのまま長時間計算を開始しないでください**。自動化された不正利用・マイニング検知が作動し、**アカウント停止または凍結**につながるおそれがあります。
+> **クラウド・レンタル GPU におけるマイニング誤検知リスクについて**：PGPMint は OpenPGP Key ID 探索のため、長期間にわたり高負荷の GPU SHA-1 ハッシュ演算（`opencl-sha1-four-v5` / `vulkan-sha1-four-v5`）を実行します。その動作パターン・GPU 使用率・連続消費電力の挙動は**暗号資産マイニング（Proof-of-Work Mining）と極めて類似**しています。**事前にプロバイダの利用規約（Terms of Service / Acceptable Use Policy）の確認や許可を得ることなく、レンタル・クラウド GPU 上でそのまま長時間計算を開始しないでください**。自動化された不正利用・マイニング検知が作動し、**アカウント停止または凍結**につながるおそれがあります。
 
 ---
 

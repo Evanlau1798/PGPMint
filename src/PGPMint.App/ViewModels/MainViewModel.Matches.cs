@@ -22,7 +22,13 @@ public sealed partial class MainViewModel
         FlashNotice(Loc.FormatSyncImportSuccess(res.AddedCandidates, res.ImportedKeysCount));
         return res;
     }
-    public OpenPgpExportResult ExportMatchKey(MatchedKeyRecord record, string userName, string? userEmail, string? passphrase)
+    public OpenPgpExportResult ExportMatchKey(
+        MatchedKeyRecord record,
+        string userName,
+        string? userEmail,
+        string? passphrase,
+        bool includeEncryptionSubkey = true,
+        DateTimeOffset? expiresAtUtc = null)
     {
         byte[] seed = _vaultStore.DecryptPrivateSeed(record);
         byte[] publicKey = Convert.FromHexString(record.PublicKeyHex);
@@ -34,7 +40,9 @@ public sealed partial class MainViewModel
                 CreationTimestamp: record.CreationTimestamp,
                 UserName: userName,
                 UserEmail: userEmail,
-                Passphrase: passphrase));
+                Passphrase: passphrase,
+                IncludeEncryptionSubkey: includeEncryptionSubkey,
+                ExpiresAtUtc: expiresAtUtc));
         }
         finally
         {

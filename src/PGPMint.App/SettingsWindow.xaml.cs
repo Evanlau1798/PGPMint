@@ -177,6 +177,7 @@ public sealed partial class SettingsWindow : Window
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(MainViewModel.HasDraftError)
+            or nameof(MainViewModel.HasTimestampRangeError)
             or nameof(MainViewModel.CanEditTarget)
             or nameof(MainViewModel.SelectedLanguageCode)
             or nameof(MainViewModel.SelectedMaxGpuTempLimitValue)
@@ -189,6 +190,7 @@ public sealed partial class SettingsWindow : Window
     private void UpdateVisualStates()
     {
         SettingsValidationErrorText.Visibility = ViewModel.HasDraftError ? Visibility.Visible : Visibility.Collapsed;
+        TimestampRangeErrorText.Visibility = ViewModel.HasTimestampRangeError ? Visibility.Visible : Visibility.Collapsed;
         StopToEditNotice.Visibility = !ViewModel.CanEditTarget ? Visibility.Visible : Visibility.Collapsed;
 
         ApplyTextBoxValidationVisual(SettingsInputFrame, SettingsTargetInputBox, ViewModel.HasDraftError);
@@ -290,6 +292,12 @@ public sealed partial class SettingsWindow : Window
     private void OnApplyTargetClick(object sender, RoutedEventArgs e)
     {
         ViewModel.ApplyDraftTargetFromSettings();
+        UpdateVisualStates();
+    }
+
+    private void OnApplyTimestampRangeClick(object sender, RoutedEventArgs e)
+    {
+        ViewModel.ApplyCreationTimestampRange();
         UpdateVisualStates();
     }
 

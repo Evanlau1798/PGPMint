@@ -536,6 +536,21 @@ public sealed partial class MainWindow : Window
             var nameBox = new TextBox { PlaceholderText = ViewModel.Loc.NamePlaceholder };
             var emailBox = new TextBox { PlaceholderText = ViewModel.Loc.EmailPlaceholder };
             var passBox = new PasswordBox { PlaceholderText = ViewModel.Loc.PassphrasePlaceholder };
+            var encryptSubkeyCheck = new CheckBox
+            {
+                Content = ViewModel.Loc.ExportIncludeEncryptSubkey,
+                IsChecked = true
+            };
+            var expirationCombo = new ComboBox
+            {
+                Header = ViewModel.Loc.ExportExpirationLabel,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            expirationCombo.Items.Add(new ComboBoxItem { Content = ViewModel.Loc.ExportExpirationNever, Tag = 0 });
+            expirationCombo.Items.Add(new ComboBoxItem { Content = ViewModel.Loc.ExportExpiration1Year, Tag = 365 });
+            expirationCombo.Items.Add(new ComboBoxItem { Content = ViewModel.Loc.ExportExpiration2Years, Tag = 730 });
+            expirationCombo.Items.Add(new ComboBoxItem { Content = ViewModel.Loc.ExportExpiration5Years, Tag = 1825 });
+            expirationCombo.SelectedIndex = 0;
 
             var keyIdLabel = new TextBlock
             {
@@ -551,6 +566,8 @@ public sealed partial class MainWindow : Window
             panel.Children.Add(nameBox);
             panel.Children.Add(emailBox);
             panel.Children.Add(passBox);
+            panel.Children.Add(encryptSubkeyCheck);
+            panel.Children.Add(expirationCombo);
 
             var dialog = new ContentDialog
             {
@@ -578,6 +595,9 @@ public sealed partial class MainWindow : Window
             string userName = nameBox.Text;
             string userEmail = emailBox.Text;
             string? passphrase = string.IsNullOrEmpty(passBox.Password) ? null : passBox.Password;
+            bool includeEncryptSubkey = encryptSubkeyCheck.IsChecked == true;
+            int expirationDays = (expirationCombo.SelectedItem as ComboBoxItem)?.Tag is int d ? d : 0;
+            DateTimeOffset? expiresAtUtc = expirationDays > 0 ? DateTimeOffset.UtcNow.AddDays(expirationDays) : null;
 
             var picker = new FileSavePicker
             {
@@ -594,7 +614,7 @@ public sealed partial class MainWindow : Window
             }
 
             OpenPgpExportResult exported = await Task.Run(() =>
-                ViewModel.ExportMatchKey(record, userName, userEmail, passphrase));
+                ViewModel.ExportMatchKey(record, userName, userEmail, passphrase, includeEncryptSubkey, expiresAtUtc));
 
             await FileIO.WriteTextAsync(secretFile, exported.PrivateKeyArmor);
 

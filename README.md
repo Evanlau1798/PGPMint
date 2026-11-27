@@ -41,13 +41,20 @@ English | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md) | [�
 
 ## What is PGPMint?
 
-PGPMint lets you mint custom **OpenPGP v4 (`Ed25519Legacy`)** keys whose 16-character Key ID ends with any hexadecimal pattern you choose (for example `6767 6767 6767` or `0123 4567 89AB`).
+PGPMint lets you mint custom **OpenPGP v4 (`Ed25519Legacy`)** keys whose 16-character Key ID matches any hexadecimal pattern you choose (suffixes like `6767 6767 6767`, prefixes like `DEAD************`, or mid-string `*` wildcards like `CAFE*123`).
 
-Unlike command-line tools that require installing Python or the NVIDIA CUDA Toolkit—or browser tabs that stall in the background—PGPMint ships as **standalone single-file Windows executables** (GUI + CLI) alongside self-contained **macOS (`macos-arm64` / `macos-x64`)** and **Linux (`linux-x64` / `linux-arm64`)** bundles with power-efficiency tiers, tray/menu bar keep-alive, and ready-to-sign `.asc` export.
+Unlike command-line tools that require installing Python or the NVIDIA CUDA Toolkit—or browser tabs that stall in the background—PGPMint ships as **standalone single-file Windows executables** (GUI + CLI) alongside self-contained **macOS (`macos-arm64` / `macos-x64`)** and **Linux (`linux-x64` / `linux-arm64`)** bundles with power-efficiency tiers, NVML thermal guard, idempotent `.pgpmint-sync` cross-machine sync, tray/menu bar keep-alive, and ready-to-sign `.asc` export with `Cv25519` encryption subkey support.
 
 ---
 
 ## Features
+
+### Highlights in v1.3.0
+
+- **Arbitrary-Position `*` Wildcards & Prefixes**: All four GPU compute backends (`Vulkan`, `OpenCL`, `DirectCompute`, `Metal`) support suffixes, prefixes (`DEAD************`), and arbitrary `*` wildcards (`CAFE*123`).
+- **NVML Thermal Guard & Headless CLI Ops**: Configurable GPU thermal ceiling (`70–90 C` in UI / `65–90 C` via `--max-temp`), plus `--tier`, `--keep-running`, `--status-interval`, `--json`, `--on-hit-exec`, and built-in `pgpmint curve` sweeps.
+- **Cross-Machine Sync Bundles (`.pgpmint-sync`)**: Idempotent `SessionId`-keyed candidate ledger + Argon2id/AES-256-GCM encrypted key bundles (`pgpmint sync` and Settings UI), including live hot-import into running searches.
+- **Custom Creation Timestamp Range & `Cv25519` Encryption Subkey**: Optional UTC creation timestamp range (`>= 7` days via Settings UI or `--since`/`--until`), and exported `.asc` keypairs include a GnuPG-compatible `Cv25519` encryption subkey by default (`--no-encrypt-subkey` to opt out) plus optional key expiration (`--expires`).
 
 ### macOS and Linux desktop builds
 
@@ -360,10 +367,10 @@ dotnet publish src\PGPMint.App\PGPMint.App.csproj -p:Platform=ARM64 -c Release -
 
 ## Acknowledgements & Cloud GPU Usage Notice
 
-Special thanks to **[gputw.ai](https://gputw.ai)** for providing the GPU compute resources used for the RTX 5090 (and RTX 3090) benchmark and power-efficiency curve testing in this repository.
+Special thanks to **[gputw.ai](https://gputw.ai)** for providing the GPU compute resources used for the RTX 5090, RTX 3090, and RTX 3090 x2 NVLink benchmark and power-efficiency curve testing in this repository.
 
 > [!WARNING]
-> **Cloud / Rented GPU Anti-Mining Risk Notice**: PGPMint performs sustained, compute-bound GPU SHA-1 hashing (`opencl-sha1-four-v4` / `vulkan-sha1-four-v4`). To cloud infrastructure telemetry and automated abuse-detection systems, its GPU utilization, clock profile, and continuous board power draw closely resemble cryptocurrency proof-of-work mining. **Do not start continuous PGPMint workloads on rented or cloud GPU instances without first reviewing the provider's Terms of Service / Acceptable Use Policy and obtaining explicit confirmation where required**, as unverified prolonged runs may trigger automated anti-mining enforcement and result in account suspension or termination.
+> **Cloud / Rented GPU Anti-Mining Risk Notice**: PGPMint performs sustained, compute-bound GPU SHA-1 hashing (`opencl-sha1-four-v5` / `vulkan-sha1-four-v5`). To cloud infrastructure telemetry and automated abuse-detection systems, its GPU utilization, clock profile, and continuous board power draw closely resemble cryptocurrency proof-of-work mining. **Do not start continuous PGPMint workloads on rented or cloud GPU instances without first reviewing the provider's Terms of Service / Acceptable Use Policy and obtaining explicit confirmation where required**, as unverified prolonged runs may trigger automated anti-mining enforcement and result in account suspension or termination.
 
 ---
 

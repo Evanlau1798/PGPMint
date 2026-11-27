@@ -41,7 +41,7 @@ internal static class HostSnapshotMapper
             }
         }
 
-        string appVersion = typeof(HostSession).Assembly.GetName().Version?.ToString(3) ?? "1.2.0";
+        string appVersion = typeof(HostSession).Assembly.GetName().Version?.ToString(3) ?? "1.3.0";
         PowerTier effectiveTier = coordinator?.SelectedTier ?? state.PowerTier ?? PowerTier.Max;
         var settingsDto = new HostSettingsDto(
             HasCompletedSetup: state.HasCompletedSetup,
@@ -51,7 +51,9 @@ internal static class HostSnapshotMapper
             MinimizeToTrayOnClose: state.MinimizeToTrayOnClose,
             PowerTier: effectiveTier.ToString())
         {
-            MaxGpuTemperatureCelsius = coordinator?.MaxGpuTemperatureCelsius ?? state.MaxGpuTemperatureCelsius
+            MaxGpuTemperatureCelsius = coordinator?.MaxGpuTemperatureCelsius ?? state.MaxGpuTemperatureCelsius,
+            MinCreationTimestamp = coordinator?.MinCreationTimestamp ?? state.MinCreationTimestamp,
+            MaxCreationTimestamp = coordinator?.MaxCreationTimestamp ?? state.MaxCreationTimestamp
         };
 
         return new HostStatusSnapshot(

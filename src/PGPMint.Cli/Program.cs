@@ -100,12 +100,13 @@ public static class Program
         pgpmint curve [--backend NAME] [--device KEY] [--workgroup 64|128|256]
                       [--pattern HEX] [--settle-seconds 3] [--measure-seconds 5]
                       [--out-csv PATH] [--out-json PATH] [--data-dir PATH] [--password-stdin]
-        pgpmint search --pattern HEX [--backend NAME] [--device KEY] [--data-dir PATH]
+        pgpmint search --pattern HEX_OR_MASK [--backend NAME] [--device KEY] [--data-dir PATH]
+                       [--since DATE_OR_UNIX] [--until DATE_OR_UNIX]
                        [--tier eco|balanced|efficiency|max] [--max-temp 65..90]
                        [--keep-running] [--status-interval N] [--json]
                        [--on-hit-exec PATH] [--seconds N] [--password-stdin]
         pgpmint export --key KEYID --name NAME [--email EMAIL] --output DIRECTORY
-                       [--data-dir PATH] [--password-stdin]
+                       [--no-encrypt-subkey] [--expires DATE|Nd|Ny] [--data-dir PATH] [--password-stdin]
         pgpmint sync --export FILE | --import FILE [--progress-only]
                      [--data-dir PATH | --windows-dpapi] [--password-stdin]
 

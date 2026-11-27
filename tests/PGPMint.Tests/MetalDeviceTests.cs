@@ -204,8 +204,8 @@ public sealed class MetalDeviceTests
                 {
                     uint ts = p.First + offset;
                     ulong keyId = Sha1ScheduleHelper.ComputeKeyIdFromFixedSchedule(fixedSchedule, ts);
-                    uint low = System.Numerics.BitOperations.RotateLeft(unchecked((uint)keyId - 0xC3D2E1F0u), 2);
-                    uint high = System.Numerics.BitOperations.RotateLeft(unchecked((uint)(keyId >> 32) - 0x10325476u), 2);
+                    uint low = (uint)keyId;
+                    uint high = (uint)(keyId >> 32);
                     if ((low & p.LowMask) != p.LowTarget || (high & p.HighMask) != p.HighTarget) continue;
                     uint slot = p.ResultMode == 1 ? results[index] : results[index]++;
                     if (p.ResultMode == 1) results[index] = 1;

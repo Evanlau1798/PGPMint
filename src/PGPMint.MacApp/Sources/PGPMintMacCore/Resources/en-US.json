@@ -5,9 +5,9 @@
   },
   "strings": {
     "LanguageAuto": "System Default",
-    "ValidationInvalidChars": "Invalid characters. Only 0-9 and A-F are allowed.",
+    "ValidationInvalidChars": "Invalid characters. Only 0-9, A-F, and * (with at least one hex character) are allowed.",
     "ValidationTooLong": "Maximum length is 16 hex characters.",
-    "SuffixRuleHint": "1-16 hex characters (0-9, A-F), matched against the end of the 16-char Key ID",
+    "SuffixRuleHint": "1-16 hex characters (0-9, A-F) with optional * wildcards, matched against the 16-char Key ID",
     "TargetPlaceholder": "e.g. 01 2345 6789",
     "SetupTitle": "Initial Setup",
     "Finish": "Finish",
@@ -96,6 +96,16 @@
     "SyncBundlePassphrasePrompt": "Sync bundle passphrase",
     "SyncIncludeKeysCheck": "Include matched keys (encrypted)",
     "SyncExportSuccessFormat": "Exported sync bundle ({0} keys)",
-    "SyncImportSuccessFormat": "Imported +{0} candidates, {1} new keys"
+    "SyncImportSuccessFormat": "Imported +{0} candidates, {1} new keys",
+    "ExportIncludeEncryptSubkey": "Include Cv25519 encryption subkey",
+    "ExportExpirationLabel": "Expiration",
+    "ExportExpirationNever": "Never",
+    "ExportExpiration1Year": "1 year",
+    "ExportExpiration2Years": "2 years",
+    "ExportExpiration5Years": "5 years",
+    "SettingTimestampRange": "Key Creation Timestamp Range (UTC, optional)",
+    "SettingTimestampSincePlaceholder": "Start (YYYY-MM-DD)",
+    "SettingTimestampUntilPlaceholder": "End (YYYY-MM-DD)",
+    "SettingTimestampRangeError": "Timestamp range must span at least 7 days and cannot exceed today."
   }
 }

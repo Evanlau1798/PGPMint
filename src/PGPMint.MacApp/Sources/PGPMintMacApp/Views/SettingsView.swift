@@ -87,6 +87,27 @@ struct SettingsView: View {
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Text(model.loc.text("SettingTimestampRange"))
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 2)
+
+                            HStack(spacing: 8) {
+                                TextField(model.loc.text("SettingTimestampSincePlaceholder"), text: $model.draftMinCreationDate)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .disabled(!model.canEditTarget)
+                                TextField(model.loc.text("SettingTimestampUntilPlaceholder"), text: $model.draftMaxCreationDate)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .disabled(!model.canEditTarget)
+                                Button(model.loc.text("Apply")) {
+                                    Task { _ = await model.applyCreationTimestampRange() }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(!model.canEditTarget || model.isBusy)
+                            }
                         }
                     }
 

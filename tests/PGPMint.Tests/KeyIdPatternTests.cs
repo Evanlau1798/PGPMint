@@ -48,15 +48,54 @@ public class KeyIdPatternTests
     [InlineData("   ", KeyIdValidationError.Empty)]
     [InlineData("---", KeyIdValidationError.InvalidCharacters)]
     [InlineData("___", KeyIdValidationError.InvalidCharacters)]
+    [InlineData("*", KeyIdValidationError.InvalidCharacters)]
+    [InlineData("****", KeyIdValidationError.InvalidCharacters)]
     [InlineData("1234567890ABCDEF0", KeyIdValidationError.TooLong)]
     [InlineData("GHIJ", KeyIdValidationError.InvalidCharacters)]
-    [InlineData("CAFE*123", KeyIdValidationError.InvalidCharacters)]
     [InlineData("1145@14", KeyIdValidationError.InvalidCharacters)]
     public void InvalidSuffixPatternsReportExactValidationError(string raw, KeyIdValidationError expectedError)
     {
         Assert.False(KeyIdPattern.TryParse(raw, out KeyIdPattern? parsed, out KeyIdValidationError actualError));
         Assert.Null(parsed);
         Assert.Equal(expectedError, actualError);
+    }
+
+    [Fact]
+    public void ArbitraryPositionWildcardAndPrefixPatternsParseAndMatchCorrectly()
+    {
+        KeyIdPattern prefix = KeyIdPattern.Parse("DEAD************");
+        Assert.Equal("DEAD************", prefix.CanonicalMask);
+        Assert.Equal("DEAD************", prefix.Suffix);
+        Assert.Equal("DEAD **** **** ****", prefix.FormattedDisplay);
+        Assert.Equal(4, prefix.FixedHexLength);
+        Assert.Equal(0xFFFF0000u, prefix.MaskHigh);
+        Assert.Equal(0xDEAD0000u, prefix.TargetHigh);
+        Assert.Equal(0u, prefix.MaskLow);
+        Assert.Equal(0u, prefix.TargetLow);
+        Assert.True(prefix.Matches(0xDEAD123456789ABCul));
+        Assert.False(prefix.Matches(0x123456789ABCDEADul));
+
+        KeyIdPattern middle = KeyIdPattern.Parse("CAFE*123");
+        Assert.Equal("********CAFE*123", middle.CanonicalMask);
+        Assert.Equal("CAFE*123", middle.Suffix);
+        Assert.Equal(7, middle.FixedHexLength);
+        Assert.Equal(0xFFFF0FFFu, middle.MaskLow);
+        Assert.Equal(0xCAFE0123u, middle.TargetLow);
+        Assert.True(middle.Matches(0x99998888CAFEF123ul));
+        Assert.False(middle.Matches(0x99998888CAFE1124ul));
+
+        KeyIdPattern cross = KeyIdPattern.Parse("A*******B*******");
+        Assert.Equal("A*******B*******", cross.CanonicalMask);
+        Assert.Equal(2, cross.FixedHexLength);
+        Assert.Equal(0xF0000000u, cross.MaskHigh);
+        Assert.Equal(0xA0000000u, cross.TargetHigh);
+        Assert.Equal(0xF0000000u, cross.MaskLow);
+        Assert.Equal(0xB0000000u, cross.TargetLow);
+        Assert.True(cross.Matches(0xA1234567B89ABCDEul));
+        Assert.False(cross.Matches(0xA1234567C89ABCDEul));
+
+        // CanonicalMask round-trips cleanly.
+        Assert.Equal(middle, KeyIdPattern.Parse(middle.CanonicalMask));
     }
 
     [Fact]

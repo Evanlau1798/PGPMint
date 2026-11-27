@@ -6,7 +6,7 @@ namespace PGPMint.Core.Gpu;
 
 public static class OpenClKernelSource
 {
-    public const string KernelVersion = "opencl-sha1-four-v4";
+    public const string KernelVersion = "opencl-sha1-four-v5";
 
     private static readonly string[] PhaseMixExpressions =
     {
@@ -44,7 +44,7 @@ public static class OpenClKernelSource
         sb.AppendLine($"__kernel void search({schedParamDecl}, __global uint *matches,");
         sb.AppendLine("                     uint first, uint count, uint maskLow, uint targetLow, uint maskHigh, uint targetHigh, uint capacity, uint resultMode) {");
         sb.AppendLine("    const uint stride = get_global_size(0);");
-        sb.AppendLine("    const uint targetLowNoK3 = targetLow - 0xca62c1d6u;");
+        sb.AppendLine("    const uint targetLowNoK3 = rotate(targetLow - 0xc3d2e1f0u, 2u) - 0xca62c1d6u;");
         sb.AppendLine("    #pragma unroll 1");
         sb.AppendLine("    for (uint offset = get_global_id(0); offset < count; offset += stride) {");
         sb.AppendLine("        const uint ts = first + offset;");
@@ -100,14 +100,15 @@ public static class OpenClKernelSource
                     string w75 = $"{schedAccessor}w[{75 * 4 + lane}]";
                     string w76 = $"{schedAccessor}w[{76 * 4 + lane}]";
                     sb.AppendLine($"        {{ const uint a76_nk = (s{lane}.e + MIX3(s{lane}.b, s{lane}.c, s{lane}.d) + rotate(s{lane}.a, 5u)) + ({w75} ^ {tw75});");
-                    sb.AppendLine($"          const bool lowMatches = maskLow == 0xffffffffu ? (a76_nk == targetLowNoK3) : (((a76_nk + {schedAccessor}k[3]) & maskLow) == targetLow);");
+                    sb.AppendLine($"          const bool lowMatches = maskLow == 0xffffffffu ? (a76_nk == targetLowNoK3) : (maskLow == 0u || (((rotate(a76_nk + {schedAccessor}k[3], 30u) + 0xc3d2e1f0u) & maskLow) == targetLow));");
                     sb.AppendLine("          if (lowMatches) {");
                     sb.AppendLine("              bool highMatches = true;");
                     sb.AppendLine("              if (maskHigh != 0u) {");
                     sb.AppendLine($"                  const uint a76 = a76_nk + {schedAccessor}k[3];");
                     sb.AppendLine($"                  const uint c76 = rotate(s{lane}.b, 30u);");
                     sb.AppendLine($"                  const uint a77 = (s{lane}.d + MIX3(s{lane}.a, c76, s{lane}.c) + rotate(a76, 5u)) + (({w76} ^ {tw76}) + {schedAccessor}k[3]);");
-                    sb.AppendLine("                  highMatches = MATCH_STATE(a77, maskHigh, targetHigh);");
+                    sb.AppendLine("                  const uint h3 = rotate(a77, 30u) + 0x10325476u;");
+                    sb.AppendLine("                  highMatches = MATCH_STATE(h3, maskHigh, targetHigh);");
                     sb.AppendLine("              }");
                     sb.AppendLine("              if (highMatches) {");
                     sb.AppendLine($"                  __global uint *out = matches + {lane}u * (capacity + 1u);");

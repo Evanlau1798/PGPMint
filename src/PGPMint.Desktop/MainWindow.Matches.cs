@@ -112,7 +112,15 @@ public sealed partial class MainWindow
             if (secret is null) return;
             string? pub = await SavePathAsync("ExportPublic", record.KeyId + ".public.asc");
             if (pub is null) return;
-            await Task.Run(() => _session.Export(record, input.Uid, input.Email, new string(input.Password), secret, pub));
+            await Task.Run(() => _session.Export(
+                record,
+                input.Uid,
+                input.Email,
+                new string(input.Password),
+                secret,
+                pub,
+                input.IncludeEncryptionSubkey,
+                input.ExpiresAtUtc));
             FlashNotice(L("ExportSuccess"));
         }
         finally { Array.Clear(input.Password); }

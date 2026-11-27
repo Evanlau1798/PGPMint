@@ -26,6 +26,8 @@ public sealed record HostSettingsDto(
     string PowerTier)
 {
     public int? MaxGpuTemperatureCelsius { get; init; }
+    public uint? MinCreationTimestamp { get; init; }
+    public uint? MaxCreationTimestamp { get; init; }
 }
 
 public sealed record HostDeviceDto(
@@ -128,7 +130,10 @@ public sealed record ApplySettingsParams(
     bool? AutoPauseOnHit = null,
     bool? MinimizeToTrayOnClose = null,
     bool? HasCompletedSetup = null,
-    int? MaxGpuTemperatureCelsius = null);
+    int? MaxGpuTemperatureCelsius = null,
+    uint? MinCreationTimestamp = null,
+    uint? MaxCreationTimestamp = null,
+    bool? ClearTimestampRange = null);
 
 public sealed record SetPowerTierParams(string? Tier);
 
@@ -144,7 +149,9 @@ public sealed record ExportMatchParams(
     string? Email,
     string? Passphrase,
     string? PrivatePath,
-    string? PublicPath);
+    string? PublicPath,
+    bool IncludeEncryptionSubkey = true,
+    long? ExpiresAtUnix = null);
 
 public sealed record InspectSyncBundleParams(string? BundlePath);
 
