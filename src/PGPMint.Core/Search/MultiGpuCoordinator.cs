@@ -29,6 +29,8 @@ public sealed partial class MultiGpuCoordinator : IDisposable
     private int _rateEpoch;
 
     private ulong _persistedTotalChecked;
+    private string _currentSessionId = Guid.NewGuid().ToString("N");
+    private Dictionary<string, ulong> _progressLedger = new(StringComparer.Ordinal);
     private long _sessionChecked;
     private SearchWorkMetrics _sessionWork = new(0, 0, 0, 0, 0);
     private int _totalMatchesCount;
@@ -111,7 +113,9 @@ public sealed partial class MultiGpuCoordinator : IDisposable
         {
             _devices = enumerated;
             _persistedPatternMask = persisted.LastPatternMask ?? string.Empty;
-            _persistedTotalChecked = persisted.TotalCheckedCandidates;
+            SyncBundleService.EnsureLegacyLedgerSeeded(persisted);
+            _progressLedger = new Dictionary<string, ulong>(persisted.ProgressLedger, StringComparer.Ordinal);
+            _persistedTotalChecked = Math.Max(persisted.TotalCheckedCandidates, SyncBundleService.SumLedger(_progressLedger));
 
             PowerTier resolvedTier = persisted.PowerTier is { } savedTier && Enum.IsDefined(savedTier)
                 ? savedTier
@@ -434,6 +438,7 @@ public sealed partial class MultiGpuCoordinator : IDisposable
             _searchFailure = SearchFailure.None;
             _vaultIsFull = false;
             _submissionFailed = false;
+            _currentSessionId = Guid.NewGuid().ToString("N");
             Interlocked.Exchange(ref _sessionChecked, 0);
             _sessionWork = new SearchWorkMetrics(0, 0, 0, 0, 0);
             Interlocked.Exchange(ref _autoPauseTriggered, 0);

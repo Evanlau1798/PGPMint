@@ -163,6 +163,24 @@ public sealed class HostServer(HostSession session, TextReader input, TextWriter
             case "clearMatches":
                 return session.ClearMatches();
 
+            case "inspectSyncBundle":
+            {
+                InspectSyncBundleParams p = DeserializeParams(request.Params, HostJsonContext.Default.InspectSyncBundleParams);
+                return session.InspectSyncBundle(p.BundlePath ?? string.Empty);
+            }
+
+            case "exportSyncBundle":
+            {
+                ExportSyncBundleParams p = DeserializeParams(request.Params, HostJsonContext.Default.ExportSyncBundleParams);
+                return session.ExportSyncBundle(p);
+            }
+
+            case "importSyncBundle":
+            {
+                ImportSyncBundleParams p = DeserializeParams(request.Params, HostJsonContext.Default.ImportSyncBundleParams);
+                return session.ImportSyncBundle(p);
+            }
+
             case "shutdown":
             {
                 _shutdownRequested = true;

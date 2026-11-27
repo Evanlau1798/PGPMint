@@ -20,6 +20,16 @@ private struct ExportMatchPayload: Encodable {
     let privatePath: String
     let publicPath: String
 }
+private struct InspectSyncBundlePayload: Encodable { let bundlePath: String }
+private struct ExportSyncBundlePayload: Encodable {
+    let outputPath: String
+    let includeKeys: Bool
+    let passphrase: String?
+}
+private struct ImportSyncBundlePayload: Encodable {
+    let bundlePath: String
+    let passphrase: String?
+}
 
 extension AppModel {
     public func bootstrap() async {
@@ -300,6 +310,73 @@ extension AppModel {
         await runAction {
             let result = try await self.transport.sendNoParams(method: "clearMatches", as: ClearMatchesResult.self)
             self.applyStatus(result.status)
+        }
+    }
+
+    public func inspectSyncBundle(bundlePath: String) async -> SyncInspectResultDto? {
+        guard !isBusy else { return nil }
+        isBusy = true
+        errorText = ""
+        defer { isBusy = false }
+        do {
+            return try await transport.send(
+                method: "inspectSyncBundle",
+                params: InspectSyncBundlePayload(bundlePath: bundlePath),
+                as: SyncInspectResultDto.self
+            )
+        } catch {
+            handleError(error)
+            return nil
+        }
+    }
+
+    public func exportSyncBundle(outputPath: String, includeKeys: Bool, passphrase: String?) async -> Bool {
+        guard !isBusy else { return false }
+        isBusy = true
+        errorText = ""
+        defer { isBusy = false }
+        do {
+            let result = try await transport.send(
+                method: "exportSyncBundle",
+                params: ExportSyncBundlePayload(
+                    outputPath: outputPath,
+                    includeKeys: includeKeys,
+                    passphrase: passphrase
+                ),
+                as: SyncExportResultDto.self
+            )
+            flashNotice(loc.format("SyncExportSuccessFormat", String(result.exportedKeysCount)))
+            return true
+        } catch {
+            handleError(error)
+            return false
+        }
+    }
+
+    public func importSyncBundle(bundlePath: String, passphrase: String?) async -> Bool {
+        guard !isBusy else { return false }
+        isBusy = true
+        errorText = ""
+        defer { isBusy = false }
+        do {
+            let result = try await transport.send(
+                method: "importSyncBundle",
+                params: ImportSyncBundlePayload(
+                    bundlePath: bundlePath,
+                    passphrase: passphrase
+                ),
+                as: SyncImportResultDto.self
+            )
+            applyStatus(result.status)
+            let addedText = NumberFormatter.localizedString(
+                from: NSNumber(value: result.addedCandidates),
+                number: .decimal
+            )
+            flashNotice(loc.format("SyncImportSuccessFormat", addedText, String(result.importedKeysCount)))
+            return true
+        } catch {
+            handleError(error)
+            return false
         }
     }
 

@@ -89,11 +89,13 @@ public sealed partial class MultiGpuCoordinator
         {
             _persistedPatternMask = pattern.CanonicalMask;
             _persistedTotalChecked = 0;
+            _progressLedger.Clear();
             Interlocked.Exchange(ref _sessionChecked, 0);
             _stateStore.Update(s =>
             {
                 s.LastPatternMask = pattern.CanonicalMask;
                 s.TotalCheckedCandidates = 0;
+                s.ProgressLedger.Clear();
             });
         }
     }

@@ -18,6 +18,7 @@ internal sealed record CommandLine(string Command, IReadOnlyDictionary<string, s
             "curve" => ["backend", "device", "workgroup", "pattern", "settle-seconds", "measure-seconds", "out-csv", "out-json", "data-dir", "password-stdin"],
             "search" => ["backend", "device", "pattern", "data-dir", "seconds", "password-stdin", "tier", "max-temp", "keep-running", "status-interval", "json", "on-hit-exec"],
             "export" => ["key", "name", "email", "output", "data-dir", "password-stdin"],
+            "sync" => ["export", "import", "progress-only", "data-dir", "windows-dpapi", "password-stdin"],
             "help" or "metal-source" => [],
             _ => throw new ArgumentException("Unknown command. Run pgpmint --help.")
         };
@@ -28,7 +29,7 @@ internal sealed record CommandLine(string Command, IReadOnlyDictionary<string, s
             string name = args[i][2..];
             if (!allowed.Contains(name)) throw new ArgumentException($"Unsupported option --{name}.");
             string value = "true";
-            if (name is not ("json" or "password-stdin" or "keep-running"))
+            if (name is not ("json" or "password-stdin" or "keep-running" or "progress-only" or "windows-dpapi"))
             {
                 if (++i >= args.Length || args[i].StartsWith("--", StringComparison.Ordinal))
                     throw new ArgumentException($"Missing value for --{name}.");
@@ -59,6 +60,15 @@ internal sealed record CommandLine(string Command, IReadOnlyDictionary<string, s
         if (command == "search" && !options.ContainsKey("pattern")) throw new ArgumentException("Search requires --pattern.");
         if (command == "export" && (!options.ContainsKey("key") || !options.ContainsKey("name") || !options.ContainsKey("output")))
             throw new ArgumentException("Export requires --key, --name and --output.");
+        if (command == "sync")
+        {
+            bool hasExp = options.ContainsKey("export");
+            bool hasImp = options.ContainsKey("import");
+            if (hasExp == hasImp)
+                throw new ArgumentException("Sync requires exactly one of --export or --import.");
+            if (options.ContainsKey("windows-dpapi") && options.ContainsKey("data-dir"))
+                throw new ArgumentException("--windows-dpapi cannot be combined with --data-dir.");
+        }
         return new(command, options);
     }
 

@@ -1,3 +1,5 @@
+using PGPMint.Core.Storage;
+
 namespace PGPMint.Core.Search;
 
 public sealed partial class MultiGpuCoordinator
@@ -28,55 +30,153 @@ public sealed partial class MultiGpuCoordinator
 
     private void PersistTotalChecked()
     {
-        ulong total;
+        ulong sessionDelta;
         string mask;
+        string sessionId;
         lock (_lifecycleLock)
         {
-            long sessionDelta = Interlocked.Read(ref _sessionChecked);
-            if (sessionDelta <= 0)
-            {
-                return;
-            }
-
-            total = _persistedTotalChecked + (ulong)sessionDelta;
-            mask = _persistedPatternMask;
-        }
-
-        _stateStore.Update(s =>
-        {
-            s.LastPatternMask = mask;
-            if (total > s.TotalCheckedCandidates)
-            {
-                s.TotalCheckedCandidates = total;
-            }
-        });
-    }
-
-    private void FlushSessionCheckedIntoPersisted()
-    {
-        ulong total;
-        string mask;
-        lock (_lifecycleLock)
-        {
-            long delta = Interlocked.Exchange(ref _sessionChecked, 0);
+            long delta = Interlocked.Read(ref _sessionChecked);
             if (delta <= 0)
             {
                 return;
             }
 
-            _persistedTotalChecked += (ulong)delta;
-            total = _persistedTotalChecked;
+            sessionDelta = (ulong)delta;
             mask = _persistedPatternMask;
+            sessionId = _currentSessionId;
         }
 
+        ulong externalSum = 0;
         _stateStore.Update(s =>
         {
-            s.LastPatternMask = mask;
-            if (total > s.TotalCheckedCandidates)
+            if (!string.IsNullOrEmpty(mask) && !string.Equals(s.LastPatternMask, mask, StringComparison.Ordinal))
             {
-                s.TotalCheckedCandidates = total;
+                s.LastPatternMask = mask;
+                s.ProgressLedger.Clear();
             }
+            else if (string.IsNullOrEmpty(s.LastPatternMask) && !string.IsNullOrEmpty(mask))
+            {
+                s.LastPatternMask = mask;
+            }
+
+            SyncBundleService.EnsureLegacyLedgerSeeded(s);
+            ulong existingSession = s.ProgressLedger.GetValueOrDefault(sessionId);
+            if (sessionDelta > existingSession)
+            {
+                s.ProgressLedger[sessionId] = sessionDelta;
+            }
+
+            s.TotalCheckedCandidates = Math.Max(s.TotalCheckedCandidates, SyncBundleService.SumLedger(s.ProgressLedger));
+            externalSum = SyncBundleService.SumLedgerExcluding(s.ProgressLedger, sessionId);
         });
+
+        lock (_lifecycleLock)
+        {
+            if (string.Equals(_persistedPatternMask, mask, StringComparison.Ordinal) &&
+                externalSum > _persistedTotalChecked)
+            {
+                _persistedTotalChecked = externalSum;
+            }
+        }
+    }
+
+    private void FlushSessionCheckedIntoPersisted()
+    {
+        ulong sessionDelta;
+        string mask;
+        string sessionId;
+        lock (_lifecycleLock)
+        {
+            long delta = Interlocked.Exchange(ref _sessionChecked, 0);
+            sessionDelta = delta > 0 ? (ulong)delta : 0UL;
+            mask = _persistedPatternMask;
+            sessionId = _currentSessionId;
+        }
+
+        if (sessionDelta == 0 && string.IsNullOrEmpty(mask))
+        {
+            return;
+        }
+
+        Dictionary<string, ulong>? updatedLedger = null;
+        ulong finalTotal = 0;
+        _stateStore.Update(s =>
+        {
+            if (!string.IsNullOrEmpty(mask) && !string.Equals(s.LastPatternMask, mask, StringComparison.Ordinal))
+            {
+                s.LastPatternMask = mask;
+                s.ProgressLedger.Clear();
+            }
+            else if (string.IsNullOrEmpty(s.LastPatternMask) && !string.IsNullOrEmpty(mask))
+            {
+                s.LastPatternMask = mask;
+            }
+
+            SyncBundleService.EnsureLegacyLedgerSeeded(s);
+            if (sessionDelta > 0)
+            {
+                ulong existingSession = s.ProgressLedger.GetValueOrDefault(sessionId);
+                if (sessionDelta > existingSession)
+                {
+                    s.ProgressLedger[sessionId] = sessionDelta;
+                }
+            }
+
+            finalTotal = Math.Max(s.TotalCheckedCandidates, SyncBundleService.SumLedger(s.ProgressLedger));
+            s.TotalCheckedCandidates = finalTotal;
+            updatedLedger = new Dictionary<string, ulong>(s.ProgressLedger, StringComparer.Ordinal);
+        });
+
+        lock (_lifecycleLock)
+        {
+            if (updatedLedger is not null && string.Equals(_persistedPatternMask, mask, StringComparison.Ordinal))
+            {
+                _progressLedger = updatedLedger;
+                _persistedTotalChecked = finalTotal;
+            }
+        }
+    }
+
+    public SyncExportResult ExportSyncBundle(string outputPath, bool includeKeys, ReadOnlySpan<char> passphrase)
+    {
+        PersistTotalChecked();
+        return SyncBundleService.Export(_stateStore, _vaultStore, outputPath, includeKeys, passphrase);
+    }
+
+    public SyncImportResult ImportSyncBundle(string bundlePath, ReadOnlySpan<char> passphrase)
+    {
+        SyncImportResult result = SyncBundleService.Import(_stateStore, _vaultStore, bundlePath, passphrase, out List<MatchedKeyRecord> imported);
+        AppPersistedState latest = _stateStore.Load();
+        int matchCount = _vaultStore.LoadMatches().Count;
+
+        lock (_lifecycleLock)
+        {
+            if (string.IsNullOrEmpty(_persistedPatternMask) && !string.IsNullOrEmpty(latest.LastPatternMask))
+            {
+                _persistedPatternMask = latest.LastPatternMask;
+            }
+
+            if (string.Equals(_persistedPatternMask, latest.LastPatternMask, StringComparison.Ordinal))
+            {
+                SyncBundleService.EnsureLegacyLedgerSeeded(latest);
+                _progressLedger = new Dictionary<string, ulong>(latest.ProgressLedger, StringComparer.Ordinal);
+                bool sessionActive = _state is CoordinatorState.Calibrating or CoordinatorState.Running or CoordinatorState.Paused or CoordinatorState.Stopping;
+                _persistedTotalChecked = sessionActive
+                    ? SyncBundleService.SumLedgerExcluding(_progressLedger, _currentSessionId)
+                    : Math.Max(latest.TotalCheckedCandidates, SyncBundleService.SumLedger(_progressLedger));
+            }
+
+            _totalMatchesCount = matchCount;
+            _vaultIsFull = matchCount >= VaultStore.MaxStoredMatches;
+        }
+
+        foreach (MatchedKeyRecord rec in imported)
+        {
+            MatchFound?.Invoke(this, rec);
+        }
+
+        PublishTelemetry();
+        return result;
     }
 
     private void ReconcileActualDeviceInfo(IGpuSearchDevice device)

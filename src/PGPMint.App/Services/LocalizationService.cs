@@ -311,6 +311,12 @@ public sealed class LocalizationService : ObservableObject
     public string FormatGpuLoadTooltip(int percent) =>
         SafeFormat("GpuLoadTooltipFormat", Math.Clamp(percent, 0, 100));
 
+    public string FormatSyncExportSuccess(int exportedKeys) =>
+        SafeFormat("SyncExportSuccessFormat", exportedKeys);
+
+    public string FormatSyncImportSuccess(ulong addedCandidates, int importedKeys) =>
+        SafeFormat("SyncImportSuccessFormat", FormattingHelpers.FormatCheckedCount(addedCandidates), importedKeys);
+
     public string GetTierLabel(PowerTier tier) => tier switch
     {
         PowerTier.Eco => TierEco,
@@ -395,4 +401,10 @@ public sealed class LocalizationService : ObservableObject
     public string NoGpuError => Get("NoGpuError");
     public string HitNotificationTitle => Get("HitNotificationTitle");
     public string ExportSuccess => Get("ExportSuccess");
+
+    public string SectionSync => Get("SectionSync");
+    public string SyncExportButton => Get("SyncExportButton");
+    public string SyncImportButton => Get("SyncImportButton");
+    public string SyncBundlePassphrasePrompt => Get("SyncBundlePassphrasePrompt");
+    public string SyncIncludeKeysCheck => Get("SyncIncludeKeysCheck");
 }

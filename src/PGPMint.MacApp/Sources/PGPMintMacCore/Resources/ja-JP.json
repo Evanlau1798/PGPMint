@@ -89,6 +89,13 @@
     "SettingMaxGpuTemp": "温度上限",
     "ThermalLimitOff": "オフ",
     "ThermalGuardActiveSuffix": "温度制限中",
-    "ThermalThrottleWarningSuffix": "GPU 熱スロットリング中"
+    "ThermalThrottleWarningSuffix": "GPU 熱スロットリング中",
+    "SectionSync": "進捗と保管庫の同期",
+    "SyncExportButton": "同期バンドルを書き出す",
+    "SyncImportButton": "同期バンドルを読み込む",
+    "SyncBundlePassphrasePrompt": "同期バンドルのパスフレーズ",
+    "SyncIncludeKeysCheck": "一致した鍵を含める（暗号化）",
+    "SyncExportSuccessFormat": "同期バンドルを書き出しました（{0} 鍵）",
+    "SyncImportSuccessFormat": "+{0} 候補・{1} 件の新規鍵を取り込みました"
   }
 }

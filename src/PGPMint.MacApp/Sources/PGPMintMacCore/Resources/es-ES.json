@@ -89,6 +89,13 @@
     "SettingMaxGpuTemp": "Límite térmico",
     "ThermalLimitOff": "Desactivado",
     "ThermalGuardActiveSuffix": "Límite térmico activo",
-    "ThermalThrottleWarningSuffix": "Reducción térmica de GPU"
+    "ThermalThrottleWarningSuffix": "Reducción térmica de GPU",
+    "SectionSync": "Sincronización de progreso y bóveda",
+    "SyncExportButton": "Exportar paquete",
+    "SyncImportButton": "Importar paquete",
+    "SyncBundlePassphrasePrompt": "Contraseña del paquete",
+    "SyncIncludeKeysCheck": "Incluir claves encontradas (cifradas)",
+    "SyncExportSuccessFormat": "Paquete exportado ({0} claves)",
+    "SyncImportSuccessFormat": "Importados +{0} candidatos, {1} claves nuevas"
   }
 }

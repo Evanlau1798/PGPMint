@@ -6,7 +6,9 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using PGPMint.App.Services;
 using PGPMint.App.ViewModels;
+using PGPMint.Core.Storage;
 using Windows.Graphics;
+using Windows.Storage.Pickers;
 using Windows.UI;
 using WinRT.Interop;
 
@@ -320,6 +322,137 @@ public sealed partial class SettingsWindow : Window
             {
                 cb.IsChecked = actualState;
             }
+        }
+        catch (Exception ex)
+        {
+            if (!_isClosed)
+            {
+                ViewModel.ReportError(ex.Message);
+            }
+        }
+    }
+
+    private async void OnExportSyncClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            bool hasMatches = ViewModel.HasMatches;
+            bool includeKeys = false;
+            string passphrase = string.Empty;
+
+            if (hasMatches)
+            {
+                var includeCheck = new CheckBox
+                {
+                    Content = ViewModel.Loc.SyncIncludeKeysCheck,
+                    IsChecked = true
+                };
+                var pwBox = new PasswordBox
+                {
+                    PlaceholderText = ViewModel.Loc.SyncBundlePassphrasePrompt
+                };
+                includeCheck.Checked += (_, _) => pwBox.IsEnabled = true;
+                includeCheck.Unchecked += (_, _) => pwBox.IsEnabled = false;
+
+                var body = new StackPanel { Spacing = 10 };
+                body.Children.Add(includeCheck);
+                body.Children.Add(pwBox);
+
+                var dlg = new ContentDialog
+                {
+                    XamlRoot = Content.XamlRoot,
+                    Title = ViewModel.Loc.SyncExportButton,
+                    Content = body,
+                    PrimaryButtonText = ViewModel.Loc.Save,
+                    CloseButtonText = ViewModel.Loc.Cancel,
+                    DefaultButton = ContentDialogButton.Primary
+                };
+                if (await dlg.ShowAsync() != ContentDialogResult.Primary)
+                {
+                    return;
+                }
+
+                includeKeys = includeCheck.IsChecked == true;
+                passphrase = pwBox.Password;
+                pwBox.Password = string.Empty;
+                if (includeKeys && string.IsNullOrEmpty(passphrase))
+                {
+                    ViewModel.ReportError(ViewModel.Loc.SyncBundlePassphrasePrompt);
+                    return;
+                }
+            }
+
+            var picker = new FileSavePicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                SuggestedFileName = "pgpmint-sync"
+            };
+            picker.FileTypeChoices.Add("PGPMint Sync Bundle", [".pgpmint-sync"]);
+            InitializeWithWindow.Initialize(picker, _hwnd);
+            Windows.Storage.StorageFile? file = await picker.PickSaveFileAsync();
+            if (file is null)
+            {
+                return;
+            }
+
+            ViewModel.ExportSyncBundle(file.Path, includeKeys, passphrase);
+        }
+        catch (Exception ex)
+        {
+            if (!_isClosed)
+            {
+                ViewModel.ReportError(ex.Message);
+            }
+        }
+    }
+
+    private async void OnImportSyncClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var picker = new FileOpenPicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary
+            };
+            picker.FileTypeFilter.Add(".pgpmint-sync");
+            InitializeWithWindow.Initialize(picker, _hwnd);
+            Windows.Storage.StorageFile? file = await picker.PickSingleFileAsync();
+            if (file is null)
+            {
+                return;
+            }
+
+            SyncBundleInfo info = SyncBundleService.Inspect(file.Path);
+            string passphrase = string.Empty;
+            if (info.HasEncryptedKeys && info.KeyCount > 0)
+            {
+                var pwBox = new PasswordBox
+                {
+                    PlaceholderText = ViewModel.Loc.SyncBundlePassphrasePrompt
+                };
+                var dlg = new ContentDialog
+                {
+                    XamlRoot = Content.XamlRoot,
+                    Title = ViewModel.Loc.SyncImportButton,
+                    Content = pwBox,
+                    PrimaryButtonText = ViewModel.Loc.Apply,
+                    CloseButtonText = ViewModel.Loc.Cancel,
+                    DefaultButton = ContentDialogButton.Primary
+                };
+                if (await dlg.ShowAsync() != ContentDialogResult.Primary)
+                {
+                    return;
+                }
+
+                passphrase = pwBox.Password;
+                pwBox.Password = string.Empty;
+                if (string.IsNullOrEmpty(passphrase))
+                {
+                    return;
+                }
+            }
+
+            ViewModel.ImportSyncBundle(file.Path, passphrase);
         }
         catch (Exception ex)
         {

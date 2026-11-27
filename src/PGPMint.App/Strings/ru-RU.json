@@ -89,6 +89,13 @@
     "SettingMaxGpuTemp": "Лимит температуры",
     "ThermalLimitOff": "Выкл.",
     "ThermalGuardActiveSuffix": "Лимит температуры активен",
-    "ThermalThrottleWarningSuffix": "Термотроттлинг GPU"
+    "ThermalThrottleWarningSuffix": "Термотроттлинг GPU",
+    "SectionSync": "Синхронизация прогресса и сейфа",
+    "SyncExportButton": "Экспорт пакета",
+    "SyncImportButton": "Импорт пакета",
+    "SyncBundlePassphrasePrompt": "Пароль пакета синхронизации",
+    "SyncIncludeKeysCheck": "Включить найденные ключи (шифрование)",
+    "SyncExportSuccessFormat": "Пакет экспортирован ({0} ключей)",
+    "SyncImportSuccessFormat": "Импортировано +{0} кандидатов, {1} новых ключей"
   }
 }

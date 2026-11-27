@@ -11,6 +11,9 @@ namespace PGPMint.Core.Storage;
 [JsonSerializable(typeof(EfficiencyCurveSample))]
 [JsonSerializable(typeof(PowerTier))]
 [JsonSerializable(typeof(List<MatchedKeyRecord>))]
+[JsonSerializable(typeof(Dictionary<string, ulong>))]
+[JsonSerializable(typeof(SyncBundleEnvelope))]
+[JsonSerializable(typeof(List<SyncBundleKeyEntry>))]
 internal sealed partial class StorageJsonContext : JsonSerializerContext
 {
 }

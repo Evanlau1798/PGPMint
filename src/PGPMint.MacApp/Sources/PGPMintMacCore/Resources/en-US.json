@@ -89,6 +89,13 @@
     "SettingMaxGpuTemp": "Thermal limit",
     "ThermalLimitOff": "Off",
     "ThermalGuardActiveSuffix": "Thermal limit active",
-    "ThermalThrottleWarningSuffix": "GPU thermal throttling"
+    "ThermalThrottleWarningSuffix": "GPU thermal throttling",
+    "SectionSync": "Progress & Vault Sync",
+    "SyncExportButton": "Export sync bundle",
+    "SyncImportButton": "Import sync bundle",
+    "SyncBundlePassphrasePrompt": "Sync bundle passphrase",
+    "SyncIncludeKeysCheck": "Include matched keys (encrypted)",
+    "SyncExportSuccessFormat": "Exported sync bundle ({0} keys)",
+    "SyncImportSuccessFormat": "Imported +{0} candidates, {1} new keys"
   }
 }

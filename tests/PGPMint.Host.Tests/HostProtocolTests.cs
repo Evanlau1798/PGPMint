@@ -152,6 +152,75 @@ public sealed class HostProtocolTests
     }
 
     [Fact]
+    public async Task SyncBundleRpcInspectExportAndImportUpdateStatusAndDetectEncryptedKeys()
+    {
+        using var temp = new TempDirectory();
+        using var peer = new TempDirectory();
+        var secrets = new InMemorySecretStore();
+        var backend = new DeterministicHitBackend(matchOnFirstBatch: false);
+        string localBundle = Path.Combine(temp.Path, "local.pgpmint-sync");
+        string peerBundle = Path.Combine(peer.Path, "peer.pgpmint-sync");
+
+        await using var session = new HostSession(backend, temp.Path, secrets);
+        await using var harness = new ServerHarness(session);
+
+        await harness.SendAsync("1", "unlockAutomatic");
+        await harness.SendAsync("2", "applySettings", new { targetInput = "DEADBEEF", hasCompletedSetup = true });
+
+        JsonDocument exported = await harness.SendAsync("3", "exportSyncBundle", new
+        {
+            outputPath = localBundle,
+            includeKeys = false,
+            passphrase = (string?)null
+        });
+        Assert.True(exported.RootElement.GetProperty("ok").GetBoolean());
+        Assert.False(exported.RootElement.GetProperty("result").GetProperty("hasEncryptedKeys").GetBoolean());
+
+        JsonDocument inspectedLocal = await harness.SendAsync("4", "inspectSyncBundle", new { bundlePath = localBundle });
+        Assert.True(inspectedLocal.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(0, inspectedLocal.RootElement.GetProperty("result").GetProperty("keyCount").GetInt32());
+
+        // Seed a peer bundle containing both checked-candidate ledger work and an encrypted match
+        var peerStateStore = new PGPMint.Core.Storage.AppStateStore(peer.Path);
+        peerStateStore.Update(s =>
+        {
+            s.LastPatternMask = "********DEADBEEF";
+            s.TargetInput = "DEADBEEF";
+            s.ProgressLedger["peer-session-1"] = 50_000;
+            s.TotalCheckedCandidates = 50_000;
+        });
+        using var peerProtector = PGPMint.Core.Storage.PasswordSeedProtector.Open(peer.Path, "peer-vault".AsSpan());
+        var peerVault = new PGPMint.Core.Storage.VaultStore(peer.Path, peerProtector);
+        byte[] seed = new byte[32];
+        System.Security.Cryptography.RandomNumberGenerator.Fill(seed);
+        byte[] pub = PGPMint.Core.Crypto.Ed25519KeyGenerator.DerivePublicKey(seed);
+        uint ts = 1_700_000_000u;
+        string fp = PGPMint.Core.Crypto.OpenPgpV4Packet.ComputeFingerprint(pub, ts);
+        peerVault.SaveMatch(seed, pub, ts, fp, "********DEADBEEF", "Peer GPU", out _);
+
+        PGPMint.Core.Storage.SyncBundleService.Export(peerStateStore, peerVault, peerBundle, includeKeys: true, "bundle-pass".AsSpan());
+
+        JsonDocument inspectedPeer = await harness.SendAsync("5", "inspectSyncBundle", new { bundlePath = peerBundle });
+        Assert.True(inspectedPeer.RootElement.GetProperty("ok").GetBoolean());
+        Assert.True(inspectedPeer.RootElement.GetProperty("result").GetProperty("hasEncryptedKeys").GetBoolean());
+        Assert.Equal(1, inspectedPeer.RootElement.GetProperty("result").GetProperty("keyCount").GetInt32());
+
+        JsonDocument imported = await harness.SendAsync("6", "importSyncBundle", new
+        {
+            bundlePath = peerBundle,
+            passphrase = "bundle-pass"
+        });
+        Assert.True(imported.RootElement.GetProperty("ok").GetBoolean());
+        JsonElement importRes = imported.RootElement.GetProperty("result");
+        Assert.Equal(50_000UL, importRes.GetProperty("addedCandidates").GetUInt64());
+        Assert.Equal(1, importRes.GetProperty("importedKeysCount").GetInt32());
+        Assert.Single(importRes.GetProperty("status").GetProperty("matches").EnumerateArray());
+
+        await harness.SendAsync("7", "shutdown");
+        await harness.WaitExitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task MalformedJsonAndUnknownMethodReturnStructuredErrorsWithoutCrashing()
     {
         using var temp = new TempDirectory();

@@ -277,6 +277,84 @@ public struct ExportMatchResult: Codable, Equatable, Sendable {
     }
 }
 
+public struct SyncInspectResultDto: Codable, Equatable, Sendable {
+    public let version: Int
+    public let createdAtUtc: String
+    public let patternMask: String
+    public let targetInput: String
+    public let totalCheckedCandidates: UInt64
+    public let hasEncryptedKeys: Bool
+    public let keyCount: Int
+
+    public init(
+        version: Int,
+        createdAtUtc: String,
+        patternMask: String,
+        targetInput: String,
+        totalCheckedCandidates: UInt64,
+        hasEncryptedKeys: Bool,
+        keyCount: Int
+    ) {
+        self.version = version
+        self.createdAtUtc = createdAtUtc
+        self.patternMask = patternMask
+        self.targetInput = targetInput
+        self.totalCheckedCandidates = totalCheckedCandidates
+        self.hasEncryptedKeys = hasEncryptedKeys
+        self.keyCount = keyCount
+    }
+}
+
+public struct SyncExportResultDto: Codable, Equatable, Sendable {
+    public let filePath: String
+    public let patternMask: String
+    public let totalCheckedCandidates: UInt64
+    public let exportedKeysCount: Int
+    public let hasEncryptedKeys: Bool
+
+    public init(
+        filePath: String,
+        patternMask: String,
+        totalCheckedCandidates: UInt64,
+        exportedKeysCount: Int,
+        hasEncryptedKeys: Bool
+    ) {
+        self.filePath = filePath
+        self.patternMask = patternMask
+        self.totalCheckedCandidates = totalCheckedCandidates
+        self.exportedKeysCount = exportedKeysCount
+        self.hasEncryptedKeys = hasEncryptedKeys
+    }
+}
+
+public struct SyncImportResultDto: Codable, Equatable, Sendable {
+    public let patternMask: String
+    public let addedCandidates: UInt64
+    public let newTotalCheckedCandidates: UInt64
+    public let importedKeysCount: Int
+    public let skippedDuplicateKeysCount: Int
+    public let patternMismatchSkippedProgress: Bool
+    public let status: HostStatusSnapshot
+
+    public init(
+        patternMask: String,
+        addedCandidates: UInt64,
+        newTotalCheckedCandidates: UInt64,
+        importedKeysCount: Int,
+        skippedDuplicateKeysCount: Int,
+        patternMismatchSkippedProgress: Bool,
+        status: HostStatusSnapshot
+    ) {
+        self.patternMask = patternMask
+        self.addedCandidates = addedCandidates
+        self.newTotalCheckedCandidates = newTotalCheckedCandidates
+        self.importedKeysCount = importedKeysCount
+        self.skippedDuplicateKeysCount = skippedDuplicateKeysCount
+        self.patternMismatchSkippedProgress = patternMismatchSkippedProgress
+        self.status = status
+    }
+}
+
 public struct HostError: Error, Equatable, Sendable {
     public let code: String
     public let message: String

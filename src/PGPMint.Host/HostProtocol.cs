@@ -146,6 +146,42 @@ public sealed record ExportMatchParams(
     string? PrivatePath,
     string? PublicPath);
 
+public sealed record InspectSyncBundleParams(string? BundlePath);
+
+public sealed record ExportSyncBundleParams(
+    string? OutputPath,
+    bool IncludeKeys = true,
+    string? Passphrase = null);
+
+public sealed record ImportSyncBundleParams(
+    string? BundlePath,
+    string? Passphrase = null);
+
+public sealed record SyncInspectResultDto(
+    int Version,
+    DateTimeOffset CreatedAtUtc,
+    string PatternMask,
+    string TargetInput,
+    ulong TotalCheckedCandidates,
+    bool HasEncryptedKeys,
+    int KeyCount);
+
+public sealed record SyncExportResultDto(
+    string FilePath,
+    string PatternMask,
+    ulong TotalCheckedCandidates,
+    int ExportedKeysCount,
+    bool HasEncryptedKeys);
+
+public sealed record SyncImportResultDto(
+    string PatternMask,
+    ulong AddedCandidates,
+    ulong NewTotalCheckedCandidates,
+    int ImportedKeysCount,
+    int SkippedDuplicateKeysCount,
+    bool PatternMismatchSkippedProgress,
+    HostStatusSnapshot Status);
+
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     PropertyNameCaseInsensitive = true,
@@ -167,4 +203,10 @@ public sealed record ExportMatchParams(
 [JsonSerializable(typeof(TargetParams))]
 [JsonSerializable(typeof(RecordIdParams))]
 [JsonSerializable(typeof(ExportMatchParams))]
+[JsonSerializable(typeof(InspectSyncBundleParams))]
+[JsonSerializable(typeof(ExportSyncBundleParams))]
+[JsonSerializable(typeof(ImportSyncBundleParams))]
+[JsonSerializable(typeof(SyncInspectResultDto))]
+[JsonSerializable(typeof(SyncExportResultDto))]
+[JsonSerializable(typeof(SyncImportResultDto))]
 public sealed partial class HostJsonContext : JsonSerializerContext;

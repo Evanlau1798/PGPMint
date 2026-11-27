@@ -1,11 +1,27 @@
 using System.Security.Cryptography;
 using PGPMint.Core.Crypto;
 using PGPMint.Core.Search;
+using PGPMint.Core.Storage;
 
 namespace PGPMint.App.ViewModels;
 
 public sealed partial class MainViewModel
 {
+    public SyncExportResult ExportSyncBundle(string outputPath, bool includeKeys, ReadOnlySpan<char> passphrase)
+    {
+        SyncExportResult res = _coordinator.ExportSyncBundle(outputPath, includeKeys, passphrase);
+        FlashNotice(Loc.FormatSyncExportSuccess(res.ExportedKeysCount));
+        return res;
+    }
+
+    public SyncImportResult ImportSyncBundle(string bundlePath, ReadOnlySpan<char> passphrase)
+    {
+        SyncImportResult res = _coordinator.ImportSyncBundle(bundlePath, passphrase);
+        ReloadMatchesFromVault();
+        ApplyTelemetry(_coordinator.LatestTelemetry);
+        FlashNotice(Loc.FormatSyncImportSuccess(res.AddedCandidates, res.ImportedKeysCount));
+        return res;
+    }
     public OpenPgpExportResult ExportMatchKey(MatchedKeyRecord record, string userName, string? userEmail, string? passphrase)
     {
         byte[] seed = _vaultStore.DecryptPrivateSeed(record);

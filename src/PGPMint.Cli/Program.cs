@@ -18,6 +18,7 @@ public static class Program
             if (options.Command == "help") { Console.WriteLine(Help); return 0; }
             if (options.Command == "metal-source") { Console.Write(MetalKernelSource.BuildFourKeyMetal()); return 0; }
             if (options.Command == "export") return ExportCommand.Run(options);
+            if (options.Command == "sync") return SyncCommand.Run(options);
             IGpuBackend backend = CreateBackend(options);
             IReadOnlyList<GpuDeviceInfo> devices = backend.EnumerateHardwareGpus();
             if (options.Command == "devices")
@@ -105,6 +106,8 @@ public static class Program
                        [--on-hit-exec PATH] [--seconds N] [--password-stdin]
         pgpmint export --key KEYID --name NAME [--email EMAIL] --output DIRECTORY
                        [--data-dir PATH] [--password-stdin]
+        pgpmint sync --export FILE | --import FILE [--progress-only]
+                     [--data-dir PATH | --windows-dpapi] [--password-stdin]
 
         Search and export prompt for a password unless the vault uses the macOS keychain.
         --password-stdin reads one line for a password vault, then the export passphrase

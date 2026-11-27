@@ -1,8 +1,25 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import PGPMintMacCore
+
+private enum SyncSheetMode: Identifiable {
+    case exportOptions(outputPath: String)
+    case importPassphrase(bundlePath: String)
+
+    var id: String {
+        switch self {
+        case .exportOptions(let p): return "export:\(p)"
+        case .importPassphrase(let p): return "import:\(p)"
+        }
+    }
+}
 
 struct SettingsView: View {
     @Bindable var model: AppModel
+    @State private var syncSheetMode: SyncSheetMode?
+    @State private var syncIncludeKeys = true
+    @State private var syncPassphrase = ""
 
     var body: some View {
         ScrollView {
@@ -145,6 +162,27 @@ struct SettingsView: View {
                     }
 
                     SurfaceCard {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(model.loc.text("SectionSync"))
+                                .font(.system(size: 13, weight: .semibold))
+
+                            HStack(spacing: 10) {
+                                Button(model.loc.text("SyncExportButton")) {
+                                    startExportSync()
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(model.isBusy)
+
+                                Button(model.loc.text("SyncImportButton")) {
+                                    startImportSync()
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(model.isBusy)
+                            }
+                        }
+                    }
+
+                    SurfaceCard {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(model.loc.text("DataDirectory"))
                                 .font(.system(size: 13, weight: .semibold))
@@ -163,5 +201,129 @@ struct SettingsView: View {
             }
             .padding(16)
         }
+        .sheet(item: $syncSheetMode) { mode in
+            SyncPassphraseSheetView(
+                model: model,
+                mode: mode,
+                includeKeys: $syncIncludeKeys,
+                passphrase: $syncPassphrase
+            )
+        }
+    }
+
+    private func startExportSync() {
+        let panel = NSSavePanel()
+        panel.title = model.loc.text("SyncExportButton")
+        panel.nameFieldStringValue = "pgpmint-sync.pgpmint-sync"
+        panel.allowedContentTypes = [UTType(filenameExtension: "pgpmint-sync") ?? .data]
+        panel.allowsOtherFileTypes = true
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url, url.isFileURL else {
+            return
+        }
+
+        if model.matches.isEmpty {
+            Task {
+                _ = await model.exportSyncBundle(outputPath: url.path, includeKeys: false, passphrase: nil)
+            }
+        } else {
+            syncIncludeKeys = true
+            syncPassphrase = ""
+            syncSheetMode = .exportOptions(outputPath: url.path)
+        }
+    }
+
+    private func startImportSync() {
+        let panel = NSOpenPanel()
+        panel.title = model.loc.text("SyncImportButton")
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [UTType(filenameExtension: "pgpmint-sync") ?? .data, .data]
+        guard panel.runModal() == .OK, let url = panel.url, url.isFileURL else {
+            return
+        }
+
+        Task {
+            guard let info = await model.inspectSyncBundle(bundlePath: url.path) else {
+                return
+            }
+            if info.hasEncryptedKeys && info.keyCount > 0 {
+                syncPassphrase = ""
+                syncSheetMode = .importPassphrase(bundlePath: url.path)
+            } else {
+                _ = await model.importSyncBundle(bundlePath: url.path, passphrase: nil)
+            }
+        }
+    }
+}
+
+private struct SyncPassphraseSheetView: View {
+    @Bindable var model: AppModel
+    let mode: SyncSheetMode
+    @Binding var includeKeys: Bool
+    @Binding var passphrase: String
+    @Environment(\.dismiss) private var dismiss
+
+    private var requiresPassphrase: Bool {
+        switch mode {
+        case .exportOptions: return includeKeys
+        case .importPassphrase: return true
+        }
+    }
+
+    private var canSubmit: Bool {
+        !model.isBusy && (!requiresPassphrase || !passphrase.isEmpty)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            switch mode {
+            case .exportOptions:
+                Text(model.loc.text("SyncExportButton"))
+                    .font(.system(size: 15, weight: .semibold))
+                Toggle(model.loc.text("SyncIncludeKeysCheck"), isOn: $includeKeys)
+                    .toggleStyle(.checkbox)
+                SecureField(model.loc.text("SyncBundlePassphrasePrompt"), text: $passphrase)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(!includeKeys)
+            case .importPassphrase:
+                Text(model.loc.text("SyncImportButton"))
+                    .font(.system(size: 15, weight: .semibold))
+                SecureField(model.loc.text("SyncBundlePassphrasePrompt"), text: $passphrase)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            HStack {
+                Spacer()
+                Button(model.loc.text("Cancel")) {
+                    passphrase = ""
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button(model.loc.text("Apply")) {
+                    let captured = passphrase
+                    passphrase = ""
+                    dismiss()
+                    Task {
+                        switch mode {
+                        case .exportOptions(let path):
+                            _ = await model.exportSyncBundle(
+                                outputPath: path,
+                                includeKeys: includeKeys,
+                                passphrase: includeKeys ? captured : nil
+                            )
+                        case .importPassphrase(let path):
+                            _ = await model.importSyncBundle(bundlePath: path, passphrase: captured)
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSubmit)
+            }
+        }
+        .padding(20)
+        .frame(width: 360)
     }
 }

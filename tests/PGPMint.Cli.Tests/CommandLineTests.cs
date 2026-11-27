@@ -97,4 +97,59 @@ public sealed class CommandLineTests
         Assert.Equal(1, rc); // bare `git` prints usage and exits 1 across Windows/Linux/macOS
         Assert.Contains("Hook exited with code 1", err.ToString(), StringComparison.Ordinal);
     }
+
+    [Theory]
+    [InlineData("sync")]
+    [InlineData("sync --export a --import b")]
+    [InlineData("sync --export a --windows-dpapi --data-dir ./dir")]
+    public void InvalidSyncArgumentsAreRejected(string args) =>
+        Assert.Throws<ArgumentException>(() => CommandLine.Parse(args.Split(' ')));
+
+    [Fact]
+    public void SyncOptionsAndProgressRoundTripWorkEndToEnd()
+    {
+        var exp = CommandLine.Parse(["sync", "--export", "bundle.pgpmint-sync", "--progress-only", "--data-dir", "./a"]);
+        Assert.Equal("sync", exp.Command);
+        Assert.True(exp.Has("progress-only"));
+        Assert.Equal("./a", exp.Get("data-dir"));
+
+        var imp = CommandLine.Parse(["sync", "--import", "bundle.pgpmint-sync", "--windows-dpapi", "--password-stdin"]);
+        Assert.True(imp.Has("windows-dpapi"));
+        Assert.True(imp.Has("password-stdin"));
+
+        string root = Path.Combine(Path.GetTempPath(), "PGPMint-CliSync-" + Guid.NewGuid().ToString("N"));
+        string dirA = Path.Combine(root, "a");
+        string dirB = Path.Combine(root, "b");
+        string bundlePath = Path.Combine(root, "state.pgpmint-sync");
+        try
+        {
+            var storeA = new PGPMint.Core.Storage.AppStateStore(dirA);
+            storeA.Update(s =>
+            {
+                s.LastPatternMask = "****CAFE";
+                s.TargetInput = "CAFE";
+                s.ProgressLedger["session-1"] = 123_456;
+                s.TotalCheckedCandidates = 123_456;
+            });
+
+            int rcExport = SyncCommand.Run(CommandLine.Parse(["sync", "--export", bundlePath, "--progress-only", "--data-dir", dirA]));
+            Assert.Equal(0, rcExport);
+            Assert.True(File.Exists(bundlePath));
+
+            int rcImport = SyncCommand.Run(CommandLine.Parse(["sync", "--import", bundlePath, "--data-dir", dirB]));
+            Assert.Equal(0, rcImport);
+
+            var stateB = new PGPMint.Core.Storage.AppStateStore(dirB).Load();
+            Assert.Equal(123_456UL, stateB.TotalCheckedCandidates);
+            Assert.Equal("****CAFE", stateB.LastPatternMask);
+
+            int rcReimport = SyncCommand.Run(CommandLine.Parse(["sync", "--import", bundlePath, "--data-dir", dirB]));
+            Assert.Equal(0, rcReimport);
+            Assert.Equal(123_456UL, new PGPMint.Core.Storage.AppStateStore(dirB).Load().TotalCheckedCandidates);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
 }

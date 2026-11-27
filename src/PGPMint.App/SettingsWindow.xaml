@@ -195,6 +195,25 @@
                     </StackPanel>
                 </Border>
 
+                <!-- 5. Progress & Vault Sync Card -->
+                <Border Style="{StaticResource SurfaceCardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="{x:Bind ViewModel.Loc.SectionSync, Mode=OneWay}"
+                                   FontSize="13"
+                                   FontWeight="SemiBold" />
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                            <Button Grid.Column="0"
+                                    HorizontalAlignment="Stretch"
+                                    Content="{x:Bind ViewModel.Loc.SyncExportButton, Mode=OneWay}"
+                                    Click="OnExportSyncClick" />
+                            <Button Grid.Column="1"
+                                    HorizontalAlignment="Stretch"
+                                    Content="{x:Bind ViewModel.Loc.SyncImportButton, Mode=OneWay}"
+                                    Click="OnImportSyncClick" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
             </StackPanel>
         </ScrollViewer>
     </Grid>

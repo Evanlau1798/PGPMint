@@ -302,6 +302,58 @@ public sealed class HostSession(
         return new ClearMatchesResult(removed, BuildStatusSnapshot());
     }
 
+    public SyncInspectResultDto InspectSyncBundle(string bundlePath)
+    {
+        SyncBundleInfo info = SyncBundleService.Inspect(bundlePath);
+        return new SyncInspectResultDto(
+            info.Version,
+            info.CreatedAtUtc,
+            info.PatternMask,
+            info.TargetInput,
+            info.TotalCheckedCandidates,
+            info.HasEncryptedKeys,
+            info.KeyCount);
+    }
+
+    public SyncExportResultDto ExportSyncBundle(ExportSyncBundleParams input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        MultiGpuCoordinator coordinator = RequireCoordinator();
+        char[] pass = (input.Passphrase ?? string.Empty).ToCharArray();
+        try
+        {
+            SyncExportResult res = coordinator.ExportSyncBundle(input.OutputPath ?? string.Empty, input.IncludeKeys, pass);
+            return new SyncExportResultDto(res.FilePath, res.PatternMask, res.TotalCheckedCandidates, res.ExportedKeysCount, res.HasEncryptedKeys);
+        }
+        finally
+        {
+            Array.Clear(pass);
+        }
+    }
+
+    public SyncImportResultDto ImportSyncBundle(ImportSyncBundleParams input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        MultiGpuCoordinator coordinator = RequireCoordinator();
+        char[] pass = (input.Passphrase ?? string.Empty).ToCharArray();
+        try
+        {
+            SyncImportResult res = coordinator.ImportSyncBundle(input.BundlePath ?? string.Empty, pass);
+            return new SyncImportResultDto(
+                res.PatternMask,
+                res.AddedCandidates,
+                res.NewTotalCheckedCandidates,
+                res.ImportedKeysCount,
+                res.SkippedDuplicateKeysCount,
+                res.PatternMismatchSkippedProgress,
+                BuildStatusSnapshot());
+        }
+        finally
+        {
+            Array.Clear(pass);
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_disposed) return;

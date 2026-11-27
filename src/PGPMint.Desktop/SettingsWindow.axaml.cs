@@ -84,6 +84,8 @@ public sealed partial class SettingsWindow : Window
 
             DataDirHeading.Text = _strings["DataDirectory"];
             DataDirValueText.Text = _session.DirectoryPath;
+            ExportSyncButton.Content = _strings["SyncExportButton"];
+            ImportSyncButton.Content = _strings["SyncImportButton"];
             LockVaultButton.Content = _strings["Lock"];
             QuitAppButton.Content = _strings["Quit"];
 
@@ -295,6 +297,129 @@ public sealed partial class SettingsWindow : Window
     {
         Close();
         await _ownerWindow.QuitAsync();
+    }
+
+    private async void OnExportSyncClick(object? sender, RoutedEventArgs e)
+    {
+        if (_session.Coordinator is not { } coordinator) return;
+        try
+        {
+            ClearError();
+            bool includeKeys = false;
+            char[] passphrase = [];
+            if (_session.Matches().Count > 0)
+            {
+                var (confirmed, inc, pw) = await PromptSyncBundleAsync(export: true);
+                if (!confirmed) return;
+                includeKeys = inc;
+                passphrase = pw;
+            }
+
+            try
+            {
+                var file = await StorageProvider.SaveFilePickerAsync(new Avalonia.Platform.Storage.FilePickerSaveOptions
+                {
+                    Title = _strings["SyncExportButton"],
+                    SuggestedFileName = "pgpmint-sync.pgpmint-sync",
+                    DefaultExtension = "pgpmint-sync"
+                });
+                if (file is null) return;
+                string path = file.Path.LocalPath;
+                await Task.Run(() => coordinator.ExportSyncBundle(path, includeKeys, passphrase));
+            }
+            finally
+            {
+                Array.Clear(passphrase);
+            }
+        }
+        catch { ShowError(_strings["OperationFailed"]); }
+    }
+
+    private async void OnImportSyncClick(object? sender, RoutedEventArgs e)
+    {
+        if (_session.Coordinator is not { } coordinator) return;
+        try
+        {
+            ClearError();
+            var files = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
+            {
+                Title = _strings["SyncImportButton"],
+                AllowMultiple = false
+            });
+            if (files.Count == 0) return;
+            string path = files[0].Path.LocalPath;
+            SyncBundleInfo info = SyncBundleService.Inspect(path);
+            char[] passphrase = [];
+            if (info.HasEncryptedKeys && info.KeyCount > 0)
+            {
+                var (confirmed, _, pw) = await PromptSyncBundleAsync(export: false);
+                if (!confirmed) return;
+                passphrase = pw;
+            }
+
+            try
+            {
+                await Task.Run(() => coordinator.ImportSyncBundle(path, passphrase));
+                _ownerWindow.Refresh();
+                RefreshDynamicState();
+            }
+            finally
+            {
+                Array.Clear(passphrase);
+            }
+        }
+        catch { ShowError(_strings["OperationFailed"]); }
+    }
+
+    private async Task<(bool Confirmed, bool IncludeKeys, char[] Passphrase)> PromptSyncBundleAsync(bool export)
+    {
+        var pwInput = new TextBox { PasswordChar = '●', PlaceholderText = _strings["SyncBundlePassphrasePrompt"] };
+        var includeCheck = new CheckBox { Content = _strings["SyncIncludeKeysCheck"], IsChecked = true, IsVisible = export };
+        includeCheck.IsCheckedChanged += (_, _) => pwInput.IsEnabled = includeCheck.IsChecked == true;
+
+        var dialog = new Window
+        {
+            Title = _strings[export ? "SyncExportButton" : "SyncImportButton"],
+            Width = 380,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner
+        };
+        dialog.Bind(BackgroundProperty, this.GetResourceObservable("AppWindowBg"));
+
+        var okBtn = new Button { Content = _strings[export ? "Save" : "Apply"], Classes = { "accent" }, IsDefault = true };
+        var cancelBtn = new Button { Content = _strings["Cancel"], IsCancel = true };
+        bool ok = false;
+        okBtn.Click += (_, _) =>
+        {
+            if ((!export || includeCheck.IsChecked == true) && string.IsNullOrEmpty(pwInput.Text)) return;
+            ok = true;
+            dialog.Close();
+        };
+        cancelBtn.Click += (_, _) => dialog.Close();
+
+        dialog.Content = new StackPanel
+        {
+            Margin = new Thickness(18),
+            Spacing = 10,
+            Children =
+            {
+                includeCheck,
+                pwInput,
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Children = { cancelBtn, okBtn }
+                }
+            }
+        };
+
+        await dialog.ShowDialog(this);
+        char[] pw = ok && (!export || includeCheck.IsChecked == true) ? (pwInput.Text ?? string.Empty).ToCharArray() : [];
+        pwInput.Text = string.Empty;
+        return (ok, export && includeCheck.IsChecked == true, pw);
     }
 
     private void ShowError(string message)

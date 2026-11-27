@@ -23,6 +23,7 @@ public sealed class AppPersistedState
     public bool StartWithWindows { get; set; }
     public bool WasRunningOnExit { get; set; }
     public int? MaxGpuTemperatureCelsius { get; set; }
+    public Dictionary<string, ulong> ProgressLedger { get; set; } = new(StringComparer.Ordinal);
 }
 
 public sealed class AppStateStore
@@ -58,6 +59,7 @@ public sealed class AppStateStore
 
                 parsed.EnabledDeviceKeys ??= new List<string>();
                 parsed.Calibrations ??= new Dictionary<string, CalibrationRecord>(StringComparer.Ordinal);
+                parsed.ProgressLedger ??= new Dictionary<string, ulong>(StringComparer.Ordinal);
                 parsed.LastPatternMask ??= string.Empty;
                 parsed.SliderPosition = Math.Clamp(parsed.SliderPosition, 0.0, 1.0);
                 return parsed;

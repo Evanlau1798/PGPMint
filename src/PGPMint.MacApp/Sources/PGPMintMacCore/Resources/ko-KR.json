@@ -89,6 +89,13 @@
     "SettingMaxGpuTemp": "온도 제한",
     "ThermalLimitOff": "끄기",
     "ThermalGuardActiveSuffix": "온도 제한 작동 중",
-    "ThermalThrottleWarningSuffix": "GPU 열 스로틀링 중"
+    "ThermalThrottleWarningSuffix": "GPU 열 스로틀링 중",
+    "SectionSync": "진행률 및 금고 동기화",
+    "SyncExportButton": "동기화 번들 내보내기",
+    "SyncImportButton": "동기화 번들 가져오기",
+    "SyncBundlePassphrasePrompt": "동기화 번들 암호",
+    "SyncIncludeKeysCheck": "일치하는 키 포함 (암호화)",
+    "SyncExportSuccessFormat": "동기화 번들 내보냄 ({0}개 키)",
+    "SyncImportSuccessFormat": "+{0}개 후보, 새 키 {1}개 가져옴"
   }
 }

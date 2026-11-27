@@ -89,6 +89,13 @@
     "SettingMaxGpuTemp": "Temperaturlimit",
     "ThermalLimitOff": "Aus",
     "ThermalGuardActiveSuffix": "Temperaturlimit aktiv",
-    "ThermalThrottleWarningSuffix": "GPU-Temperaturdrosselung"
+    "ThermalThrottleWarningSuffix": "GPU-Temperaturdrosselung",
+    "SectionSync": "Fortschritt & Tresor-Sync",
+    "SyncExportButton": "Sync-Paket exportieren",
+    "SyncImportButton": "Sync-Paket importieren",
+    "SyncBundlePassphrasePrompt": "Passwort für Sync-Paket",
+    "SyncIncludeKeysCheck": "Gefundene Schlüssel einschließen (verschlüsselt)",
+    "SyncExportSuccessFormat": "Sync-Paket exportiert ({0} Schlüssel)",
+    "SyncImportSuccessFormat": "+{0} Kandidaten, {1} neue Schlüssel importiert"
   }
 }

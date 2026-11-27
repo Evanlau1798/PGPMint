@@ -89,6 +89,13 @@
     "SettingMaxGpuTemp": "軟限溫上限",
     "ThermalLimitOff": "關閉",
     "ThermalGuardActiveSuffix": "已啟動軟限溫降速",
-    "ThermalThrottleWarningSuffix": "GPU 過熱降頻中"
+    "ThermalThrottleWarningSuffix": "GPU 過熱降頻中",
+    "SectionSync": "進度與金鑰庫同步",
+    "SyncExportButton": "匯出同步包",
+    "SyncImportButton": "匯入同步包",
+    "SyncBundlePassphrasePrompt": "同步包保護密碼",
+    "SyncIncludeKeysCheck": "一併打包已命中金鑰（加密）",
+    "SyncExportSuccessFormat": "已匯出同步包（{0} 筆金鑰）",
+    "SyncImportSuccessFormat": "已匯入 +{0} 次進度、{1} 把新金鑰"
   }
 }
